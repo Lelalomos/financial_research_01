@@ -1,0 +1,82 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Claude Code
+.claude/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Test files
+tests/
+.pytest_cache/
+coverage.xml
+.coverage
+
+# Logs
+logs/
+*.log
+
+# Data directories (auto-generated)
+data/
+raw_data/
+
+# Outputs
+outputs/
+models/
+runs/
+wandb/
+mlflows/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+!notebooks/*.ipynb
+
+# Large data files
+*.parquet
+*.csv
+*.pkl
+*.pickle
+
+# Model files
+*.pth
+*.pt
+*.ckpt
+*.h5
+
+# Docker
+docker-compose.yml
+Dockerfile

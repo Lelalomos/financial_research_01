@@ -1,0 +1,177 @@
+#!/usr/bin/env python
+"""
+Testing script for CRNN models.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+import json
+import numpy as np
+import torch
+
+# Add parent directory to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config.model_config import get_config_for_model
+from src.data.dataset import FinancialDataset
+from src.models import create_model
+from src.evaluation import evaluate_model, print_metrics
+from src.utils.logger import get_logger
+
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Test CRNN model')
+
+    parser.add_argument(
+        '--model',
+        type=str,
+        required=True,
+        help='Path to model checkpoint or "best" for best model'
+    )
+
+    parser.add_argument(
+        '--model-type',
+        type=str,
+        choices=['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer'],
+        default='crnn_attention',
+        help='Model type'
+    )
+
+    parser.add_argument(
+        '--data-dir',
+        type=str,
+        default='data/processed',
+        help='Directory with processed data'
+    )
+
+    parser.add_argument(
+        '--split',
+        type=str,
+        choices=['train', 'val', 'test'],
+        default='test',
+        help='Data split to evaluate'
+    )
+
+    parser.add_argument(
+        '--device',
+        type=str,
+        default='cuda' if torch.cuda.is_available() else 'cpu',
+        help='Device to use'
+    )
+
+    parser.add_argument(
+        '--output',
+        type=str,
+        default=None,
+        help='Output file for results (JSON)'
+    )
+
+    return parser.parse_args()
+
+
+def load_sequences(data_dir: Path, split: str):
+    """Load sequences from directory."""
+    split_dir = data_dir / split
+
+    if not split_dir.exists():
+        return None
+
+    sequences = {}
+    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'target']:
+        file_path = split_dir / f'{file}.npy'
+        if file_path.exists():
+            sequences[file] = np.load(file_path)
+
+    if len(sequences) == 0:
+        return None
+
+    return sequences
+
+
+def main():
+    """Main testing function."""
+    args = parse_args()
+
+    logger = get_logger("test", log_dir="logs")
+
+    logger.info("=" * 60)
+    logger.info("TESTING SCRIPT")
+    logger.info("=" * 60)
+
+    # Load config
+    config = get_config_for_model(args.model_type)
+
+    # Load data
+    data_dir = Path(args.data_dir)
+
+    logger.info(f"Loading {args.split} data from {data_dir}...")
+
+    sequences = load_sequences(data_dir, args.split)
+
+    if sequences is None:
+        logger.error(f"No {args.split} data found")
+        return 1
+
+    logger.info(f"Loaded {len(sequences['target'])} samples")
+
+    # Load info
+    info_path = data_dir / 'info.json'
+    with open(info_path, 'r') as f:
+        info = json.load(f)
+
+    # Create dataset
+    dataset = FinancialDataset(sequences, config)
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=config.BATCH_SIZE,
+        shuffle=False,
+        num_workers=config.NUM_WORKERS
+    )
+
+    # Get embedding sizes
+    embedding_sizes = dataset.get_embedding_sizes()
+
+    # Create model
+    logger.info(f"Creating {args.model_type} model...")
+
+    model = create_model(
+        model_type=args.model_type,
+        num_features=dataset.num_features,
+        num_stocks=embedding_sizes['num_stocks'],
+        num_groups=embedding_sizes['num_groups'],
+        config=config
+    )
+
+    # Load checkpoint
+    checkpoint_path = args.model
+    if checkpoint_path == 'best':
+        checkpoint_path = Path(config.CHECKPOINT_DIR) / 'best_model.pth'
+
+    logger.info(f"Loading checkpoint from {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=args.device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model = model.to(args.device)
+
+    logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
+
+    # Evaluate
+    logger.info("Evaluating model...")
+
+    metrics = evaluate_model(model, loader, device=args.device)
+
+    print_metrics(metrics, prefix=f"{args.split.upper()} - ")
+
+    # Save results
+    if args.output:
+        with open(args.output, 'w') as f:
+            json.dump(metrics, f, indent=2)
+        logger.info(f"Results saved to {args.output}")
+
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
