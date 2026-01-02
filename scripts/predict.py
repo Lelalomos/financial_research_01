@@ -1,174 +1,407 @@
 #!/usr/bin/env python
 """
-Prediction script for CRNN models.
+Prediction script for financial forecasting model.
 
-Makes predictions on new data.
+This script provides CLI for making predictions using trained models.
+Supports:
+- Single row prediction
+- Batch prediction from file
+- Interactive mode
 """
 
 import argparse
 import sys
-from pathlib import Path
 import json
-import numpy as np
-import torch
-import yfinance as yf
-from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, Any
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import get_config_for_model
-from src.data.feature_engineering import FeatureEngineer
-from src.data.preprocessing import DataPreprocessor
-from src.models import create_model
+from config.model_config import ModelConfig
+from config.data_config import DataConfig
+from src.prediction.predictor import create_predictor
 from src.utils.logger import get_logger
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Make predictions with CRNN model')
+logger = get_logger("predict", log_dir="logs")
+
+
+def parse_single_input(input_str: str) -> Dict[str, float]:
+    """
+    Parse single input string into feature dictionary.
+
+    Format: "key1=value1,key2=value2,..." or JSON string
+
+    Args:
+        input_str: Input string
+
+    Returns:
+        Dictionary with feature values
+    """
+    # Try JSON first
+    try:
+        return json.loads(input_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Parse key=value pairs
+    result = {}
+    for pair in input_str.split(','):
+        pair = pair.strip()
+        if '=' in pair:
+            key, value = pair.split('=', 1)
+            result[key.strip()] = float(value.strip())
+
+    return result
+
+
+def predict_single_row(args):
+    """Make prediction for a single data point."""
+    logger.info("=" * 60)
+    logger.info("SINGLE ROW PREDICTION")
+    logger.info("=" * 60)
+
+    # Create predictor
+    predictor = create_predictor(
+        model_path=args.model,
+        preprocessor_path=args.preprocessor,
+        device=args.device
+    )
+
+    # Parse input data
+    data = parse_single_input(args.input)
+
+    # Required fields
+    required = ['open', 'high', 'low', 'close', 'volume']
+    missing = [r for r in required if r not in data]
+    if missing:
+        logger.error(f"Missing required fields: {missing}")
+        logger.info("Required fields: " + ", ".join(required))
+        return 1
+
+    # Make prediction
+    result = predictor.predict_single(
+        data=data,
+        stock_ticker=args.ticker,
+        date=args.date,
+        group=args.group
+    )
+
+    # Print results
+    print("\n" + "=" * 60)
+    print("PREDICTION RESULT")
+    print("=" * 60)
+    print(f"Stock Ticker: {result['stock_ticker']}")
+    print(f"Date: {result['date']}")
+
+    if result['prediction'] is not None:
+        pred = result['prediction']
+        print(f"Predicted Change: {pred:+.2f}%")
+
+        if pred > 0:
+            print(f"Signal: BUY (Positive movement expected)")
+        elif pred < 0:
+            print(f"Signal: SELL (Negative movement expected)")
+        else:
+            print(f"Signal: HOLD (No significant change expected)")
+    else:
+        print(f"Error: {result.get('error', 'Unknown error')}")
+
+    print("=" * 60)
+
+    return 0
+
+
+def predict_batch_file(args):
+    """Make predictions from an input file."""
+    logger.info("=" * 60)
+    logger.info("BATCH PREDICTION FROM FILE")
+    logger.info("=" * 60)
+
+    # Create predictor
+    predictor = create_predictor(
+        model_path=args.model,
+        preprocessor_path=args.preprocessor,
+        device=args.device
+    )
+
+    # Make predictions
+    result_df = predictor.predict_from_file(
+        input_path=args.input,
+        output_path=args.output,
+        file_format=args.format
+    )
+
+    # Print summary
+    print("\n" + "=" * 60)
+    print("PREDICTION SUMMARY")
+    print("=" * 60)
+    print(f"Total predictions: {len(result_df)}")
+
+    if 'prediction' in result_df.columns:
+        print(f"Mean prediction: {result_df['prediction'].mean():+.2f}%")
+        print(f"Min prediction: {result_df['prediction'].min():+.2f}%")
+        print(f"Max prediction: {result_df['prediction'].max():+.2f}%")
+
+        positive = (result_df['prediction'] > 0).sum()
+        negative = (result_df['prediction'] < 0).sum()
+        print(f"\nPositive predictions: {positive} ({100*positive/len(result_df):.1f}%)")
+        print(f"Negative predictions: {negative} ({100*negative/len(result_df):.1f}%)")
+
+    print("\nFirst 10 predictions:")
+    print(result_df.head(10).to_string(index=False))
+
+    if args.output:
+        print(f"\nResults saved to: {args.output}")
+
+    print("=" * 60)
+
+    return 0
+
+
+def predict_interactive(args):
+    """Interactive prediction mode."""
+    logger.info("=" * 60)
+    logger.info("INTERACTIVE PREDICTION MODE")
+    logger.info("=" * 60)
+
+    # Create predictor
+    predictor = create_predictor(
+        model_path=args.model,
+        preprocessor_path=args.preprocessor,
+        device=args.device
+    )
+
+    print("\nPredictor initialized. Enter 'quit' to exit.")
+    print("\nRequired fields for each prediction:")
+    print("  ticker, date, open, high, low, close, volume")
+    print("\nOptional fields (auto-computed if not provided):")
+    print("  group, EMA, RSI, MACD, etc.")
+    print("\nFormat: key=value,key2=value2,...")
+    print("-" * 60)
+
+    while True:
+        print("\n" + "-" * 60)
+        user_input = input("Enter prediction data (or 'quit'): ").strip()
+
+        if user_input.lower() in ('quit', 'exit', 'q'):
+            print("Exiting interactive mode.")
+            break
+
+        try:
+            data = parse_single_input(user_input)
+
+            # Check required fields
+            required = ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume']
+            missing = [r for r in required if r not in data]
+            if missing:
+                print(f"Error: Missing required fields: {missing}")
+                continue
+
+            ticker = data.pop('ticker')
+            date = data.pop('date')
+            group = data.pop('group', None)
+
+            # Make prediction
+            result = predictor.predict_single(
+                data=data,
+                stock_ticker=ticker,
+                date=date,
+                group=group
+            )
+
+            # Print result
+            if result['prediction'] is not None:
+                pred = result['prediction']
+                print(f"\nPrediction for {ticker} on {date}:")
+                print(f"  Predicted Change: {pred:+.2f}%")
+
+                if pred > 1:
+                    print(f"  Signal: Strong BUY")
+                elif pred > 0:
+                    print(f"  Signal: BUY")
+                elif pred < -1:
+                    print(f"  Signal: Strong SELL")
+                elif pred < 0:
+                    print(f"  Signal: SELL")
+                else:
+                    print(f"  Signal: HOLD")
+            else:
+                print(f"Error: {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            print(f"Error: {e}")
+            logger.exception("Prediction error")
+
+    return 0
+
+
+def show_model_info(args):
+    """Display model information."""
+    logger.info("=" * 60)
+    logger.info("MODEL INFORMATION")
+    logger.info("=" * 60)
+
+    predictor = create_predictor(
+        model_path=args.model,
+        preprocessor_path=args.preprocessor,
+        device=args.device
+    )
+
+    info = predictor.get_model_info()
+
+    print("\nModel Information:")
+    print("-" * 60)
+    print(f"Model Path: {info['model_path']}")
+    print(f"Model Type: {info['model_type']}")
+    print(f"Device: {info['device']}")
+    print(f"Number of Features: {info['num_features']}")
+    print(f"Number of Stocks: {info['num_stocks']}")
+    print(f"Number of Groups: {info['num_groups']}")
+
+    if info['training_epochs']:
+        print(f"Training Epochs: {info['training_epochs']}")
+    if info['best_val_loss']:
+        print(f"Best Val Loss: {info['best_val_loss']:.6f}")
+
+    if info['feature_cols']:
+        print(f"\nFeature Columns ({len(info['feature_cols'])}):")
+        for col in info['feature_cols']:
+            print(f"  - {col}")
+
+    print("=" * 60)
+
+    return 0
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Make predictions using trained financial forecasting model",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Single row prediction
+  python scripts/predict.py single \\
+    --model models/checkpoints/best_model.pt \\
+    --ticker AAPL \\
+    --date 2024-01-15 \\
+    --input "open=150.0,high=152.0,low=149.0,close=151.5,volume=50000000"
+
+  # Batch prediction from CSV file
+  python scripts/predict.py batch \\
+    --model models/checkpoints/best_model.pt \\
+    --input data/prediction_input.csv \\
+    --output data/predictions.csv \\
+    --format csv
+
+  # Interactive mode
+  python scripts/predict.py interactive \\
+    --model models/checkpoints/best_model.pt
+
+  # Show model info
+  python scripts/predict.py info \\
+    --model models/checkpoints/best_model.pt
+        """
+    )
+
+    parser.add_argument(
+        'mode',
+        choices=['single', 'batch', 'interactive', 'info'],
+        help='Prediction mode'
+    )
 
     parser.add_argument(
         '--model',
         type=str,
         required=True,
-        help='Path to model checkpoint or "best" for best model'
+        help='Path to trained model checkpoint'
     )
 
     parser.add_argument(
-        '--model-type',
+        '--preprocessor',
         type=str,
-        choices=['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer'],
-        default='crnn_attention',
-        help='Model type'
-    )
-
-    parser.add_argument(
-        '--tickers',
-        type=str,
-        nargs='+',
-        required=True,
-        help='Ticker symbols to predict'
-    )
-
-    parser.add_argument(
-        '--data-dir',
-        type=str,
-        default='data/processed',
-        help='Directory with processed data (for feature info)'
+        default=None,
+        help='Path to saved preprocessor state'
     )
 
     parser.add_argument(
         '--device',
         type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use'
+        default=None,
+        choices=['cuda', 'cpu'],
+        help='Device to use (default: auto-detect)'
     )
 
-    parser.add_argument(
+    # Single prediction arguments
+    single_parser = argparse.ArgumentParser(add_help=False)
+    single_parser.add_argument(
+        '--ticker',
+        type=str,
+        help='Stock ticker symbol'
+    )
+    single_parser.add_argument(
+        '--date',
+        type=str,
+        help='Date (YYYY-MM-DD format)'
+    )
+    single_parser.add_argument(
+        '--input',
+        type=str,
+        help='Input data as key=value pairs or JSON'
+    )
+    single_parser.add_argument(
+        '--group',
+        type=str,
+        default=None,
+        help='Sector/group (optional)'
+    )
+
+    # Batch prediction arguments
+    batch_parser = argparse.ArgumentParser(add_help=False)
+    batch_parser.add_argument(
+        '--input',
+        type=str,
+        required=True,
+        help='Path to input file'
+    )
+    batch_parser.add_argument(
         '--output',
         type=str,
         default=None,
-        help='Output file for predictions (JSON)'
+        help='Path to save predictions (optional)'
+    )
+    batch_parser.add_argument(
+        '--format',
+        type=str,
+        default='csv',
+        choices=['csv', 'parquet', 'excel'],
+        help='Input file format'
     )
 
-    return parser.parse_args()
+    # Parse arguments
+    args, remaining = parser.parse_known_args()
+
+    # Parse mode-specific arguments
+    if args.mode == 'single':
+        single_args = single_parser.parse_args(remaining)
+        for key, value in vars(single_args).items():
+            setattr(args, key, value)
+        return predict_single_row(args)
+
+    elif args.mode == 'batch':
+        batch_args = batch_parser.parse_args(remaining)
+        for key, value in vars(batch_args).items():
+            setattr(args, key, value)
+        return predict_batch_file(args)
+
+    elif args.mode == 'interactive':
+        return predict_interactive(args)
+
+    elif args.mode == 'info':
+        return show_model_info(args)
 
 
-def download_latest_data(tickers: list, lookback_days: int = 500):
-    """Download latest data for tickers."""
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=lookback_days * 2)  # Extra for weekends
-
-    data = yf.download(
-        tickers,
-        start=start_date.strftime("%Y-%m-%d"),
-        end=end_date.strftime("%Y-%m-%d"),
-        progress=False
-    )
-
-    return data
-
-
-def main():
-    """Main prediction function."""
-    args = parse_args()
-
-    logger = get_logger("predict", log_dir="logs")
-
-    logger.info("=" * 60)
-    logger.info("PREDICTION SCRIPT")
-    logger.info("=" * 60)
-
-    # Load config
-    config = get_config_for_model(args.model_type)
-
-    # Load feature info
-    data_dir = Path(args.data_dir)
-    info_path = data_dir / 'info.json'
-
-    if not info_path.exists():
-        logger.error("Feature info not found. Run preprocess_data.py first.")
-        return 1
-
-    with open(info_path, 'r') as f:
-        info = json.load(f)
-
-    sequence_length = info['sequence_length']
-    feature_cols = info['feature_cols']
-    num_features = info['num_features']
-
-    # Load preprocessor for normalization
-    # In practice, you'd want to save/load the preprocessor state
-    preprocessor = DataPreprocessor(config)
-
-    # Download data
-    logger.info(f"Downloading data for {args.tickers}...")
-
-    data = yf.download(
-        args.tickers,
-        period='2y',
-        progress=False
-    )
-
-    # Create model
-    logger.info(f"Creating {args.model_type} model...")
-
-    # Note: We need to get actual stock/group encodings from the training data
-    # For now, use defaults
-    model = create_model(
-        model_type=args.model_type,
-        num_features=num_features,
-        num_stocks=500,  # Default, will need to match training
-        num_groups=20,
-        config=config
-    )
-
-    # Load checkpoint
-    checkpoint_path = args.model
-    if checkpoint_path == 'best':
-        checkpoint_path = Path(config.CHECKPOINT_DIR) / 'best_model.pth'
-
-    logger.info(f"Loading checkpoint from {checkpoint_path}")
-
-    checkpoint = torch.load(checkpoint_path, map_location=args.device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model = model.to(args.device)
-    model.eval()
-
-    logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
-
-    logger.info("=" * 60)
-    logger.info("NOTE: This is a simplified prediction script.")
-    logger.info("For production use, you need to:")
-    logger.info("1. Save/load the preprocessor state (scalers, encoders)")
-    logger.info("2. Save/load feature engineering state")
-    logger.info("3. Handle missing features correctly")
-    logger.info("4. Match stock/group IDs from training data")
-    logger.info("=" * 60)
-
-    return 0
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

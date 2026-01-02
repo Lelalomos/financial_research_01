@@ -68,6 +68,7 @@ def sample_inputs():
         'group_id': torch.randint(0, num_groups, (batch_size, seq_len)),
         'day': torch.randint(1, 32, (batch_size, seq_len)),
         'month': torch.randint(1, 13, (batch_size, seq_len)),
+        'dividend_flag': torch.randint(1, 3, (batch_size, seq_len)),  # 1=has dividend, 2=no dividend
         'batch_size': batch_size,
         'num_features': num_features,
         'num_stocks': num_stocks,
@@ -103,7 +104,8 @@ class TestCRNNModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -122,7 +124,8 @@ class TestCRNNModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         loss = output.sum()
@@ -161,7 +164,8 @@ class TestRNNModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -195,7 +199,8 @@ class TestRNNAttentionModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -229,7 +234,8 @@ class TestCRNNAttentionModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -263,7 +269,8 @@ class TestTransformerModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -297,7 +304,8 @@ class TestLSTM3Model:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -344,7 +352,8 @@ class TestLSTM3AttentionModel:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
@@ -409,7 +418,8 @@ class TestModelRegistry:
             sample_inputs['stock_id'],
             sample_inputs['group_id'],
             sample_inputs['day'],
-            sample_inputs['month']
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
         )
 
         assert output.shape == (sample_inputs['batch_size'], 1)
