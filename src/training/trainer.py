@@ -183,6 +183,7 @@ class Trainer:
             group_id = batch['group_id'].to(self.device)
             day = batch['day'].to(self.device)
             month = batch['month'].to(self.device)
+            dividend_flag = batch['dividend_flag'].to(self.device)
             target = batch['target'].to(self.device)
 
             # Forward pass
@@ -190,7 +191,7 @@ class Trainer:
 
             if self.config.USE_MIXED_PRECISION:
                 with torch.cuda.amp.autocast():
-                    output = self.model(features, stock_id, group_id, day, month)
+                    output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                     loss = self.criterion(output, target)
 
                 # Backward pass with gradient scaling
@@ -206,7 +207,7 @@ class Trainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                output = self.model(features, stock_id, group_id, day, month)
+                output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                 loss = self.criterion(output, target)
 
                 # Backward pass
@@ -277,10 +278,11 @@ class Trainer:
                 group_id = batch['group_id'].to(self.device)
                 day = batch['day'].to(self.device)
                 month = batch['month'].to(self.device)
+                dividend_flag = batch['dividend_flag'].to(self.device)
                 target = batch['target'].to(self.device)
 
                 # Forward pass
-                output = self.model(features, stock_id, group_id, day, month)
+                output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                 loss = self.criterion(output, target)
 
                 # Accumulate metrics

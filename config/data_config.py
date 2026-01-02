@@ -204,7 +204,7 @@ class DataConfig:
     @property
     def financial_metrics_columns(self) -> List[str]:
         """Return financial metric column names."""
-        return ['pe_ratio', 'peg_ratio', 'eps', 'roe', 'roi',
+        return ['pe_ratio', 'peg_ratio', 'eps', 'dividend_flag', 'roe', 'roi',
                 'debt_to_equity', 'debt_to_asset', 'current_ratio']
 
     @property

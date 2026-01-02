@@ -26,6 +26,7 @@ class ModelConfig:
         EMBEDDING_DIM_GROUP: Dimension for sector/group embedding
         EMBEDDING_DIM_DAY: Dimension for day of month embedding
         EMBEDDING_DIM_MONTH: Dimension for month embedding
+        EMBEDDING_DIM_DIVIDEND_FLAG: Dimension for dividend flag embedding (1=has dividend, 2=no dividend)
 
         # CNN architecture (for CRNN models)
         CNN_CHANNELS: Tuple of output channels for CNN layers
@@ -117,6 +118,7 @@ class ModelConfig:
     EMBEDDING_DIM_GROUP: int = 32
     EMBEDDING_DIM_DAY: int = 16
     EMBEDDING_DIM_MONTH: int = 16
+    EMBEDDING_DIM_DIVIDEND_FLAG: int = 8  # Small embedding for binary flag (1=has dividend, 2=no dividend)
 
     # CNN architecture (for CRNN models)
     CNN_CHANNELS: Tuple[int, ...] = (64, 128)
@@ -265,7 +267,8 @@ class ModelConfig:
             self.EMBEDDING_DIM_STOCK +
             self.EMBEDDING_DIM_GROUP +
             self.EMBEDDING_DIM_DAY +
-            self.EMBEDDING_DIM_MONTH
+            self.EMBEDDING_DIM_MONTH +
+            self.EMBEDDING_DIM_DIVIDEND_FLAG
         )
 
     @property
