@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument(
         '--export-pre-normalize',
         type=str,
-        default=None,
+        default='data/pre_normalized.parquet',
         help='Path to export pre-normalization data (parquet format)'
     )
 

@@ -232,6 +232,39 @@ class TestDataPipeline(unittest.TestCase):
                 err_msg="Target column should NOT be normalized - values should be identical"
             )
 
+            # Verify NO NaN values in exported normalized data
+            nan_count = normalized_df.isna().sum().sum()
+            self.assertEqual(nan_count, 0, f"Normalized export should have no NaN values, found: {nan_count}")
+
+    def test_nan_filling(self):
+        """Test that NaN values are filled with 0."""
+        engineer = FeatureEngineer(self.config)
+
+        # Add features
+        df = engineer.add_all_features(self.sample_data, calculate_target=True)
+
+        # Introduce some NaN values for testing
+        df.loc[0, 'close'] = np.nan
+        df.loc[1, 'volume'] = np.nan
+        df.loc[2, 'target'] = np.nan
+
+        # Process data
+        preprocessor = DataPreprocessor(self.config)
+        processed_df, splits, sequences, info = preprocessor.preprocess_pipeline(
+            df,
+            fit=True
+        )
+
+        # Verify no NaN values remain in numeric columns
+        numeric_cols = processed_df.select_dtypes(include=[np.number]).columns
+        nan_count = processed_df[numeric_cols].isna().sum().sum()
+        self.assertEqual(nan_count, 0, f"All NaN values should be filled with 0, found: {nan_count}")
+
+        # Verify filled values are 0
+        self.assertEqual(processed_df.loc[0, 'close'], 0.0, "NaN close should be filled with 0")
+        self.assertEqual(processed_df.loc[1, 'volume'], 0.0, "NaN volume should be filled with 0")
+        self.assertEqual(processed_df.loc[2, 'target'], 0.0, "NaN target should be filled with 0")
+
 
 if __name__ == '__main__':
     unittest.main()
