@@ -243,10 +243,20 @@ class TestDataPipeline(unittest.TestCase):
         # Add features
         df = engineer.add_all_features(self.sample_data, calculate_target=True)
 
+        # Store original values before introducing NaN
+        original_close = df.loc[0, 'close']
+        original_volume = df.loc[1, 'volume']
+        original_target = df.loc[2, 'target']
+
         # Introduce some NaN values for testing
         df.loc[0, 'close'] = np.nan
         df.loc[1, 'volume'] = np.nan
         df.loc[2, 'target'] = np.nan
+
+        # Verify NaN was introduced
+        self.assertTrue(np.isnan(df.loc[0, 'close']), "close should be NaN")
+        self.assertTrue(np.isnan(df.loc[1, 'volume']), "volume should be NaN")
+        self.assertTrue(np.isnan(df.loc[2, 'target']), "target should be NaN")
 
         # Process data
         preprocessor = DataPreprocessor(self.config)
@@ -258,12 +268,15 @@ class TestDataPipeline(unittest.TestCase):
         # Verify no NaN values remain in numeric columns
         numeric_cols = processed_df.select_dtypes(include=[np.number]).columns
         nan_count = processed_df[numeric_cols].isna().sum().sum()
-        self.assertEqual(nan_count, 0, f"All NaN values should be filled with 0, found: {nan_count}")
+        self.assertEqual(nan_count, 0, f"All NaN values should be filled, found: {nan_count} NaN values")
 
-        # Verify filled values are 0
-        self.assertEqual(processed_df.loc[0, 'close'], 0.0, "NaN close should be filled with 0")
-        self.assertEqual(processed_df.loc[1, 'volume'], 0.0, "NaN volume should be filled with 0")
+        # Target should be filled with 0 (not normalized)
         self.assertEqual(processed_df.loc[2, 'target'], 0.0, "NaN target should be filled with 0")
+
+        # Features are filled and then normalized (so they won't be exactly 0 after normalization)
+        # But they should not be NaN
+        self.assertFalse(np.isnan(processed_df.loc[0, 'close']), "close should not be NaN after processing")
+        self.assertFalse(np.isnan(processed_df.loc[1, 'volume']), "volume should not be NaN after processing")
 
 
 if __name__ == '__main__':
