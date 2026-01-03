@@ -149,14 +149,14 @@ class DataConfig:
     EXTERNAL_DATA_FILL_METHOD: str = "ffill"  # 'ffill', 'interpolate', 'drop'
     MAX_EXTERNAL_FILL_DAYS: int = 5
 
+    # Download retry settings
+    DOWNLOAD_RETRY_ATTEMPTS: int = 5  # Number of retry attempts for failed downloads
+    DOWNLOAD_RETRY_DELAY: int = 5  # Delay in seconds between retries
+
     # Financial metrics
     USE_FINANCIAL_METRICS: bool = True
     FINANCIAL_METRICS_SOURCE: str = "raw_data/ticket_data/us"
     FINANCIAL_METRICS_FILL_METHOD: str = "ffill"
-
-    # Failed stocks tracking
-    FAILED_TICKERS_FILE: str = "data/failed_tickers.json"
-    SKIP_FAILED_TICKERS: bool = True
 
     # Paths
     RAW_DATA_PATH: str = "data/raw"

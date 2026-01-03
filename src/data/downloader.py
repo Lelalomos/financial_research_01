@@ -22,16 +22,17 @@ from functools import partial
 
 from config.data_config import DataConfig
 from src.utils.logger import get_logger
-from src.data.failed_tickers_manager import FailedTickersManager
 
 
 def _download_single_ticker(
     ticker: str,
     start_date: str,
-    end_date: str
+    end_date: str,
+    retry_attempts: int = 5,
+    retry_delay: int = 5
 ) -> Tuple[Optional[str], Optional[pd.DataFrame], Optional[str]]:
     """
-    Download data for a single ticker.
+    Download data for a single ticker with retry logic.
 
     Helper function for multiprocessing. Must be at module level for pickling.
 
@@ -39,53 +40,76 @@ def _download_single_ticker(
         ticker: Ticker symbol
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
+        retry_attempts: Number of retry attempts (default: 5)
+        retry_delay: Delay in seconds between retries (default: 5)
 
     Returns:
         Tuple of (ticker, DataFrame, error) - if error, ticker and error are set, DataFrame is None
     """
-    try:
-        data = yf.download(
-            ticker,
-            start=start_date,
-            end=end_date,
-            progress=False,
-            multi_level_index=False
-        )
+    last_error = None
 
-        if data.empty:
-            return ticker, None, "No data available"
+    for attempt in range(retry_attempts):
+        try:
+            data = yf.download(
+                ticker,
+                start=start_date,
+                end=end_date,
+                progress=False,
+                multi_level_index=False
+            )
 
-        data = data.reset_index()
-        data['tic'] = ticker
+            if data.empty:
+                last_error = "No data available"
+                if attempt < retry_attempts - 1:
+                    print(f"Retry {attempt + 1}/{retry_attempts} for {ticker}: No data available, waiting {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    continue
+                return ticker, None, last_error
 
-        # Standardize column names
-        data = data.rename(columns={
-            'Date': 'date',
-            'Open': 'open',
-            'High': 'high',
-            'Low': 'low',
-            'Close': 'close',
-            'Adj Close': 'adj_close',
-            'Volume': 'volume'
-        })
+            data = data.reset_index()
+            data['tic'] = ticker
 
-        # Use adjusted close if available, otherwise use close
-        if 'adj_close' in data.columns:
-            data['close'] = data['adj_close']
+            # Standardize column names
+            data = data.rename(columns={
+                'Date': 'date',
+                'Open': 'open',
+                'High': 'high',
+                'Low': 'low',
+                'Close': 'close',
+                'Adj Close': 'adj_close',
+                'Volume': 'volume'
+            })
 
-        return ticker, data, None
+            # Use adjusted close if available, otherwise use close
+            if 'adj_close' in data.columns:
+                data['close'] = data['adj_close']
 
-    except Exception as e:
-        return ticker, None, str(e)
+            return ticker, data, None
+
+        except Exception as e:
+            last_error = str(e)
+            # If not the last attempt, sleep and retry
+            if attempt < retry_attempts - 1:
+                print(f"Retry {attempt + 1}/{retry_attempts} for {ticker}: {e}, waiting {retry_delay}s...")
+                time.sleep(retry_delay)
+                continue
+            # Last attempt failed, return error
+            return ticker, None, last_error
+
+    # All attempts exhausted - log the final failure
+    print(f"All {retry_attempts} retry attempts exhausted for {ticker}")
+    return ticker, None, last_error
 
 
 def _download_single_commodity(
     symbol_name: Tuple[str, str],
     start_date: str,
-    end_date: str
+    end_date: str,
+    retry_attempts: int = 5,
+    retry_delay: int = 5
 ) -> Tuple[Optional[str], Optional[pd.DataFrame], Optional[str]]:
     """
-    Download data for a single commodity.
+    Download data for a single commodity with retry logic.
 
     Helper function for multiprocessing. Must be at module level for pickling.
 
@@ -93,41 +117,59 @@ def _download_single_commodity(
         symbol_name: Tuple of (symbol, name)
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
+        retry_attempts: Number of retry attempts (default: 5)
+        retry_delay: Delay in seconds between retries (default: 5)
 
     Returns:
         Tuple of (name, DataFrame, error)
     """
     symbol, name = symbol_name
-    try:
-        data = yf.download(
-            symbol,
-            start=start_date,
-            end=end_date,
-            progress=False,
-            multi_level_index=False
-        )
+    last_error = None
 
-        if data.empty:
-            return name, None, "No data available"
+    for attempt in range(retry_attempts):
+        try:
+            data = yf.download(
+                symbol,
+                start=start_date,
+                end=end_date,
+                progress=False,
+                multi_level_index=False
+            )
 
-        # Reset index and standardize column names
-        data = data.reset_index()
-        data.columns = [str(c).lower().replace(' ', '_') for c in data.columns]
+            if data.empty:
+                last_error = "No data available"
+                if attempt < retry_attempts - 1:
+                    print(f"Retry {attempt + 1}/{retry_attempts} for {symbol} ({name}): No data available, waiting {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    continue
+                return name, None, last_error
 
-        # Handle different possible date column names
-        for col in data.columns:
-            if 'date' in col.lower():
-                data['date'] = pd.to_datetime(data[col])
-                break
+            # Reset index and standardize column names
+            data = data.reset_index()
+            data.columns = [str(c).lower().replace(' ', '_') for c in data.columns]
 
-        # Calculate mean of OHLC
-        data[name] = data[['open', 'high', 'low', 'close']].mean(axis=1)
-        data = data[['date', name]]
+            # Handle different possible date column names
+            for col in data.columns:
+                if 'date' in col.lower():
+                    data['date'] = pd.to_datetime(data[col])
+                    break
 
-        return name, data, None
+            # Calculate mean of OHLC
+            data[name] = data[['open', 'high', 'low', 'close']].mean(axis=1)
+            data = data[['date', name]]
 
-    except Exception as e:
-        return name, None, str(e)
+            return name, data, None
+
+        except Exception as e:
+            last_error = str(e)
+            if attempt < retry_attempts - 1:
+                print(f"Retry {attempt + 1}/{retry_attempts} for {symbol} ({name}): {e}, waiting {retry_delay}s...")
+                time.sleep(retry_delay)
+                continue
+            return name, None, last_error
+
+    print(f"All {retry_attempts} retry attempts exhausted for {symbol} ({name})")
+    return name, None, last_error
 
 
 class DataDownloader:
@@ -164,9 +206,6 @@ class DataDownloader:
 
         self.external_data_path = Path(config.EXTERNAL_DATA_PATH)
         self.external_data_path.mkdir(parents=True, exist_ok=True)
-
-        # Initialize failed tickers manager
-        self.failed_manager = FailedTickersManager(config)
 
     def _log_time(self):
         """Log elapsed time."""
@@ -218,9 +257,6 @@ class DataDownloader:
                 self.logger.info(f"Loaded {len(tickers)} tickers (limited to first {limit}) from {self.index_file}")
             else:
                 self.logger.info(f"Loaded {len(tickers)} tickers from {self.index_file}")
-
-            # Filter out failed tickers
-            tickers = self.failed_manager.filter_tickers(tickers)
 
             return tickers
 
@@ -388,8 +424,14 @@ class DataDownloader:
 
         # Use multiprocessing pool for parallel downloads
         with Pool(processes=n_workers) as pool:
-            # Use partial to pass dates to the download function
-            download_func = partial(_download_single_ticker, start_date=start_date, end_date=end_date)
+            # Use partial to pass dates and retry settings to the download function
+            download_func = partial(
+                _download_single_ticker,
+                start_date=start_date,
+                end_date=end_date,
+                retry_attempts=self.config.DOWNLOAD_RETRY_ATTEMPTS,
+                retry_delay=self.config.DOWNLOAD_RETRY_DELAY
+            )
 
             # Download all tickers in parallel
             results = pool.map(download_func, tickers)
@@ -411,14 +453,8 @@ class DataDownloader:
         self.logger.info(f"Downloaded {len(result)} rows for {len(all_data)} stocks")
         self.logger.info(f"Date range: {result['date'].min()} to {result['date'].max()}")
 
-        # Save failed tickers to manager
         if failed_tickers:
             self.logger.warning(f"Failed to download {len(failed_tickers)} tickers: {[t[0] for t in failed_tickers[:10]]}...")
-            for ticker, error in failed_tickers:
-                self.failed_manager.add_failed_ticker(ticker, error)
-            # Show summary of failed tickers
-            summary = self.failed_manager.get_summary()
-            self.logger.info(f"Total failed tickers tracked: {summary['total_failed']}")
 
         if save:
             save_path = self.raw_data_path / "stock_data.parquet"
@@ -504,7 +540,9 @@ class DataDownloader:
         with Pool(processes=n_workers) as pool:
             download_func = partial(_download_single_commodity,
                                     start_date=self.config.START_DATE,
-                                    end_date=self.config.END_DATE)
+                                    end_date=self.config.END_DATE,
+                                    retry_attempts=self.config.DOWNLOAD_RETRY_ATTEMPTS,
+                                    retry_delay=self.config.DOWNLOAD_RETRY_DELAY)
             results = pool.map(download_func, commodity_list)
 
         # Process results

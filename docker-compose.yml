@@ -4,7 +4,7 @@ services:
   # Main service - runs in background for interactive use
   crnn-prediction:
     build: .
-    image: financial-prediction-03:latest
+    image: financial-prediction-04:latest
     container_name: crnn_predictor
 
     # Volume mounts
@@ -13,8 +13,8 @@ services:
       - ./logs:/app/logs
       - ./models:/app/models
       - ./outputs:/app/outputs
-      - ./notebooks:/app/notebooks
       - ./scripts:/app/scripts
+      - ./src:/app/src
 
     # Environment variables
     environment:
@@ -37,39 +37,6 @@ services:
     # Detached mode (run in background)
     stdin_open: true
     tty: true
-
-  # Jupyter notebook service for analysis
-  jupyter:
-    build: .
-    image: crnn-financial-prediction:latest
-    container_name: crnn_jupyter
-
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./models:/app/models
-      - ./outputs:/app/outputs
-      - ./notebooks:/app/notebooks
-
-    environment:
-      - PYTHONPATH=/app
-      - JUPYTER_ENABLE_LAB=yes
-
-    command: >
-      bash -c "pip install jupyter jupyterlab &&
-      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''"
-
-    ports:
-      - "8888:8888"
-
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '2'
-    #       memory: 4G
-
-    profiles:
-      - jupyter  # Only start with --profile jupyter
 
   # Training-only service (for GPU nodes)
   trainer:

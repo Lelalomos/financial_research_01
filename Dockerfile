@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create directories
-RUN mkdir -p data/raw data/processed data/splits data/external logs models/checkpoints outputs notebooks
+RUN mkdir -p data/raw data/processed data/splits data/external logs models/checkpoints outputs
 
 # Make scripts executable
 RUN chmod +x scripts/*.sh 2>/dev/null || true

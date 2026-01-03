@@ -122,6 +122,10 @@ class TestDataPipeline(unittest.TestCase):
         """Test loading stocks from local index file."""
         downloader = DataDownloader(self.config)
 
+        # Check if index file exists before testing
+        if not downloader.index_path.exists():
+            self.skipTest(f"Index file not found: {downloader.index_path}")
+
         # Test listing available indices
         indices = downloader.list_available_indices()
         self.assertIsInstance(indices, list)
@@ -143,6 +147,10 @@ class TestDataPipeline(unittest.TestCase):
     def test_stock_filtering(self):
         """Test filtering stocks by criteria."""
         downloader = DataDownloader(self.config)
+
+        # Check if index file exists before testing
+        if not downloader.index_path.exists():
+            self.skipTest(f"Index file not found: {downloader.index_path}")
 
         # Test filtering by sector
         tech_stocks = downloader.filter_stocks_by_criteria(sectors=['Technology'])

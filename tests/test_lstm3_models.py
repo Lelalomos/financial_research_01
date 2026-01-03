@@ -41,8 +41,9 @@ class TestLSTM3Model:
         group_id = torch.randint(0, 10, (batch_size, seq_len))
         day = torch.randint(1, 32, (batch_size, seq_len))
         month = torch.randint(1, 13, (batch_size, seq_len))
+        dividend_flag = torch.randint(1, 3, (batch_size, seq_len))  # 1=has dividend, 2=no dividend
 
-        output = model(features, stock_id, group_id, day, month)
+        output = model(features, stock_id, group_id, day, month, dividend_flag)
 
         assert output.shape == (batch_size, 1)
 
@@ -98,8 +99,9 @@ class TestLSTM3AttentionModel:
         group_id = torch.randint(0, 10, (batch_size, seq_len))
         day = torch.randint(1, 32, (batch_size, seq_len))
         month = torch.randint(1, 13, (batch_size, seq_len))
+        dividend_flag = torch.randint(1, 3, (batch_size, seq_len))  # 1=has dividend, 2=no dividend
 
-        output = model(features, stock_id, group_id, day, month)
+        output = model(features, stock_id, group_id, day, month, dividend_flag)
 
         assert output.shape == (batch_size, 1)
 

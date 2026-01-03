@@ -26,7 +26,6 @@ from dataclasses import dataclass
 
 from config.data_config import DataConfig
 from src.utils.logger import get_logger
-from src.data.failed_tickers_manager import FailedTickersManager
 
 
 class FinancialMetricsLoader:
@@ -51,9 +50,6 @@ class FinancialMetricsLoader:
         self.logger = get_logger("financial_metrics", log_dir="logs")
         self.raw_data_path = Path(self.config.FINANCIAL_METRICS_SOURCE)
 
-        # Initialize failed tickers manager
-        self.failed_manager = FailedTickersManager(config)
-
         if not self.raw_data_path.exists():
             self.logger.warning(f"Financial metrics source path not found: {self.raw_data_path}")
 
@@ -70,9 +66,7 @@ class FinancialMetricsLoader:
         json_path = self.raw_data_path / f"{ticker}.json"
 
         if not json_path.exists():
-            reason = f"JSON file not found: {json_path}"
-            self.logger.warning(f"{ticker}: {reason}")
-            self.failed_manager.add_failed_ticker(ticker, f"Financial data: {reason}")
+            self.logger.warning(f"{ticker}: JSON file not found: {json_path}")
             return None
 
         try:
@@ -80,9 +74,7 @@ class FinancialMetricsLoader:
                 data = json.load(f)
             return data
         except Exception as e:
-            reason = f"Failed to load JSON: {str(e)}"
-            self.logger.error(f"{ticker}: {reason}")
-            self.failed_manager.add_failed_ticker(ticker, f"Financial data: {reason}")
+            self.logger.error(f"{ticker}: Failed to load JSON: {str(e)}")
             return None
 
     def extract_highlights_metrics(self, data: Dict) -> Dict[str, float]:
