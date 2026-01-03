@@ -56,11 +56,11 @@ coverage.xml
 .hypothesis/
 
 # Data directories (auto-generated)
-data/
-raw_data/
-logs/
-outputs/
-models/
+/data/
+/raw_data/
+/logs/
+/outputs/
+/models/
 
 # But keep directory structure
 !data/.gitkeep

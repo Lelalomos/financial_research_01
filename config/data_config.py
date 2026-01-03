@@ -92,6 +92,7 @@ class DataConfig:
     SEQUENCE_LENGTH: int = 30  # Lookback window in trading days
     PREDICTION_HORIZON: int = 5  # Days ahead to predict (configurable!)
     TARGET_THRESHOLD: float = 10.0  # For tanh normalization: +/-10%
+    NORMALIZE_TARGET: bool = True  # Apply tanh normalization to target variable
 
     # Technical indicators
     EMA_PERIODS: tuple = (50, 100, 200)

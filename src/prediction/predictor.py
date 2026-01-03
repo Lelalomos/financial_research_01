@@ -200,7 +200,7 @@ class Predictor:
         predictions = predictions.cpu().numpy()
 
         # Apply inverse tanh transform if target was normalized
-        if not return_raw:
+        if not return_raw and self.data_config.NORMALIZE_TARGET:
             # The target was normalized using tanh: target = tanh(x / threshold)
             # Inverse: x = threshold * atanh(target)
             threshold = self.data_config.TARGET_THRESHOLD
