@@ -193,6 +193,64 @@ class FeatureEngineer:
         self.logger.info(f"Added technical indicators. Shape: {result.shape}")
         return result
 
+    def add_fibonacci_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Fibonacci retracement features to DataFrame.
+
+        Calculates swing high/low over a rolling window and computes
+        Fibonacci retracement levels (38.2%, 50%, 61.8%) with normalized
+        distance features for RNN compatibility.
+
+        Args:
+            df: DataFrame with OHLCV data, must have columns: high, low, close
+
+        Returns:
+            DataFrame with added Fibonacci features
+        """
+        if not self.config.data.features.FEATURE_FLAGS.get('fibonacci_features', False):
+            self.logger.info("Skipping Fibonacci features (disabled in config)")
+            return df
+
+        self.logger.info("Adding Fibonacci retracement features...")
+
+        result = df.copy()
+        window = self.config.data.fibonacci.FIBONACCI_WINDOW
+
+        # Group by ticker and calculate Fibonacci levels for each stock
+        for ticker in result['tic'].unique():
+            mask = result['tic'] == ticker
+            stock_df = result[mask].copy()
+
+            # Sort by date to ensure correct rolling window
+            stock_df = stock_df.sort_values('date')
+
+            # Rolling swing high / low
+            stock_df['swing_high'] = stock_df['high'].rolling(window).max()
+            stock_df['swing_low'] = stock_df['low'].rolling(window).min()
+
+            # Price range
+            stock_df['fib_range'] = stock_df['swing_high'] - stock_df['swing_low']
+
+            # Fibonacci retracement levels
+            stock_df['fib_38'] = stock_df['swing_high'] - 0.382 * stock_df['fib_range']
+            stock_df['fib_50'] = stock_df['swing_high'] - 0.5 * stock_df['fib_range']
+            stock_df['fib_61'] = stock_df['swing_high'] - 0.618 * stock_df['fib_range']
+
+            # Normalized distance features (RNN-friendly)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                stock_df['dist_fib_38'] = (stock_df['close'] - stock_df['fib_38']) / stock_df['fib_range']
+                stock_df['dist_fib_50'] = (stock_df['close'] - stock_df['fib_50']) / stock_df['fib_range']
+                stock_df['dist_fib_61'] = (stock_df['close'] - stock_df['fib_61']) / stock_df['fib_range']
+
+            # Break indicator (1 if close breaks below 61.8% level, 0 otherwise)
+            stock_df['break_fib_61'] = (stock_df['close'] < stock_df['fib_61']).astype(int)
+
+            # Update result
+            result.loc[mask, stock_df.columns] = stock_df
+
+        self.logger.info(f"Added Fibonacci features. Shape: {result.shape}")
+        return result
+
     def add_candlestick_patterns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Add all TA-Lib candlestick patterns.
@@ -501,6 +559,9 @@ class FeatureEngineer:
         # 2. Add technical indicators
         result = self.add_technical_indicators(result)
 
+        # 2.5. Add Fibonacci retracement features
+        result = self.add_fibonacci_features(result)
+
         # 3. Add candlestick patterns
         result = self.add_candlestick_patterns(result)
 
@@ -565,6 +626,8 @@ class FeatureEngineer:
         time_features = ['day', 'month', 'dayofweek']
         financial_metrics_features = ['pe_ratio', 'peg_ratio', 'eps', 'dividend_flag', 'roe', 'roi',
                                        'debt_to_equity', 'debt_to_asset', 'current_ratio']
+        fibonacci_features = ['swing_high', 'swing_low', 'fib_range', 'fib_38', 'fib_50',
+                               'fib_61', 'dist_fib_38', 'dist_fib_50', 'dist_fib_61', 'break_fib_61']
 
         info = {
             'total_features': len(feature_cols),
@@ -576,6 +639,7 @@ class FeatureEngineer:
             'external_features': len(external_features),
             'time_features': len([f for f in time_features if f in feature_cols]),
             'financial_metrics': len([f for f in financial_metrics_features if f in feature_cols]),
+            'fibonacci_features': len([f for f in fibonacci_features if f in feature_cols]),
             'feature_list': feature_cols
         }
 

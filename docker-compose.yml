@@ -16,6 +16,7 @@ services:
       - ./outputs:/app/outputs
       - ./scripts:/app/scripts
       - ./src:/app/src
+      - ./config:/app/config
 
     # Environment variables
     environment:

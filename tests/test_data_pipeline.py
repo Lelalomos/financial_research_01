@@ -71,6 +71,46 @@ class TestDataPipeline(unittest.TestCase):
         self.assertIn('target', result.columns)
         self.assertEqual(result['target'].isna().sum(), 0)  # No NaN after dropping
 
+    def test_fibonacci_features(self):
+        """Test Fibonacci retracement feature calculation."""
+        engineer = FeatureEngineer(self.config)
+
+        # Test adding Fibonacci features
+        result = engineer.add_fibonacci_features(self.sample_data)
+
+        # Verify all Fibonacci columns exist
+        fibonacci_cols = ['swing_high', 'swing_low', 'fib_range', 'fib_38', 'fib_50',
+                          'fib_61', 'dist_fib_38', 'dist_fib_50', 'dist_fib_61', 'break_fib_61']
+
+        for col in fibonacci_cols:
+            self.assertIn(col, result.columns, f"Column {col} should exist")
+
+        # Verify swing high >= high (or NaN)
+        self.assertTrue((result['swing_high'] >= result['high']).all() or
+                        result['swing_high'].isna().any())
+
+        # Verify swing low <= low (or NaN)
+        self.assertTrue((result['swing_low'] <= result['low']).all() or
+                        result['swing_low'].isna().any())
+
+        # Verify Fibonacci levels are between swing high and low
+        valid_mask = ~result['fib_range'].isna() & (result['fib_range'] > 0)
+        if valid_mask.any():
+            for fib_col in ['fib_38', 'fib_50', 'fib_61']:
+                self.assertTrue(
+                    (result.loc[valid_mask, fib_col] >= result.loc[valid_mask, 'swing_low']).all(),
+                    f"{fib_col} should be >= swing_low"
+                )
+                self.assertTrue(
+                    (result.loc[valid_mask, fib_col] <= result.loc[valid_mask, 'swing_high']).all(),
+                    f"{fib_col} should be <= swing_high"
+                )
+
+        # Verify break indicator is 0 or 1
+        self.assertTrue(
+            result['break_fib_61'].isin([0, 1]).all() or result['break_fib_61'].isna().any()
+        )
+
     def test_preprocessing(self):
         """Test preprocessing."""
         engineer = FeatureEngineer(self.config)

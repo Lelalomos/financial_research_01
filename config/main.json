@@ -36,6 +36,9 @@
       "STOCHRSI_PERIOD": 14,
       "MACD_PARAMS": [12, 26, 9]
     },
+    "fibonacci": {
+      "FIBONACCI_WINDOW": 30
+    },
     "candlestick": {
       "USE_CANDLESTICK_PATTERNS": true
     },
@@ -51,6 +54,7 @@
         "rsi_features": true,
         "stochrsi_features": true,
         "macd_features": true,
+        "fibonacci_features": true,
         "candlestick_patterns": true,
         "vix": true,
         "commodities": true,
@@ -88,6 +92,7 @@
       },
       "OPTIONAL_COLUMNS": {
         "financial_metrics": ["pe_ratio", "peg_ratio", "eps", "dividend_flag", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
+        "fibonacci": ["swing_high", "swing_low", "fib_range", "fib_38", "fib_50", "fib_61", "dist_fib_38", "dist_fib_50", "dist_fib_61", "break_fib_61"],
         "time_features": ["day", "month", "dayofweek"],
         "external": ["vix", "bondyield"],
         "grouping": ["group"],
