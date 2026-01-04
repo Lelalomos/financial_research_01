@@ -40,6 +40,7 @@ The development process follows a human-AI collaborative approach:
   - Financial metrics (PE ratio, PEG ratio, EPS, ROE, ROI, debt ratios, current ratio)
 - **Log Transform Normalization** for all features
 - **Time-based Data Splitting** (70% train, 15% val, 15% test)
+- **Balanced Stock Sampling** (`--stocks` option) - Sample stocks evenly across all group_ids
 - **Configurable Prediction Horizon** (default: 5 days)
 - **Docker Deployment** with GPU support
 - **Comprehensive Logging** and TensorBoard integration
@@ -71,8 +72,9 @@ python scripts/run_all.py --model-type lstm3_attention --epochs 100
 
 # Or run individual steps
 
-# 1. Preprocess data
+# 1. Preprocess data (with --stocks option for balanced sampling)
 python scripts/preprocess_data.py --start-date 2015-01-01
+python scripts/preprocess_data.py --stocks 50  # Sample 50 stocks balanced across all groups
 
 # 2. Train model
 python scripts/train.py --model-type lstm3_attention --epochs 100
@@ -108,6 +110,9 @@ python tests/test_full_flow.py
 # Run all unit tests
 pytest tests/ -v
 
+# Test stock sampling (NEW)
+pytest tests/test_sampling.py -v
+
 # Test hyperparameter tuning
 pytest tests/test_optuna_tune.py -v
 ```
@@ -117,15 +122,23 @@ pytest tests/test_optuna_tune.py -v
 ```
 research_02/
 ├── config/
-│   ├── data_config.py       # Data configuration
-│   └── model_config.py      # Model configuration
+│   ├── main.json            # Data configuration (sources, features, sequences)
+│   ├── model.json           # Model configuration (all model types)
+│   ├── hyperparameter.json  # Hyperparameter search settings
+│   ├── test.json            # Testing configuration
+│   ├── deploy.json          # Deployment configuration
+│   └── validate.json        # Validation configuration
 ├── src/
+│   ├── config/
+│   │   ├── config_loader.py # JSON config loader with Config class
+│   │   └── __init__.py       # Convenience functions
 │   ├── data/
 │   │   ├── downloader.py    # Data downloading (yfinance, FRED)
 │   │   ├── feature_engineering.py  # Technical indicators
 │   │   ├── preprocessing.py  # Normalization, splitting
 │   │   ├── financial_metrics_loader.py  # Financial metrics from API
 │   │   ├── prediction_prep.py  # Data preparation for prediction
+│   │   ├── sampling.py       # Balanced stock sampling
 │   │   └── dataset.py        # PyTorch Dataset
 │   ├── models/
 │   │   ├── crnn_attention.py # CNN + BiLSTM + Attention (base module)
@@ -134,10 +147,9 @@ research_02/
 │   │   ├── rnn_attention.py  # BiLSTM + Attention
 │   │   ├── lstm3_model.py    # 3-layer BiLSTM
 │   │   ├── lstm3_attn_model.py # 3-layer BiLSTM + Attention
-│   │   ├── bilstm4_attn_model.py # 4-layer BiLSTM + Attention (NEW)
+│   │   ├── bilstm4_attn_model.py # 4-layer BiLSTM + Attention
 │   │   └── transformer_model.py  # Transformer
-│   ├── hyperparameter/       # NEW: Hyperparameter tuning
-│   │   ├── __init__.py
+│   ├── hyperparameter/       # Hyperparameter tuning
 │   │   └── optimizer.py       # Optuna optimizer
 │   ├── training/
 │   │   ├── trainer.py       # Training loop
@@ -152,20 +164,21 @@ research_02/
 │       └── logger.py        # Logging utilities
 ├── scripts/
 │   ├── preprocess_data.py
-│   ├── create_hparam_dataset.py  # NEW: Create small dataset for hparam tuning
-│   ├── optuna_tune.py       # NEW: Optuna hyperparameter tuning
-│   ├── optuna_tune.sh       # NEW: Shell wrapper for hparam tuning
+│   ├── create_hparam_dataset.py  # Create small dataset for hparam tuning
+│   ├── optuna_tune.py       # Optuna hyperparameter tuning
+│   ├── optuna_tune.sh       # Shell wrapper for hparam tuning
 │   ├── train.py
 │   ├── test.py
 │   ├── validate.py
 │   ├── backtest.py
 │   ├── predict.py          # Prediction CLI
-│   ├── fix_permissions.py  # Docker permission fix
 │   └── run_all.py
 ├── tests/
 │   ├── test_data_pipeline.py
 │   ├── test_models.py
-│   ├── test_optuna_tune.py  # NEW: Hyperparameter tuning tests
+│   ├── test_sampling.py      # Stock sampling tests
+│   ├── test_optuna_tune.py  # Hyperparameter tuning tests
+│   ├── test_dynamic_config.py # Dynamic config list tests
 │   ├── test_training.py
 │   ├── test_prediction.py   # Prediction tests
 │   ├── test_small_dataset.py
@@ -297,12 +310,13 @@ pytest tests/test_prediction.py -v
 
 ### Test Coverage
 
-The project has 91 unit tests covering:
+The project has 122 unit tests covering:
 - Data pipeline (feature engineering, preprocessing, dataset creation)
 - All model architectures (forward pass, parameter counting)
 - Training loop (train, validate, early stopping)
 - Prediction system (single/batch/interactive modes)
 - End-to-end pipeline (train → validate → test → predict → backtest)
+- **Stock sampling** (balanced group sampling, edge cases)
 - **Hyperparameter tuning** (Optuna optimization, dataset creation)
 
 ## Model Variants

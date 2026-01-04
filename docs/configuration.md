@@ -2,207 +2,256 @@
 
 ## Overview
 
-There are two main configuration files:
+Configuration is managed through JSON files in the `config/` directory:
 
-1. **`config/data_config.py`** - Data sources, features, preprocessing
-2. **`config/model_config.py`** - Model architecture, training hyperparameters
+1. **`config/main.json`** - Data sources, features, preprocessing parameters
+2. **`config/model.json`** - Model architecture, training hyperparameters (all model types)
+3. **`config/hyperparameter.json`** - Hyperparameter search settings
+4. **`config/test.json`** - Testing configuration
+5. **`config/deploy.json`** - Deployment configuration
+6. **`config/validate.json`** - Validation configuration
 
-## Data Configuration
-
-### Basic Settings
+## Loading Configuration
 
 ```python
-from config.data_config import DataConfig
+from src.config import load_config
 
-config = DataConfig(
-    START_DATE="2015-01-01",    # Data start date
-    END_DATE=None,               # None = current date
-    TRAIN_RATIO=0.70,            # Training split ratio
-    TEST_RATIO=0.20,             # Test split ratio
-    VAL_RATIO=0.10               # Validation split ratio
-)
+# Load main config (data settings)
+main_config = load_config('main')
+
+# Load model config
+model_config = load_config('model')
+
+# Load hyperparameter config
+hparam_config = load_config('hyperparameter')
+```
+
+## Data Configuration (`config/main.json`)
+
+### Data Sources
+
+```json
+{
+  "data": {
+    "sources": {
+      "START_DATE": "2015-01-01",
+      "END_DATE": null,
+      "SP500_TICKER_SOURCE": "wikipedia",
+      "USE_YFINANCE_LIVE": true,
+      "COMMODITIES": {
+        "GC=F": "Gold",
+        "HG=F": "Copper",
+        "SI=F": "Silver"
+      },
+      "TREASURY_YIELDS": ["DGS10", "DGS30", "DGS2"]
+    }
+  }
+}
+```
+
+### Modifying Dynamic Lists
+
+The following lists can be modified at runtime:
+
+```python
+from src.config import load_config
+
+config = load_config('main')
+
+# Add new commodity
+config.data.sources.COMMODITIES._data['ZW=F'] = 'Wheat'
+
+# Add new treasury yield
+config.data.sources.TREASURY_YIELDS.append('DGS5')
+
+# Add new EMA period
+config.data.technical_indicators.EMA_PERIODS.append(20)
 ```
 
 ### Sequence Parameters
 
-```python
-config = DataConfig(
-    SEQUENCE_LENGTH=30,           # Lookback window (days)
-    PREDICTION_HORIZON=5,        # Days ahead to predict
-    TARGET_THRESHOLD=10.0        # For target normalization
-)
+```json
+{
+  "data": {
+    "sequences": {
+      "SEQUENCE_LENGTH": 30,
+      "PREDICTION_HORIZON": 5,
+      "TARGET_THRESHOLD": 10.0,
+      "NORMALIZE_TARGET": true
+    }
+  }
+}
 ```
 
 ### Technical Indicators
 
-```python
-config = DataConfig(
-    EMA_PERIODS=(50, 100, 200),  # EMA periods
-    RSI_PERIOD=14,               # RSI period
-    STOCHRSI_PERIOD=14,          # StochRSI period
-    MACD_PARAMS=(12, 26, 9),     # MACD (fast, slow, signal)
-    USE_CANDLESTICK_PATTERNS=True # Enable TA-Lib patterns
-)
-```
-
-### External Data
-
-```python
-config = DataConfig(
-    VIX_SYMBOL="^VIX",
-    COMMODITIES={
-        'GC=F': 'Gold',
-        'HG=F': 'Copper',
-        'ZC=F': 'Corn',
-        'ZS=F': 'Soybeans',
-        'CC=F': 'Cocoa',
-        'SI=F': 'Silver'
-    },
-    TREASURY_YIELDS=('DGS10', 'DGS30', 'DGS2')
-)
-```
-
-### Feature Flags (Ablation)
-
-Disable specific feature groups:
-
-```python
-config = DataConfig(
-    FEATURE_FLAGS={
-        'price_features': True,
-        'ema_features': True,
-        'rsi_features': True,
-        'stochrsi_features': True,
-        'macd_features': True,
-        'candlestick_patterns': True,
-        'vix': True,
-        'commodities': True,
-        'treasury_yields': True,
-        'time_features': True,
+```json
+{
+  "data": {
+    "technical_indicators": {
+      "EMA_PERIODS": [50, 100, 200],
+      "RSI_PERIOD": 14,
+      "STOCHRSI_PERIOD": 14,
+      "MACD_PARAMS": [12, 26, 9]
     }
-)
+  }
+}
 ```
 
-### Normalization
+### Feature Flags
+
+```json
+{
+  "data": {
+    "features": {
+      "FEATURE_FLAGS": {
+        "price_features": true,
+        "ema_features": true,
+        "rsi_features": true,
+        "stochrsi_features": true,
+        "macd_features": true,
+        "candlestick_patterns": true,
+        "vix": true,
+        "commodities": true,
+        "treasury_yields": true,
+        "time_features": true,
+        "financial_metrics": true
+      }
+    }
+  }
+}
+```
+
+## Model Configuration (`config/model.json`)
+
+### Structure
+
+The model config has separate sections for each model type:
+
+```json
+{
+  "model": {
+    "embeddings": {
+      "EMBEDDING_DIM_STOCK": 64,
+      "EMBEDDING_DIM_GROUP": 32,
+      "EMBEDDING_DIM_DAY": 16,
+      "EMBEDDING_DIM_MONTH": 16,
+      "EMBEDDING_DIM_DIVIDEND_FLAG": 8,
+      "DROPOUT_EMBEDDING": 0.1
+    },
+    "training": {
+      "LEARNING_RATE": 0.0001,
+      "WEIGHT_DECAY": 0.00001,
+      "BATCH_SIZE": 128,
+      "NUM_EPOCHS": 200,
+      "EARLY_STOPPING_PATIENCE": 15,
+      "OPTIMIZER": "adam",
+      "SCHEDULER": "reduce_on_plateau"
+    },
+    "loss": {
+      "LOSS_TYPE": "huber",
+      "HUBER_DELTA": 0.1
+    },
+    "models": {
+      "lstm3_attention": {
+        "LSTM3_HIDDEN_SIZE": 256,
+        "LSTM3_NUM_LAYERS": 3,
+        "LSTM3_DROPOUT": 0.2,
+        "LSTM3_USE_LAYER_NORM": true,
+        "LSTM3_ATTENTION_HEADS": 8,
+        "LSTM3_ATTENTION_DROPOUT": 0.1,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "bilstm4_attention": {
+        "LSTM4_HIDDEN_SIZES": [128, 256, 512, 256],
+        "LSTM4_DROPOUT": 0.4,
+        "LSTM4_ATTENTION_HEADS": 4,
+        "LSTM4_ATTENTION_DROPOUT": 0.4,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      }
+    }
+  }
+}
+```
+
+### Accessing Model-Specific Parameters
 
 ```python
-config = DataConfig(
-    NORMALIZATION_METHOD="log_transform",  # or 'standard', 'minmax', 'robust'
-    LOG_TRANSFORM_OFFSET=1.0
-)
+from src.config import load_config
+
+config = load_config('model')
+
+# Access LSTM3 attention parameters
+hidden_size = config.model.models.lstm3_attention.LSTM3_HIDDEN_SIZE
+num_heads = config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS
+
+# Access BiLSTM4 parameters
+hidden_sizes = config.model.models.bilstm4_attention.LSTM4_HIDDEN_SIZES
 ```
 
-## Model Configuration
+### Available Model Types
 
-### Model Selection
-
-```python
-from config.model_config import ModelConfig
-
-config = ModelConfig(
-    MODEL_TYPE="crnn_attention"  # Options: 'crnn', 'rnn', 'rnn_attention',
-                                  #         'crnn_attention', 'transformer'
-)
-```
+- `crnn` - CNN + RNN
+- `rnn` - Simple RNN
+- `rnn_attention` - RNN + Attention
+- `crnn_attention` - CNN + RNN + Attention
+- `transformer` - Transformer model
+- `lstm3` - 3-layer LSTM
+- `lstm3_attention` - 3-layer LSTM + Attention
+- `bilstm4_attention` - 4-layer Bidirectional LSTM + Attention
 
 ### Embedding Dimensions
 
 ```python
-config = ModelConfig(
-    EMBEDDING_DIM_STOCK=64,
-    EMBEDDING_DIM_GROUP=32,
-    EMBEDDING_DIM_DAY=16,
-    EMBEDDING_DIM_MONTH=16
-)
-```
-
-### CNN Architecture
-
-```python
-config = ModelConfig(
-    CNN_CHANNELS=(64, 128),
-    CNN_KERNEL_SIZE=3,
-    CNN_POOL_SIZE=2,
-    CNN_USE_BATCH_NORM=False
-)
-```
-
-### RNN Architecture
-
-```python
-config = ModelConfig(
-    RNN_HIDDEN_SIZE=128,
-    RNN_NUM_LAYERS=2,
-    RNN_DROPOUT=0.2,
-    USE_BIDIRECTIONAL=True
-)
-```
-
-### Attention
-
-```python
-config = ModelConfig(
-    USE_ATTENTION=True,
-    ATTENTION_HEADS=4,
-    ATTENTION_DROPOUT=0.1
-)
-```
-
-### Fully Connected Layers
-
-```python
-config = ModelConfig(
-    FC_HIDDEN_SIZES=(256, 128),
-    FC_DROPOUT=0.3,
-    FC_USE_BATCH_NORM=False
-)
+config.model.embeddings.EMBEDDING_DIM_STOCK = 64
+config.model.embeddings.EMBEDDING_DIM_GROUP = 32
+config.model.embeddings.EMBEDDING_DIM_DAY = 16
+config.model.embeddings.EMBEDDING_DIM_MONTH = 16
+config.model.embeddings.EMBEDDING_DIM_DIVIDEND_FLAG = 8
 ```
 
 ### Training Parameters
 
 ```python
-config = ModelConfig(
-    LEARNING_RATE=1e-4,
-    WEIGHT_DECAY=1e-5,
-    BATCH_SIZE=256,
-    NUM_EPOCHS=200,
-    EARLY_STOPPING_PATIENCE=15,
-    GRADIENT_CLIP_VALUE=1.0
-)
+config.model.training.LEARNING_RATE = 1e-4
+config.model.training.WEIGHT_DECAY = 1e-5
+config.model.training.BATCH_SIZE = 256
+config.model.training.NUM_EPOCHS = 200
+config.model.training.EARLY_STOPPING_PATIENCE = 15
 ```
 
 ### Loss Function
 
 ```python
-config = ModelConfig(
-    LOSS_TYPE="huber",    # Options: 'huber', 'mse', 'mae', 'smooth_l1'
-    HUBER_DELTA=0.1
-)
+config.model.loss.LOSS_TYPE = "huber"  # 'huber', 'mse', 'mae', 'smooth_l1'
+config.model.loss.HUBER_DELTA = 0.1
 ```
 
-### Optimizer
+## Hyperparameter Configuration (`config/hyperparameter.json`)
 
-```python
-config = ModelConfig(
-    OPTIMIZER="adam",     # Options: 'adam', 'adamw', 'sgd', 'rmsprop'
-    SCHEDULER="reduce_on_plateau",  # None, 'reduce_on_plateau', 'cosine', 'step'
-    SCHEDULER_PARAMS={
-        'mode': 'min',
-        'factor': 0.5,
-        'patience': 10
-    }
-)
-```
-
-### Device & Performance
-
-```python
-config = ModelConfig(
-    DEVICE="cuda",         # 'cuda' or 'cpu'
-    NUM_WORKERS=4,
-    PIN_MEMORY=True,
-    USE_MIXED_PRECISION=False
-)
+```json
+{
+  "hyperparameter": {
+    "N_TRIALS": 50,
+    "TIMEOUT": null,
+    "N_JOBS": 1,
+    "MODEL_TYPE": "bilstm4_attention",
+    "HPARAM_STOCKS": 20,
+    "HPARAM_MAX_EPOCHS": 50,
+    "HPARAM_ES_PATIENCE": 10,
+    "LEARNING_RATE_RANGE": [0.00001, 0.001],
+    "LSTM_HIDDEN_SIZE_RANGE": [64, 512],
+    "LSTM_NUM_LAYERS_RANGE": [1, 4],
+    "DROPOUT_RANGE": [0.1, 0.5],
+    "WEIGHT_DECAY_RANGE": [0.000001, 0.001],
+    "SEQUENCE_LENGTH_CHOICES": [20, 30, 60, 90],
+    "BATCH_SIZE_CHOICES": [32, 64, 128]
+  }
+}
 ```
 
 ## Using Custom Configurations
@@ -211,89 +260,47 @@ config = ModelConfig(
 
 ```bash
 python scripts/train.py \
-    --model-type crnn_attention \
+    --model-type lstm3_attention \
     --epochs 100 \
     --batch-size 128 \
     --lr 5e-5
 ```
 
-### Method 2: Config Override File
+### Method 2: Modify JSON Config
 
-Create `config/custom_config.json`:
+Edit `config/model.json`:
 
 ```json
 {
-    "RNN_HIDDEN_SIZE": 256,
-    "ATTENTION_HEADS": 8,
-    "BATCH_SIZE": 128,
-    "LEARNING_RATE": 5e-5
+  "model": {
+    "training": {
+      "LEARNING_RATE": 5e-5,
+      "BATCH_SIZE": 128
+    }
+  }
 }
-```
-
-Then:
-
-```bash
-python scripts/train.py --config config/custom_config.json
 ```
 
 ### Method 3: Python Code
 
 ```python
-from config.model_config import ModelConfig
+from src.config import load_config
 
-config = ModelConfig(
-    RNN_HIDDEN_SIZE=256,
-    ATTENTION_HEADS=8,
-    BATCH_SIZE=128
-)
+config = load_config('model')
 
+# Modify training parameters
+config.model.training.LEARNING_RATE = 5e-5
+config.model.training.BATCH_SIZE = 128
+
+# Use with model
 from src.models import create_model
 
 model = create_model(
-    model_type="crnn_attention",
+    model_type="lstm3_attention",
     num_features=50,
     num_stocks=500,
     num_groups=20,
     config=config
-)
-```
-
-## Preset Configurations
-
-### Quick Training (Less Accurate)
-
-```python
-config = ModelConfig(
-    MODEL_TYPE="rnn",
-    RNN_HIDDEN_SIZE=64,
-    RNN_NUM_LAYERS=1,
-    BATCH_SIZE=512,
-    NUM_EPOCHS=50
-)
-```
-
-### Best Performance
-
-```python
-config = ModelConfig(
-    MODEL_TYPE="crnn_attention",
-    RNN_HIDDEN_SIZE=256,
-    RNN_NUM_LAYERS=2,
-    ATTENTION_HEADS=8,
-    BATCH_SIZE=256,
-    NUM_EPOCHS=200
-)
-```
-
-### Low Memory
-
-```python
-config = ModelConfig(
-    MODEL_TYPE="rnn",
-    RNN_HIDDEN_SIZE=64,
-    BATCH_SIZE=32,
-    NUM_WORKERS=1,
-    PIN_MEMORY=False
 )
 ```
 

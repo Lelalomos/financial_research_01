@@ -13,7 +13,7 @@ import numpy as np
 from typing import Dict, Tuple, Optional
 from pathlib import Path
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.utils.logger import get_logger
 
 
@@ -34,16 +34,16 @@ class FinancialDataset(Dataset):
     def __init__(
         self,
         sequences: Dict[str, np.ndarray],
-        config: Optional[ModelConfig] = None
+        config=None
     ):
         """
         Initialize dataset.
 
         Args:
             sequences: Dictionary with keys: features, stock_id, group_id, day, month, dividend_flag, target
-            config: ModelConfig instance
+            config: Configuration object (defaults to load_config('model') if None)
         """
-        self.config = config or ModelConfig()
+        self.config = config or load_config('model')
         self.logger = get_logger("dataset", log_dir="logs")
 
         # Validate sequences
@@ -147,7 +147,7 @@ def create_data_loaders(
     train_sequences: Dict[str, np.ndarray],
     val_sequences: Optional[Dict[str, np.ndarray]] = None,
     test_sequences: Optional[Dict[str, np.ndarray]] = None,
-    config: Optional[ModelConfig] = None
+    config=None
 ) -> Dict[str, DataLoader]:
     """
     Create PyTorch DataLoaders for train/val/test sets.
@@ -156,12 +156,12 @@ def create_data_loaders(
         train_sequences: Training sequences dictionary
         val_sequences: Validation sequences dictionary (optional)
         test_sequences: Test sequences dictionary (optional)
-        config: ModelConfig instance
+        config: Configuration object (defaults to load_config('model') if None)
 
     Returns:
         Dictionary with DataLoader instances
     """
-    config = config or ModelConfig()
+    config = config or load_config('model')
 
     # Create datasets
     datasets = {
@@ -178,16 +178,19 @@ def create_data_loaders(
     loaders = {}
 
     for split_name, dataset in datasets.items():
-        batch_size = config.VAL_BATCH_SIZE if split_name != 'train' else config.BATCH_SIZE
+        batch_size = config.model.validation.VAL_BATCH_SIZE if split_name != 'train' else config.model.training.BATCH_SIZE
+        # Use same batch size for validation if not specified
+        if batch_size is None:
+            batch_size = config.model.training.BATCH_SIZE
         shuffle = (split_name == 'train')
 
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=shuffle,
-            num_workers=config.NUM_WORKERS,
-            pin_memory=config.PIN_MEMORY,
-            prefetch_factor=config.PREFETCH_FACTOR if config.NUM_WORKERS > 0 else None,
+            num_workers=config.model.device.NUM_WORKERS,
+            pin_memory=config.model.device.PIN_MEMORY,
+            prefetch_factor=config.model.device.PREFETCH_FACTOR if config.model.device.NUM_WORKERS > 0 else None,
             collate_fn=FinancialDataset.collate_fn,
             drop_last=shuffle  # Drop last incomplete batch in training
         )

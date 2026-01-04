@@ -19,7 +19,7 @@ from typing import Dict, Optional, Tuple, Callable
 import numpy as np
 from tqdm import tqdm
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.utils.logger import TrainingLogger
 from .early_stopping import EarlyStopping, ModelCheckpoint
 
@@ -39,7 +39,7 @@ class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        config: ModelConfig,
+        config,
         device: str = 'cuda'
     ):
         """
@@ -47,7 +47,7 @@ class Trainer:
 
         Args:
             model: PyTorch model
-            config: ModelConfig instance
+            config instance
             device: Device to use ('cuda' or 'cpu')
         """
         self.model = model.to(device)
@@ -67,23 +67,23 @@ class Trainer:
 
         # Setup early stopping
         self.early_stopping = EarlyStopping(
-            patience=config.EARLY_STOPPING_PATIENCE,
+            patience=config.model.training.EARLY_STOPPING_PATIENCE,
             mode='min',
             verbose=True
         )
 
         # Setup checkpointing
         self.checkpoint = ModelCheckpoint(
-            save_dir=config.CHECKPOINT_DIR,
+            save_dir=config.model.checkpointing.CHECKPOINT_DIR,
             mode='min',
-            save_best_only=config.SAVE_BEST_ONLY,
-            save_last_n=config.SAVE_LAST_N
+            save_best_only=config.model.checkpointing.SAVE_BEST_ONLY,
+            save_last_n=config.model.checkpointing.SAVE_LAST_N
         )
 
         # Setup TensorBoard
         self.writer = None
-        if config.TENSORBOARD_DIR:
-            self.writer = SummaryWriter(config.TENSORBOARD_DIR)
+        if config.model.logging.TENSORBOARD_DIR:
+            self.writer = SummaryWriter(config.model.logging.TENSORBOARD_DIR)
 
         # Training state
         self.current_epoch = 0
@@ -91,71 +91,71 @@ class Trainer:
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Create optimizer based on config."""
-        if self.config.OPTIMIZER == 'adam':
+        if self.config.model.training.OPTIMIZER == 'adam':
             return optim.Adam(
                 self.model.parameters(),
-                lr=self.config.LEARNING_RATE,
-                weight_decay=self.config.WEIGHT_DECAY
+                lr=self.config.model.training.LEARNING_RATE,
+                weight_decay=self.config.model.training.WEIGHT_DECAY
             )
-        elif self.config.OPTIMIZER == 'adamw':
+        elif self.config.model.training.OPTIMIZER == 'adamw':
             return optim.AdamW(
                 self.model.parameters(),
-                lr=self.config.LEARNING_RATE,
-                weight_decay=self.config.WEIGHT_DECAY
+                lr=self.config.model.training.LEARNING_RATE,
+                weight_decay=self.config.model.training.WEIGHT_DECAY
             )
-        elif self.config.OPTIMIZER == 'sgd':
+        elif self.config.model.training.OPTIMIZER == 'sgd':
             return optim.SGD(
                 self.model.parameters(),
-                lr=self.config.LEARNING_RATE,
+                lr=self.config.model.training.LEARNING_RATE,
                 momentum=0.9,
-                weight_decay=self.config.WEIGHT_DECAY
+                weight_decay=self.config.model.training.WEIGHT_DECAY
             )
-        elif self.config.OPTIMIZER == 'rmsprop':
+        elif self.config.model.training.OPTIMIZER == 'rmsprop':
             return optim.RMSprop(
                 self.model.parameters(),
-                lr=self.config.LEARNING_RATE,
-                weight_decay=self.config.WEIGHT_DECAY
+                lr=self.config.model.training.LEARNING_RATE,
+                weight_decay=self.config.model.training.WEIGHT_DECAY
             )
         else:
-            raise ValueError(f"Unknown optimizer: {self.config.OPTIMIZER}")
+            raise ValueError(f"Unknown optimizer: {self.config.model.training.OPTIMIZER}")
 
     def _create_criterion(self) -> nn.Module:
         """Create loss function based on config."""
-        if self.config.LOSS_TYPE == 'mse':
+        if self.config.model.loss.LOSS_TYPE == 'mse':
             return nn.MSELoss()
-        elif self.config.LOSS_TYPE == 'mae':
+        elif self.config.model.loss.LOSS_TYPE == 'mae':
             return nn.L1Loss()
-        elif self.config.LOSS_TYPE == 'smooth_l1':
+        elif self.config.model.loss.LOSS_TYPE == 'smooth_l1':
             return nn.SmoothL1Loss()
-        elif self.config.LOSS_TYPE == 'huber':
-            return nn.HuberLoss(delta=self.config.HUBER_DELTA)
+        elif self.config.model.loss.LOSS_TYPE == 'huber':
+            return nn.HuberLoss(delta=self.config.model.loss.HUBER_DELTA)
         else:
-            raise ValueError(f"Unknown loss type: {self.config.LOSS_TYPE}")
+            raise ValueError(f"Unknown loss type: {self.config.model.loss.LOSS_TYPE}")
 
     def _create_scheduler(self) -> Optional[object]:
         """Create learning rate scheduler based on config."""
-        if self.config.SCHEDULER is None:
+        if self.config.model.training.SCHEDULER is None:
             return None
-        elif self.config.SCHEDULER == 'reduce_on_plateau':
+        elif self.config.model.training.SCHEDULER == 'reduce_on_plateau':
             params = self.config.get_scheduler_params()
             return optim.lr_scheduler.ReduceLROnPlateau(
                 self.optimizer,
                 **params
             )
-        elif self.config.SCHEDULER == 'cosine':
+        elif self.config.model.training.SCHEDULER == 'cosine':
             params = self.config.get_scheduler_params()
             return optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
                 **params
             )
-        elif self.config.SCHEDULER == 'step':
+        elif self.config.model.training.SCHEDULER == 'step':
             params = self.config.get_scheduler_params()
             return optim.lr_scheduler.StepLR(
                 self.optimizer,
                 **params
             )
         else:
-            raise ValueError(f"Unknown scheduler: {self.config.SCHEDULER}")
+            raise ValueError(f"Unknown scheduler: {self.config.model.training.SCHEDULER}")
 
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """
@@ -189,7 +189,7 @@ class Trainer:
             # Forward pass
             self.optimizer.zero_grad()
 
-            if self.config.USE_MIXED_PRECISION:
+            if self.config.model.training.USE_MIXED_PRECISION:
                 with torch.cuda.amp.autocast():
                     output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                     loss = self.criterion(output, target)
@@ -197,11 +197,11 @@ class Trainer:
                 # Backward pass with gradient scaling
                 self.scaler.scale(loss).backward()
 
-                if self.config.GRADIENT_CLIP_VALUE > 0:
+                if self.config.model.training.GRADIENT_CLIP_VALUE > 0:
                     self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
-                        self.config.GRADIENT_CLIP_VALUE
+                        self.config.model.training.GRADIENT_CLIP_VALUE
                     )
 
                 self.scaler.step(self.optimizer)
@@ -214,10 +214,10 @@ class Trainer:
                 loss.backward()
 
                 # Gradient clipping
-                if self.config.GRADIENT_CLIP_VALUE > 0:
+                if self.config.model.training.GRADIENT_CLIP_VALUE > 0:
                     grad_norm = torch.nn.utils.clip_grad_norm_(
                         self.model.parameters(),
-                        self.config.GRADIENT_CLIP_VALUE
+                        self.config.model.training.GRADIENT_CLIP_VALUE
                     )
                 else:
                     grad_norm = 0.0
@@ -239,7 +239,7 @@ class Trainer:
             })
 
             # Log to TensorBoard
-            if self.writer and batch_idx % self.config.LOG_FREQUENCY == 0:
+            if self.writer and batch_idx % self.config.model.logging.LOG_FREQUENCY == 0:
                 global_step = self.current_epoch * len(train_loader) + batch_idx
                 self.writer.add_scalar('train/batch_loss', loss.item(), global_step)
                 self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], global_step)
@@ -330,10 +330,10 @@ class Trainer:
             Dictionary with training history
         """
         if num_epochs is None:
-            num_epochs = self.config.NUM_EPOCHS
+            num_epochs = self.config.model.training.NUM_EPOCHS
 
         # Setup mixed precision scaler
-        if self.config.USE_MIXED_PRECISION:
+        if self.config.model.training.USE_MIXED_PRECISION:
             self.scaler = torch.cuda.amp.GradScaler()
 
         history = {

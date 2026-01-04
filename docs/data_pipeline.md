@@ -24,7 +24,7 @@ The data pipeline consists of four main stages:
 
 ```python
 from src.data.downloader import DataDownloader
-from config.data_config import DataConfig
+from src.config import load_config
 
 config = DataConfig()
 downloader = DataDownloader(config)
@@ -130,23 +130,20 @@ loaders = create_data_loaders(
 
 ## Configuration
 
-All data parameters are in `config/data_config.py`:
+All data parameters are in `config/main.json`:
 
 ```python
-@dataclass
-class DataConfig:
-    SEQUENCE_LENGTH: int = 30
-    PREDICTION_HORIZON: int = 5
-    NORMALIZATION_METHOD: str = "log_transform"
+from src.config import load_config
 
-    # Feature flags
-    FEATURE_FLAGS: Dict[str, bool] = {
-        'price_features': True,
-        'ema_features': True,
-        'rsi_features': True,
-        'candlestick_patterns': True,
-        'vix': True,
-        'commodities': True,
-        'treasury_yields': True,
-    }
+config = load_config('main')
+
+# Access sequence parameters
+sequence_length = config.data.sequences.SEQUENCE_LENGTH  # 30
+prediction_horizon = config.data.sequences.PREDICTION_HORIZON  # 5
+
+# Access technical indicators
+ema_periods = config.data.technical_indicators.EMA_PERIODS  # [50, 100, 200]
+
+# Access feature flags
+feature_flags = config.data.features.FEATURE_FLAGS
 ```

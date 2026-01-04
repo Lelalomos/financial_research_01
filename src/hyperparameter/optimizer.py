@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from config.model_config import ModelConfig, get_config_for_model, HyperparameterSearchConfig
+from src.config import load_config, Config
 from src.models import create_model
 from src.training.trainer import Trainer
 from src.utils.logger import get_logger
@@ -29,7 +29,8 @@ def create_objective_function(
     num_stocks: int,
     num_groups: int,
     model_type: str,
-    hparam_config: HyperparameterSearchConfig,
+    model_config: Config,
+    hparam_config: Config,
     device: torch.device
 ) -> Callable[[optuna.Trial], float]:
     """
@@ -42,7 +43,8 @@ def create_objective_function(
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
         model_type: Type of model to train
-        hparam_config: Hyperparameter search configuration
+        model_config: Model configuration (for model settings)
+        hparam_config: Hyperparameter configuration (from hyperparameter.json)
         device: Device to train on
 
     Returns:
@@ -70,8 +72,8 @@ def create_objective_function(
             lstm_hidden_sizes = []
             for i in range(num_layers):
                 hidden_size = trial.suggest_int(f'lstm_layer_{i}_hidden',
-                                                 hparam_config.LSTM_HIDDEN_SIZE_RANGE[0],
-                                                 hparam_config.LSTM_HIDDEN_SIZE_RANGE[1])
+                                                 hparam_config.hyperparameter.LSTM_HIDDEN_SIZE_RANGE[0],
+                                                 hparam_config.hyperparameter.LSTM_HIDDEN_SIZE_RANGE[1])
                 lstm_hidden_sizes.append(hidden_size)
 
             # Ensure bidirectional output sizes are consistent
@@ -79,49 +81,49 @@ def create_objective_function(
         else:
             # For other LSTM models
             lstm_hidden_size = trial.suggest_int('lstm_hidden_size',
-                                                  hparam_config.LSTM_HIDDEN_SIZE_RANGE[0],
-                                                  hparam_config.LSTM_HIDDEN_SIZE_RANGE[1])
+                                                  hparam_config.hyperparameter.LSTM_HIDDEN_SIZE_RANGE[0],
+                                                  hparam_config.hyperparameter.LSTM_HIDDEN_SIZE_RANGE[1])
             num_layers = trial.suggest_int('num_layers',
-                                           hparam_config.LSTM_NUM_LAYERS_RANGE[0],
-                                           hparam_config.LSTM_NUM_LAYERS_RANGE[1])
+                                           hparam_config.hyperparameter.LSTM_NUM_LAYERS_RANGE[0],
+                                           hparam_config.hyperparameter.LSTM_NUM_LAYERS_RANGE[1])
             lstm_hidden_sizes = tuple([lstm_hidden_size] * num_layers)
 
         # Common hyperparameters
         learning_rate = trial.suggest_float('learning_rate',
-                                            hparam_config.LEARNING_RATE_RANGE[0],
-                                            hparam_config.LEARNING_RATE_RANGE[1],
+                                            hparam_config.hyperparameter.LEARNING_RATE_RANGE[0],
+                                            hparam_config.hyperparameter.LEARNING_RATE_RANGE[1],
                                             log=True)
         dropout = trial.suggest_float('dropout',
-                                       hparam_config.DROPOUT_RANGE[0],
-                                       hparam_config.DROPOUT_RANGE[1])
+                                       hparam_config.hyperparameter.DROPOUT_RANGE[0],
+                                       hparam_config.hyperparameter.DROPOUT_RANGE[1])
         weight_decay = trial.suggest_float('weight_decay',
-                                           hparam_config.WEIGHT_DECAY_RANGE[0],
-                                           hparam_config.WEIGHT_DECAY_RANGE[1],
+                                           hparam_config.hyperparameter.WEIGHT_DECAY_RANGE[0],
+                                           hparam_config.hyperparameter.WEIGHT_DECAY_RANGE[1],
                                            log=True)
         batch_size = trial.suggest_categorical('batch_size',
-                                               hparam_config.BATCH_SIZE_CHOICES)
+                                               hparam_config.hyperparameter.BATCH_SIZE_CHOICES)
 
         # Create config with suggested hyperparameters
-        config = get_config_for_model(model_type)
-        config.LEARNING_RATE = learning_rate
-        config.DROPOUT = dropout
-        config.WEIGHT_DECAY = weight_decay
-        config.BATCH_SIZE = batch_size
-        config.NUM_EPOCHS = hparam_config.HPARAM_MAX_EPOCHS
-        config.EARLY_STOPPING_PATIENCE = hparam_config.HPARAM_ES_PATIENCE
+        config = load_config('model')
+        config.model.architecture.MODEL_TYPE = model_type
+        config.model.training.LEARNING_RATE = learning_rate
+        config.model.training.WEIGHT_DECAY = weight_decay
+        config.model.training.BATCH_SIZE = batch_size
+        config.model.training.NUM_EPOCHS = hparam_config.hyperparameter.HPARAM_MAX_EPOCHS
+        config.model.training.EARLY_STOPPING_PATIENCE = hparam_config.hyperparameter.HPARAM_ES_PATIENCE
 
         # Set model-specific parameters
         if model_type == 'bilstm4_attention':
-            config.LSTM4_HIDDEN_SIZES = tuple(lstm_hidden_sizes)
-            config.LSTM4_DROPOUT = dropout
+            config.model.architecture.LSTM4_HIDDEN_SIZES = tuple(lstm_hidden_sizes)
+            config.model.architecture.LSTM4_DROPOUT = dropout
         elif model_type in ['lstm3', 'lstm3_attention']:
-            config.LSTM3_HIDDEN_SIZE = lstm_hidden_sizes[0]
-            config.LSTM3_NUM_LAYERS = num_layers
-            config.LSTM3_DROPOUT = dropout
+            config.model.architecture.LSTM3_HIDDEN_SIZE = lstm_hidden_sizes[0]
+            config.model.architecture.LSTM3_NUM_LAYERS = num_layers
+            config.model.architecture.LSTM3_DROPOUT = dropout
         elif model_type in ['crnn', 'rnn', 'rnn_attention', 'crnn_attention']:
-            config.RNN_HIDDEN_SIZE = lstm_hidden_sizes[0]
-            config.RNN_NUM_LAYERS = num_layers
-            config.RNN_DROPOUT = dropout
+            config.model.architecture.RNN_HIDDEN_SIZE = lstm_hidden_sizes[0]
+            config.model.architecture.RNN_NUM_LAYERS = num_layers
+            config.model.architecture.RNN_DROPOUT = dropout
 
         # Update data loaders with new batch size
         train_loader.dataset.batch_size = batch_size
@@ -159,7 +161,7 @@ def create_objective_function(
             return float('inf')
 
         # Report intermediate value for pruning
-        trial.report(val_loss, step=config.NUM_EPOCHS)
+        trial.report(val_loss, step=config.model.training.NUM_EPOCHS)
 
         # Handle pruning based on the intermediate value
         if trial.should_prune():
@@ -181,7 +183,8 @@ class OptunaOptimizer:
         self,
         study_name: Optional[str] = None,
         storage: Optional[str] = None,
-        hparam_config: Optional[HyperparameterSearchConfig] = None
+        model_config: Optional[Config] = None,
+        hparam_config: Optional[Config] = None
     ):
         """
         Initialize Optuna optimizer.
@@ -189,10 +192,13 @@ class OptunaOptimizer:
         Args:
             study_name: Name of the Optuna study
             storage: Optuna storage URL (None = in-memory)
-            hparam_config: Hyperparameter search configuration
+            model_config: Model configuration (for model settings)
+            hparam_config: Hyperparameter configuration (from hyperparameter.json)
         """
-        self.hparam_config = hparam_config or HyperparameterSearchConfig()
-        self.study_name = study_name or f"{self.hparam_config.MODEL_TYPE}_hparam_search"
+        self.model_config = model_config or load_config('model')
+        self.hparam_config = hparam_config or load_config('hyperparameter')
+        model_type = self.hparam_config.hyperparameter.MODEL_TYPE if hasattr(self.hparam_config, 'hyperparameter') else 'bilstm4_attention'
+        self.study_name = study_name or f"{model_type}_hparam_search"
         self.storage = storage
 
         # Create or load study
@@ -227,8 +233,9 @@ class OptunaOptimizer:
         Returns:
             Dictionary with best hyperparameters and study info
         """
-        logger.info(f"Starting hyperparameter search for {self.hparam_config.MODEL_TYPE}")
-        logger.info(f"Number of trials: {self.hparam_config.N_TRIALS}")
+        model_type = self.hparam_config.hyperparameter.MODEL_TYPE if hasattr(self.hparam_config, 'hyperparameter') else 'bilstm4_attention'
+        logger.info(f"Starting hyperparameter search for {model_type}")
+        logger.info(f"Number of trials: {self.hparam_config.hyperparameter.N_TRIALS}")
 
         # Create objective function
         objective = create_objective_function(
@@ -237,7 +244,8 @@ class OptunaOptimizer:
             num_features=num_features,
             num_stocks=num_stocks,
             num_groups=num_groups,
-            model_type=self.hparam_config.MODEL_TYPE,
+            model_type=model_type,
+            model_config=self.model_config,
             hparam_config=self.hparam_config,
             device=device
         )
@@ -245,9 +253,9 @@ class OptunaOptimizer:
         # Run optimization
         self.study.optimize(
             objective,
-            n_trials=self.hparam_config.N_TRIALS,
-            timeout=self.hparam_config.TIMEOUT,
-            n_jobs=self.hparam_config.N_JOBS,
+            n_trials=self.hparam_config.hyperparameter.N_TRIALS,
+            timeout=self.hparam_config.hyperparameter.TIMEOUT,
+            n_jobs=self.hparam_config.hyperparameter.N_JOBS,
             show_progress_bar=True
         )
 
@@ -261,7 +269,7 @@ class OptunaOptimizer:
 
         # Prepare result
         result = {
-            "model_type": self.hparam_config.MODEL_TYPE,
+            "model_type": model_type,
             "best_params": best_params,
             "best_value": best_value,
             "n_trials": len(self.study.trials),
@@ -283,7 +291,7 @@ class OptunaOptimizer:
         """
         # Add model type to filename
         model_type = result["model_type"]
-        output_path = Path(self.hparam_config.BEST_PARAMS_PATH)
+        output_path = Path(self.hparam_config.hyperparameter.BEST_PARAMS_PATH)
 
         # Update path to include model type
         if output_path.name == "best_hyperparameters.json":

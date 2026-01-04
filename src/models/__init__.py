@@ -16,7 +16,7 @@ from typing import Optional, Type
 
 import torch.nn as nn
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from .crnn_model import CRNNModel, create_model as create_crnn
 from .rnn_model import RNNModel, create_model as create_rnn
 from .rnn_attention import RNNAttentionModel, create_model as create_rnn_attention
@@ -58,7 +58,7 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[ModelConfig] = None
+    config: Optional[object] = None
 ) -> nn.Module:
     """
     Create a model by type.
@@ -68,7 +68,7 @@ def create_model(
         num_features: Number of input features
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
-        config: ModelConfig instance
+        config instance
 
     Returns:
         Model instance
@@ -82,10 +82,7 @@ def create_model(
     _, create_fn = _MODEL_REGISTRY[model_type]
 
     if config is None:
-        config = ModelConfig(MODEL_TYPE=model_type)
-    else:
-        # Update config model type
-        config.MODEL_TYPE = model_type
+        config = load_config('model')
 
     return create_fn(
         num_features=num_features,

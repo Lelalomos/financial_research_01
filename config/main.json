@@ -1,0 +1,90 @@
+{
+  "data": {
+    "sources": {
+      "START_DATE": "2000-01-01",
+      "END_DATE": null,
+      "SP500_TICKER_SOURCE": "wikipedia",
+      "USE_YFINANCE_LIVE": true,
+      "INDEX_FILE": "GSPC.json",
+      "RAW_DATA_INDEX_PATH": "raw_data/index",
+      "VIX_SYMBOL": "^VIX",
+      "COMMODITIES": {
+        "GC=F": "Gold",
+        "HG=F": "Copper",
+        "ZC=F": "Corn",
+        "ZS=F": "Soybeans",
+        "CC=F": "Cocoa",
+        "SI=F": "Silver"
+      },
+      "TREASURY_YIELDS": ["DGS10", "DGS30", "DGS2"]
+    },
+    "splits": {
+      "TRAIN_RATIO": 0.7,
+      "TEST_RATIO": 0.2,
+      "VAL_RATIO": 0.1
+    },
+    "sequences": {
+      "SEQUENCE_LENGTH": 30,
+      "PREDICTION_HORIZON": 5,
+      "TARGET_THRESHOLD": 10.0,
+      "NORMALIZE_TARGET": true,
+      "STRIDE": 1
+    },
+    "technical_indicators": {
+      "EMA_PERIODS": [50, 100, 200],
+      "RSI_PERIOD": 14,
+      "STOCHRSI_PERIOD": 14,
+      "MACD_PARAMS": [12, 26, 9]
+    },
+    "candlestick": {
+      "USE_CANDLESTICK_PATTERNS": true
+    },
+    "sector": {
+      "SECTOR_MAPPING_SOURCE": "default",
+      "USE_SECTOR_EMBEDDING": true,
+      "DEFAULT_SECTOR_MAPPING": {}
+    },
+    "features": {
+      "FEATURE_FLAGS": {
+        "price_features": true,
+        "ema_features": true,
+        "rsi_features": true,
+        "stochrsi_features": true,
+        "macd_features": true,
+        "candlestick_patterns": true,
+        "vix": true,
+        "commodities": true,
+        "treasury_yields": true,
+        "time_features": true,
+        "financial_metrics": true
+      }
+    },
+    "normalization": {
+      "NORMALIZATION_METHOD": "log_transform",
+      "LOG_TRANSFORM_OFFSET": 1.0
+    },
+    "filtering": {
+      "MIN_TRADING_DAYS": 252,
+      "MAX_MISSING_RATIO": 0.1
+    },
+    "external_data": {
+      "EXTERNAL_DATA_FILL_METHOD": "ffill",
+      "MAX_EXTERNAL_FILL_DAYS": 5
+    },
+    "download": {
+      "DOWNLOAD_RETRY_ATTEMPTS": 5,
+      "DOWNLOAD_RETRY_DELAY": 5
+    },
+    "financial_metrics": {
+      "USE_FINANCIAL_METRICS": true,
+      "FINANCIAL_METRICS_SOURCE": "raw_data/ticket_data/us",
+      "FINANCIAL_METRICS_FILL_METHOD": "ffill"
+    },
+    "paths": {
+      "RAW_DATA_PATH": "data/raw",
+      "PROCESSED_DATA_PATH": "data/processed",
+      "SPLITS_PATH": "data/splits",
+      "EXTERNAL_DATA_PATH": "data/external"
+    }
+  }
+}

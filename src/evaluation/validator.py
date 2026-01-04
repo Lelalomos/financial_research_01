@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from typing import Dict, Optional
 import json
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.utils.logger import EvaluationLogger
 from .metrics import evaluate_model, print_metrics, calculate_metrics
 
@@ -28,7 +28,7 @@ class Validator:
     def __init__(
         self,
         model: nn.Module,
-        config: ModelConfig,
+        config,
         device: str = 'cuda'
     ):
         """
@@ -36,7 +36,7 @@ class Validator:
 
         Args:
             model: PyTorch model
-            config: ModelConfig instance
+            config instance
             device: Device to use
         """
         self.model = model.to(device)

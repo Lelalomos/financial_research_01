@@ -15,8 +15,8 @@
 set -e
 
 # Default values
-MODEL_TYPE="crnn_attention"
-EPOCHS=100
+MODEL_TYPE="bilstm4_attention"
+EPOCHS=20
 BATCH_SIZE=256
 LEARNING_RATE=0.00001
 STOCKS=""

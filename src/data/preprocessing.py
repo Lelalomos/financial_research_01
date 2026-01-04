@@ -15,7 +15,7 @@ from typing import Dict, Tuple, List, Optional
 from pathlib import Path
 import gc
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.utils.logger import get_logger
 
 
@@ -30,13 +30,15 @@ class DataPreprocessor:
     - Categorical encoding
     """
 
-    def __init__(self, config: DataConfig):
+    def __init__(self, config=None):
         """
         Initialize preprocessor.
 
         Args:
-            config: DataConfig instance
+            config: Configuration object (defaults to load_config('main') if None)
         """
+        if config is None:
+            config = load_config('main')
         self.config = config
         self.logger = get_logger("preprocessing", log_dir="logs")
 
@@ -66,7 +68,7 @@ class DataPreprocessor:
         Returns:
             DataFrame with normalized features
         """
-        self.logger.info(f"Normalizing features using {self.config.NORMALIZATION_METHOD}...")
+        self.logger.info(f"Normalizing features using {self.config.data.normalization.NORMALIZATION_METHOD}...")
 
         result = df.copy()
 
@@ -115,7 +117,7 @@ class DataPreprocessor:
         Returns:
             Normalized data
         """
-        method = self.config.NORMALIZATION_METHOD
+        method = self.config.data.normalization.NORMALIZATION_METHOD
 
         # Handle NaN values
         mask = ~np.isnan(data)
@@ -131,7 +133,7 @@ class DataPreprocessor:
                 self.normalization_params[col_name] = {'min': min_val}
 
             min_val = self.normalization_params[col_name]['min']
-            shifted = valid_data - min_val + self.config.LOG_TRANSFORM_OFFSET
+            shifted = valid_data - min_val + self.config.data.normalization.LOG_TRANSFORM_OFFSET
             normalized = np.log1p(np.maximum(shifted, 0))
 
         elif method == 'standard':
@@ -255,8 +257,8 @@ class DataPreprocessor:
         self.logger.info(f"Date range: {all_dates[0]} to {all_dates[-1]}")
 
         # Calculate split points based on percentage of dates
-        train_end_idx = int(n_dates * self.config.TRAIN_RATIO)
-        val_end_idx = int(n_dates * (self.config.TRAIN_RATIO + self.config.VAL_RATIO))
+        train_end_idx = int(n_dates * self.config.data.splits.TRAIN_RATIO)
+        val_end_idx = int(n_dates * (self.config.data.splits.TRAIN_RATIO + self.config.data.splits.VAL_RATIO))
 
         # Get date boundaries for each split
         # Train: oldest dates (first 70%)
@@ -352,7 +354,7 @@ class DataPreprocessor:
         import shutil
 
         if sequence_length is None:
-            sequence_length = self.config.SEQUENCE_LENGTH
+            sequence_length = self.config.data.sequences.SEQUENCE_LENGTH
 
         self.logger.info(f"Creating sequences (length={sequence_length}) with memory-efficient approach...")
 
@@ -378,8 +380,8 @@ class DataPreprocessor:
 
         for stock in stocks:
             stock_df = df[df[stock_col] == stock]
-            if len(stock_df) >= sequence_length + self.config.PREDICTION_HORIZON:
-                valid_count = len(stock_df) - sequence_length - self.config.PREDICTION_HORIZON + 1
+            if len(stock_df) >= sequence_length + self.config.data.sequences.PREDICTION_HORIZON:
+                valid_count = len(stock_df) - sequence_length - self.config.data.sequences.PREDICTION_HORIZON + 1
                 total_sequences += valid_count
 
         self.logger.info(f"  Total sequences to create: {total_sequences:,}")
@@ -461,7 +463,7 @@ class DataPreprocessor:
             stock_df = df[df[stock_col] == stock].sort_values('date').copy()
 
             # Check if we have enough data
-            if len(stock_df) < sequence_length + self.config.PREDICTION_HORIZON:
+            if len(stock_df) < sequence_length + self.config.data.sequences.PREDICTION_HORIZON:
                 del stock_df
                 continue
 
@@ -469,7 +471,7 @@ class DataPreprocessor:
             feature_matrix = stock_df[feature_cols].values.astype(np.float32)
 
             # Create sequences
-            for i in range(len(stock_df) - sequence_length - self.config.PREDICTION_HORIZON + 1):
+            for i in range(len(stock_df) - sequence_length - self.config.data.sequences.PREDICTION_HORIZON + 1):
                 # Sequence features
                 seq_features = feature_matrix[i:i + sequence_length]
 
@@ -478,7 +480,7 @@ class DataPreprocessor:
                     continue
 
                 # Get target (at end of horizon)
-                target_idx = i + sequence_length + self.config.PREDICTION_HORIZON - 1
+                target_idx = i + sequence_length + self.config.data.sequences.PREDICTION_HORIZON - 1
                 target = stock_df.iloc[target_idx]['target']
 
                 if np.isnan(target):
@@ -679,8 +681,8 @@ class DataPreprocessor:
             'num_groups': num_groups,
             'feature_cols': feature_cols,
             'num_features': len(feature_cols),
-            'sequence_length': self.config.SEQUENCE_LENGTH,
-            'prediction_horizon': self.config.PREDICTION_HORIZON,
+            'sequence_length': self.config.data.sequences.SEQUENCE_LENGTH,
+            'prediction_horizon': self.config.data.sequences.PREDICTION_HORIZON,
         }
 
         self.logger.info("=" * 60)

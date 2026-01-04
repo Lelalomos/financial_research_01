@@ -6,6 +6,7 @@
 #   --start-date DATE    Start date for data download (default: 2000-01-01)
 #   --end-date DATE      End date for data download (default: current)
 #   --stock-limit N      Limit number of stocks from index (e.g., 400)
+#   --stocks N           Sample N stocks balanced across ALL group_ids
 #   --tickers T1 T2 ...  Specific tickers to download
 #   --export-pre-normalize PATH  Export pre-normalization data to this path (parquet format)
 #   --help               Show this help message
@@ -15,7 +16,8 @@ set -e
 # Default values
 START_DATE="2000-01-01"
 END_DATE=""
-STOCK_LIMIT="10"
+STOCK_LIMIT=""
+STOCKS=""
 TICKERS=""
 EXPORT_PRE_NORMALIZE=""
 
@@ -34,6 +36,10 @@ while [[ $# -gt 0 ]]; do
             STOCK_LIMIT="$2"
             shift 2
             ;;
+        --stocks)
+            STOCKS="$2"
+            shift 2
+            ;;
         --tickers)
             shift
             TICKERS="$@"
@@ -50,6 +56,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --start-date DATE    Start date for data download (default: 2000-01-01)"
             echo "  --end-date DATE      End date for data download (default: current)"
             echo "  --stock-limit N      Limit number of stocks from index (e.g., 400 for first 400)"
+            echo "  --stocks N           Sample N stocks balanced across ALL group_ids"
             echo "  --tickers T1 T2 ...  Specific tickers to download (e.g., AAPL MSFT GOOGL)"
             echo "  --export-pre-normalize PATH  Export pre-normalization data to this path"
             echo "  --help               Show this help message"
@@ -74,6 +81,10 @@ if [ -n "$STOCK_LIMIT" ]; then
     CMD="$CMD --stock-limit $STOCK_LIMIT"
 fi
 
+if [ -n "$STOCKS" ]; then
+    CMD="$CMD --stocks $STOCKS"
+fi
+
 if [ -n "$TICKERS" ]; then
     CMD="$CMD --tickers $TICKERS"
 fi
@@ -91,6 +102,9 @@ if [ -n "$END_DATE" ]; then
 fi
 if [ -n "$STOCK_LIMIT" ]; then
     echo "Stock limit: $STOCK_LIMIT"
+fi
+if [ -n "$STOCKS" ]; then
+    echo "Stocks (balanced sampling): $STOCKS"
 fi
 if [ -n "$TICKERS" ]; then
     echo "Tickers: $TICKERS"

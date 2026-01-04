@@ -21,7 +21,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.models import (
     create_model,
     list_available_models,
@@ -52,13 +52,13 @@ ALL_MODEL_TYPES = [
 @pytest.fixture
 def model_config():
     """Create a default model config."""
-    return ModelConfig()
+    from src.config import load_config
+    return load_config('model')
 
 
 @pytest.fixture
 def sample_inputs():
     """Create sample input data for testing."""
-    config = ModelConfig()
     num_features = 50
     num_stocks = 100
     num_groups = 10
@@ -315,7 +315,7 @@ class TestLSTM3Model:
 
     def test_lstm3_num_layers(self, sample_inputs, model_config):
         """Test that LSTM3Model uses 3 layers as configured."""
-        assert model_config.LSTM3_NUM_LAYERS == 3
+        assert model_config.model.models.lstm3.LSTM3_NUM_LAYERS == 3
 
         model = LSTM3Model(
             num_features=sample_inputs['num_features'],
@@ -363,7 +363,7 @@ class TestLSTM3AttentionModel:
 
     def test_lstm3_attention_num_layers(self, sample_inputs, model_config):
         """Test that LSTM3AttentionModel uses 3 layers as configured."""
-        assert model_config.LSTM3_NUM_LAYERS == 3
+        assert model_config.model.models.lstm3_attention.LSTM3_NUM_LAYERS == 3
 
         model = LSTM3AttentionModel(
             num_features=sample_inputs['num_features'],
@@ -385,7 +385,7 @@ class TestLSTM3AttentionModel:
 
         assert hasattr(model, 'attention')
         assert isinstance(model.attention, torch.nn.MultiheadAttention)
-        assert model.attention.num_heads == model_config.LSTM3_ATTENTION_HEADS
+        assert model.attention.num_heads == model_config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS
 
 
 class TestModelRegistry:

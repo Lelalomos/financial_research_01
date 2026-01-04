@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import HyperparameterSearchConfig, get_config_for_model
+from src.config import load_config
 from src.hyperparameter import OptunaOptimizer
 from src.data import FinancialDataset
 from src.utils.logger import get_logger
@@ -114,18 +114,18 @@ def create_data_loaders(data_dir: str, config):
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=config.BATCH_SIZE,
+        batch_size=config.model.training.BATCH_SIZE,
         shuffle=True,
         num_workers=2,
-        pin_memory=True if config.DEVICE == 'cuda' else False
+        pin_memory=True if config.model.device.DEVICE == 'cuda' else False
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=config.BATCH_SIZE,
+        batch_size=config.model.training.BATCH_SIZE,
         shuffle=False,
         num_workers=2,
-        pin_memory=True if config.DEVICE == 'cuda' else False
+        pin_memory=True if config.model.device.DEVICE == 'cuda' else False
     )
 
     logger.info(f"Train samples: {len(train_dataset)}")
@@ -143,16 +143,16 @@ def main():
     logger.info("=" * 60)
 
     # Create hyperparameter config
-    hparam_config = HyperparameterSearchConfig()
-    hparam_config.MODEL_TYPE = args.model_type
-    hparam_config.N_TRIALS = args.n_trials
-    hparam_config.HPARAM_STOCKS = args.stocks
-    hparam_config.HPARAM_YEARS = args.years
-    hparam_config.HPARAM_ALL_YEARS = (args.years is None)
-    hparam_config.HPARAM_MAX_EPOCHS = args.max_epochs
+    hparam_config = load_config('hyperparameter')
+    hparam_config.hyperparameter.MODEL_TYPE = args.model_type
+    hparam_config.hyperparameter.N_TRIALS = args.n_trials
+    hparam_config.hyperparameter.HPARAM_STOCKS = args.stocks
+    hparam_config.hyperparameter.HPARAM_YEARS = args.years
+    hparam_config.hyperparameter.HPARAM_ALL_YEARS = (args.years is None)
+    hparam_config.hyperparameter.HPARAM_MAX_EPOCHS = args.max_epochs
 
     if args.output:
-        hparam_config.BEST_PARAMS_PATH = args.output
+        hparam_config.hyperparameter.BEST_PARAMS_PATH = args.output
 
     # Create small dataset if requested
     if args.create_dataset:
@@ -177,7 +177,8 @@ def main():
             return 1
 
     # Create data loaders
-    train_loader, val_loader = create_data_loaders(args.data_dir, hparam_config)
+    model_config = load_config('model')
+    train_loader, val_loader = create_data_loaders(args.data_dir, model_config)
 
     # Get dataset info
     train_dataset = train_loader.dataset
@@ -194,7 +195,7 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Create optimizer
-    optimizer = OptunaOptimizer(hparam_config=hparam_config)
+    optimizer = OptunaOptimizer(model_config=model_config, hparam_config=hparam_config)
 
     # Run optimization
     logger.info("Starting hyperparameter optimization...")

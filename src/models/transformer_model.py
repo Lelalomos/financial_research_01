@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from .crnn_attention import EmbeddingLayer
 
 
@@ -71,7 +71,7 @@ class TransformerModel(nn.Module):
         num_features: int,
         num_stocks: int,
         num_groups: int,
-        config: ModelConfig
+        config
     ):
         """
         Initialize Transformer model.
@@ -80,7 +80,7 @@ class TransformerModel(nn.Module):
             num_features: Number of input features
             num_stocks: Number of unique stocks
             num_groups: Number of unique groups
-            config: ModelConfig instance
+            config instance
         """
         super().__init__()
 
@@ -98,39 +98,39 @@ class TransformerModel(nn.Module):
         input_dim = embedding_dim + num_features
 
         # Project to d_model if needed
-        self.input_projection = nn.Linear(input_dim, config.TRANSFORMER_D_MODEL)
+        self.input_projection = nn.Linear(input_dim, config.model.models.transformer.TRANSFORMER_D_MODEL)
 
         # Positional encoding
-        self.pos_encoding = PositionalEncoding(config.TRANSFORMER_D_MODEL)
+        self.pos_encoding = PositionalEncoding(config.model.models.transformer.TRANSFORMER_D_MODEL)
 
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=config.TRANSFORMER_D_MODEL,
-            nhead=config.TRANSFORMER_NUM_HEADS,
-            dim_feedforward=config.TRANSFORMER_DIM_FEEDFORWARD,
-            dropout=config.TRANSFORMER_DROPOUT,
+            d_model=config.model.models.transformer.TRANSFORMER_D_MODEL,
+            nhead=config.model.models.transformer.TRANSFORMER_NUM_HEADS,
+            dim_feedforward=config.model.models.transformer.TRANSFORMER_DIM_FEEDFORWARD,
+            dropout=config.model.models.transformer.TRANSFORMER_DROPOUT,
             batch_first=True
         )
 
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer,
-            num_layers=config.TRANSFORMER_NUM_LAYERS
+            num_layers=config.model.models.transformer.TRANSFORMER_NUM_LAYERS
         )
 
         # Fully connected layers
-        fc_input_dim = config.TRANSFORMER_D_MODEL
+        fc_input_dim = config.model.models.transformer.TRANSFORMER_D_MODEL
 
         fc_layers = []
         prev_dim = fc_input_dim
 
-        for fc_size in config.FC_HIDDEN_SIZES:
+        for fc_size in config.model.models.transformer.FC_HIDDEN_SIZES:
             fc_layers.extend([
                 nn.Linear(prev_dim, fc_size),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(config.FC_DROPOUT)
+                nn.Dropout(config.model.models.transformer.FC_DROPOUT)
             ])
 
-            if config.FC_USE_BATCH_NORM:
+            if config.model.models.transformer.FC_USE_BATCH_NORM:
                 fc_layers.append(nn.BatchNorm1d(fc_size))
 
             prev_dim = fc_size
@@ -189,7 +189,7 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[ModelConfig] = None
+    config = None
 ) -> TransformerModel:
     """
     Create Transformer model.
@@ -198,13 +198,14 @@ def create_model(
         num_features: Number of input features
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
-        config: ModelConfig instance
+        config instance
 
     Returns:
         TransformerModel instance
     """
     if config is None:
-        config = ModelConfig()
+        from src.config import load_config
+        config = load_config('model')
 
     return TransformerModel(
         num_features=num_features,

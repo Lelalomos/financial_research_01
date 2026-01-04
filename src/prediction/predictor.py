@@ -15,8 +15,8 @@ from typing import Dict, List, Optional, Union, Tuple
 from pathlib import Path
 import warnings
 
-from config.model_config import ModelConfig
-from config.data_config import DataConfig
+from src.config import load_config
+from src.config import load_config
 from src.data.prediction_prep import PredictionPreparator, create_prediction_preparator
 from src.utils.logger import get_logger
 
@@ -32,8 +32,8 @@ class Predictor:
     def __init__(
         self,
         model_path: str,
-        model_config: Optional[ModelConfig] = None,
-        data_config: Optional[DataConfig] = None,
+        model_config = None,
+        data_config = None,
         preprocessor_path: Optional[str] = None,
         device: Optional[str] = None
     ):
@@ -42,14 +42,20 @@ class Predictor:
 
         Args:
             model_path: Path to trained model checkpoint
-            model_config: ModelConfig instance
-            data_config: DataConfig instance
+            model_config instance
+            data_config instance
             preprocessor_path: Path to saved preprocessor state
             device: Device to use ('cuda', 'cpu', or None for auto)
         """
         self.model_path = Path(model_path)
-        self.model_config = model_config or ModelConfig()
-        self.data_config = data_config or DataConfig()
+        if model_config is None:
+            from src.config import load_config
+            model_config = load_config('model')
+        self.model_config = model_config
+        if data_config is None:
+            from src.config import load_config
+            data_config = load_config('main')
+        self.data_config = data_config
         self.logger = get_logger("predictor", log_dir="logs")
 
         # Set device
@@ -99,7 +105,7 @@ class Predictor:
             self.preparator.set_feature_columns(checkpoint['feature_cols'])
 
         # Create model based on type
-        model_type = self.model_metadata.get('metadata', {}).get('model_type', self.model_config.MODEL_TYPE)
+        model_type = self.model_metadata.get('metadata', {}).get('model_type', 'lstm3_attention')
         self.model = self._create_model(model_type, num_features, num_stocks, num_groups)
 
         # Load model state
@@ -200,10 +206,10 @@ class Predictor:
         predictions = predictions.cpu().numpy()
 
         # Apply inverse tanh transform if target was normalized
-        if not return_raw and self.data_config.NORMALIZE_TARGET:
+        if not return_raw and self.data_config.data.sequences.NORMALIZE_TARGET:
             # The target was normalized using tanh: target = tanh(x / threshold)
             # Inverse: x = threshold * atanh(target)
-            threshold = self.data_config.TARGET_THRESHOLD
+            threshold = self.data_config.data.sequences.TARGET_THRESHOLD
             # Clamp to valid range for atanh
             predictions = np.clip(predictions, -0.99, 0.99)
             predictions = threshold * np.arctanh(predictions)
@@ -312,7 +318,7 @@ class Predictor:
                 stock_df = original_df[original_df['tic'] == ticker].sort_values('date')
 
                 # Count valid sequences for this stock
-                seq_len = self.data_config.SEQUENCE_LENGTH
+                seq_len = self.data_config.data.sequences.SEQUENCE_LENGTH
                 num_possible = max(0, len(stock_df) - seq_len + 1)
 
                 for i in range(num_possible):
@@ -383,7 +389,7 @@ class Predictor:
         metadata = self.model_metadata.get('metadata', {})
         return {
             'model_path': str(self.model_path),
-            'model_type': metadata.get('model_type', self.model_config.MODEL_TYPE),
+            'model_type': metadata.get('model_type', 'lstm3_attention'),
             'num_features': self.model_metadata.get('num_features'),
             'num_stocks': self.model_metadata.get('num_stocks'),
             'num_groups': self.model_metadata.get('num_groups'),
@@ -396,8 +402,8 @@ class Predictor:
 
 def create_predictor(
     model_path: str,
-    model_config: Optional[ModelConfig] = None,
-    data_config: Optional[DataConfig] = None,
+    model_config = None,
+    data_config = None,
     preprocessor_path: Optional[str] = None,
     device: Optional[str] = None
 ) -> Predictor:
@@ -406,8 +412,8 @@ def create_predictor(
 
     Args:
         model_path: Path to trained model checkpoint
-        model_config: ModelConfig instance
-        data_config: DataConfig instance
+        model_config instance
+        data_config instance
         preprocessor_path: Path to saved preprocessor state
         device: Device to use ('cuda', 'cpu', or None for auto)
 

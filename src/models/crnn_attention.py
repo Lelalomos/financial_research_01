@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Optional
 
-from config.model_config import ModelConfig
+from src.config import load_config
 
 
 class EmbeddingLayer(nn.Module):
@@ -24,7 +24,7 @@ class EmbeddingLayer(nn.Module):
         self,
         num_stocks: int,
         num_groups: int,
-        config: ModelConfig
+        config
     ):
         """
         Initialize embedding layer.
@@ -32,36 +32,36 @@ class EmbeddingLayer(nn.Module):
         Args:
             num_stocks: Number of unique stocks
             num_groups: Number of unique groups
-            config: ModelConfig instance
+            config instance
         """
         super().__init__()
 
         self.stock_embedding = nn.Embedding(
             num_embeddings=num_stocks,
-            embedding_dim=config.EMBEDDING_DIM_STOCK
+            embedding_dim=config.model.embeddings.EMBEDDING_DIM_STOCK
         )
 
         self.group_embedding = nn.Embedding(
             num_embeddings=num_groups,
-            embedding_dim=config.EMBEDDING_DIM_GROUP
+            embedding_dim=config.model.embeddings.EMBEDDING_DIM_GROUP
         )
 
         self.day_embedding = nn.Embedding(
             num_embeddings=32,  # Days 1-31 + padding
-            embedding_dim=config.EMBEDDING_DIM_DAY
+            embedding_dim=config.model.embeddings.EMBEDDING_DIM_DAY
         )
 
         self.month_embedding = nn.Embedding(
             num_embeddings=13,  # Months 1-12 + padding
-            embedding_dim=config.EMBEDDING_DIM_MONTH
+            embedding_dim=config.model.embeddings.EMBEDDING_DIM_MONTH
         )
 
         self.dividend_flag_embedding = nn.Embedding(
             num_embeddings=3,  # 0=padding, 1=has dividend, 2=no dividend
-            embedding_dim=config.EMBEDDING_DIM_DIVIDEND_FLAG
+            embedding_dim=config.model.embeddings.EMBEDDING_DIM_DIVIDEND_FLAG
         )
 
-        self.dropout = nn.Dropout(config.DROPOUT_EMBEDDING)
+        self.dropout = nn.Dropout(config.model.embeddings.DROPOUT_EMBEDDING)
 
     def forward(
         self,
@@ -258,7 +258,7 @@ class CRNNAttentionModel(nn.Module):
         num_features: int,
         num_stocks: int,
         num_groups: int,
-        config: ModelConfig
+        config
     ):
         """
         Initialize CRNN + Attention model.
@@ -267,7 +267,7 @@ class CRNNAttentionModel(nn.Module):
             num_features: Number of input features
             num_stocks: Number of unique stocks
             num_groups: Number of unique groups
-            config: ModelConfig instance
+            config instance
         """
         super().__init__()
 
@@ -287,27 +287,27 @@ class CRNNAttentionModel(nn.Module):
         # CNN block
         self.cnn = CNNBlock(
             input_dim=cnn_input_dim,
-            channels=config.CNN_CHANNELS,
-            kernel_size=config.CNN_KERNEL_SIZE,
-            pool_size=config.CNN_POOL_SIZE,
-            use_batch_norm=config.CNN_USE_BATCH_NORM
+            channels=config.model.models.crnn_attention.CNN_CHANNELS,
+            kernel_size=config.model.models.crnn_attention.CNN_KERNEL_SIZE,
+            pool_size=config.model.models.crnn_attention.CNN_POOL_SIZE,
+            use_batch_norm=config.model.models.crnn_attention.CNN_USE_BATCH_NORM
         )
 
         # BiLSTM block
         self.lstm = BiLSTMBlock(
             input_size=self.cnn.output_dim,
-            hidden_size=config.RNN_HIDDEN_SIZE,
-            num_layers=config.RNN_NUM_LAYERS,
-            dropout=config.RNN_DROPOUT,
-            use_layer_norm=config.USE_LAYER_NORM
+            hidden_size=config.model.models.crnn_attention.RNN_HIDDEN_SIZE,
+            num_layers=config.model.models.crnn_attention.RNN_NUM_LAYERS,
+            dropout=config.model.models.crnn_attention.RNN_DROPOUT,
+            use_layer_norm=config.model.models.crnn_attention.USE_LAYER_NORM
         )
 
         # Multihead attention
-        if config.USE_ATTENTION:
+        if config.model.models.crnn_attention.USE_ATTENTION:
             self.attention = nn.MultiheadAttention(
                 embed_dim=self.lstm.output_dim,
-                num_heads=config.ATTENTION_HEADS,
-                dropout=config.ATTENTION_DROPOUT,
+                num_heads=config.model.models.crnn_attention.ATTENTION_HEADS,
+                dropout=config.model.models.crnn_attention.ATTENTION_DROPOUT,
                 batch_first=True
             )
         else:
@@ -319,14 +319,14 @@ class CRNNAttentionModel(nn.Module):
         fc_layers = []
         prev_dim = fc_input_dim
 
-        for fc_size in config.FC_HIDDEN_SIZES:
+        for fc_size in config.model.models.crnn_attention.FC_HIDDEN_SIZES:
             fc_layers.extend([
                 nn.Linear(prev_dim, fc_size),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(config.FC_DROPOUT)
+                nn.Dropout(config.model.models.crnn_attention.FC_DROPOUT)
             ])
 
-            if config.FC_USE_BATCH_NORM:
+            if config.model.models.crnn_attention.FC_USE_BATCH_NORM:
                 fc_layers.append(nn.BatchNorm1d(fc_size))
 
             prev_dim = fc_size
@@ -390,7 +390,7 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[ModelConfig] = None
+    config = None
 ) -> CRNNAttentionModel:
     """
     Create CRNN + Attention model.
@@ -399,13 +399,14 @@ def create_model(
         num_features: Number of input features
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
-        config: ModelConfig instance
+        config instance
 
     Returns:
         CRNNAttentionModel instance
     """
     if config is None:
-        config = ModelConfig()
+        from src.config import load_config
+        config = load_config('model')
 
     return CRNNAttentionModel(
         num_features=num_features,

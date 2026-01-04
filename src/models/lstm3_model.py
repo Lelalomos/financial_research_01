@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from .crnn_attention import EmbeddingLayer, BiLSTMBlock
 
 
@@ -32,7 +32,7 @@ class LSTM3Model(nn.Module):
         num_features: int,
         num_stocks: int,
         num_groups: int,
-        config: ModelConfig
+        config
     ):
         """
         Initialize LSTM3 model.
@@ -41,7 +41,7 @@ class LSTM3Model(nn.Module):
             num_features: Number of input features
             num_stocks: Number of unique stocks
             num_groups: Number of unique groups
-            config: ModelConfig instance
+            config instance
         """
         super().__init__()
 
@@ -61,10 +61,10 @@ class LSTM3Model(nn.Module):
         # 3-layer BiLSTM block (using LSTM3_* parameters)
         self.lstm = BiLSTMBlock(
             input_size=lstm_input_dim,
-            hidden_size=config.LSTM3_HIDDEN_SIZE,
-            num_layers=config.LSTM3_NUM_LAYERS,  # Fixed at 3
-            dropout=config.LSTM3_DROPOUT,
-            use_layer_norm=config.LSTM3_USE_LAYER_NORM
+            hidden_size=config.model.models.lstm3.LSTM3_HIDDEN_SIZE,
+            num_layers=config.model.models.lstm3.LSTM3_NUM_LAYERS,  # Fixed at 3
+            dropout=config.model.models.lstm3.LSTM3_DROPOUT,
+            use_layer_norm=config.model.models.lstm3.LSTM3_USE_LAYER_NORM
         )
 
         # Fully connected layers (same as other models)
@@ -73,14 +73,14 @@ class LSTM3Model(nn.Module):
         fc_layers = []
         prev_dim = fc_input_dim
 
-        for fc_size in config.FC_HIDDEN_SIZES:
+        for fc_size in config.model.models.lstm3.FC_HIDDEN_SIZES:
             fc_layers.extend([
                 nn.Linear(prev_dim, fc_size),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(config.FC_DROPOUT)
+                nn.Dropout(config.model.models.lstm3.FC_DROPOUT)
             ])
 
-            if config.FC_USE_BATCH_NORM:
+            if config.model.models.lstm3.FC_USE_BATCH_NORM:
                 fc_layers.append(nn.BatchNorm1d(fc_size))
 
             prev_dim = fc_size
@@ -133,7 +133,7 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[ModelConfig] = None
+    config = None
 ) -> LSTM3Model:
     """
     Create LSTM3 model.
@@ -142,13 +142,14 @@ def create_model(
         num_features: Number of input features
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
-        config: ModelConfig instance
+        config instance
 
     Returns:
         LSTM3Model instance
     """
     if config is None:
-        config = ModelConfig()
+        from src.config import load_config
+        config = load_config('model')
 
     return LSTM3Model(
         num_features=num_features,

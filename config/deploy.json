@@ -1,0 +1,14 @@
+{
+  "deploy": {
+    "model": {
+      "MODEL_PATH": "checkpoints/best_model.pt",
+      "DEVICE": "cuda",
+      "BATCH_SIZE": 128,
+      "MODEL_TYPE": "lstm3_attention"
+    },
+    "paths": {
+      "LOG_DIR": "logs/deploy",
+      "CHECKPOINT_DIR": "checkpoints/deploy"
+    }
+  }
+}

@@ -21,7 +21,7 @@ import sys
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import HyperparameterSearchConfig, get_config_for_model
+from src.config import load_config, Config
 from src.hyperparameter import OptunaOptimizer, create_objective_function
 from src.models import create_model
 from src.data import FinancialDataset
@@ -64,33 +64,42 @@ def sample_data():
 
 @pytest.fixture
 def hparam_config():
-    """Create hyperparameter search config."""
-    return HyperparameterSearchConfig(
-        MODEL_TYPE="bilstm4_attention",
-        N_TRIALS=2,  # Small number for testing
-        HPARAM_STOCKS=10,
-        HPARAM_MAX_EPOCHS=1,  # 1 epoch for testing
-        HPARAM_ES_PATIENCE=2
-    )
+    """Create hyperparameter search config from hyperparameter.json."""
+    config = load_config('hyperparameter')
+
+    # Override values for testing by modifying the internal dict
+    config._data['hyperparameter']['MODEL_TYPE'] = "bilstm4_attention"
+    config._data['hyperparameter']['N_TRIALS'] = 2  # Small number for testing
+    config._data['hyperparameter']['HPARAM_STOCKS'] = 10
+    config._data['hyperparameter']['HPARAM_MAX_EPOCHS'] = 1  # 1 epoch for testing
+    config._data['hyperparameter']['HPARAM_ES_PATIENCE'] = 2
+
+    return config
+
+
+@pytest.fixture
+def model_config():
+    """Create model config from model.json."""
+    return load_config('model')
 
 
 class TestHyperparameterConfig:
-    """Test HyperparameterSearchConfig."""
+    """Test hyperparameter configuration from JSON."""
 
     def test_config_defaults(self, hparam_config):
         """Test default configuration values."""
-        assert hparam_config.MODEL_TYPE == "bilstm4_attention"
-        assert hparam_config.N_TRIALS == 2
-        assert hparam_config.HPARAM_STOCKS == 10
-        assert hparam_config.HPARAM_ALL_YEARS is True
-        assert hparam_config.HPARAM_YEARS is None
+        assert hparam_config.hyperparameter.MODEL_TYPE == "bilstm4_attention"
+        assert hparam_config.hyperparameter.N_TRIALS == 2
+        assert hparam_config.hyperparameter.HPARAM_STOCKS == 10
+        assert hparam_config.hyperparameter.HPARAM_ALL_YEARS is True
+        assert hparam_config.hyperparameter.HPARAM_YEARS is None
 
     def test_config_ranges(self, hparam_config):
         """Test hyperparameter search ranges."""
-        assert hparam_config.LEARNING_RATE_RANGE == (1e-5, 1e-3)
-        assert hparam_config.LSTM_HIDDEN_SIZE_RANGE == (64, 512)
-        assert hparam_config.DROPOUT_RANGE == (0.1, 0.5)
-        assert hparam_config.SEQUENCE_LENGTH_CHOICES == (20, 30, 60, 90)
+        assert hparam_config.hyperparameter.LEARNING_RATE_RANGE == [1e-5, 1e-3]
+        assert hparam_config.hyperparameter.LSTM_HIDDEN_SIZE_RANGE == [64, 512]
+        assert hparam_config.hyperparameter.DROPOUT_RANGE == [0.1, 0.5]
+        assert hparam_config.hyperparameter.SEQUENCE_LENGTH_CHOICES == [20, 30, 60, 90]
 
 
 class TestDatasetCreation:
@@ -98,7 +107,7 @@ class TestDatasetCreation:
 
     def test_all_groups_represented(self, sample_data):
         """Test that all group_ids are represented when sampling."""
-        from scripts.create_hparam_dataset import sample_stocks_by_group
+        from src.data.sampling import sample_stocks_by_group
 
         # Sample 6 stocks from 3 groups
         selected = sample_stocks_by_group(sample_data, n_stocks=6, seed=42)
@@ -112,7 +121,7 @@ class TestDatasetCreation:
 
     def test_group_balance(self, sample_data):
         """Test that groups are balanced."""
-        from scripts.create_hparam_dataset import sample_stocks_by_group
+        from src.data.sampling import sample_stocks_by_group
 
         selected = sample_stocks_by_group(sample_data, n_stocks=9, seed=42)
 
@@ -134,7 +143,7 @@ class TestDatasetCreation:
 
     def test_dataset_size(self, sample_data):
         """Test that dataset size is correct."""
-        from scripts.create_hparam_dataset import sample_stocks_by_group
+        from src.data.sampling import sample_stocks_by_group
 
         n_stocks = 6
         selected = sample_stocks_by_group(sample_data, n_stocks=n_stocks, seed=42)
@@ -206,7 +215,7 @@ class TestOptunaObjective:
 
         return train_loader, val_loader
 
-    def test_objective_function_creates_model(self, mock_data_loaders, hparam_config):
+    def test_objective_function_creates_model(self, mock_data_loaders, model_config, hparam_config):
         """Test that objective function can create a model."""
         import optuna
         from src.hyperparameter.optimizer import create_objective_function
@@ -220,6 +229,7 @@ class TestOptunaObjective:
             num_stocks=10,
             num_groups=3,
             model_type="bilstm4_attention",
+            model_config=model_config,
             hparam_config=hparam_config,
             device=torch.device('cpu')
         )
@@ -241,16 +251,16 @@ class TestOptunaObjective:
 class TestOptunaOptimizer:
     """Test OptunaOptimizer class."""
 
-    def test_optimizer_initialization(self, hparam_config):
+    def test_optimizer_initialization(self, model_config, hparam_config):
         """Test that optimizer initializes correctly."""
-        optimizer = OptunaOptimizer(hparam_config=hparam_config)
+        optimizer = OptunaOptimizer(model_config=model_config, hparam_config=hparam_config)
 
         assert optimizer.study is not None
         assert optimizer.study.direction.name == 'MINIMIZE'
 
-    def test_best_params_retrieval(self, hparam_config):
+    def test_best_params_retrieval(self, model_config, hparam_config):
         """Test getting best parameters."""
-        optimizer = OptunaOptimizer(hparam_config=hparam_config)
+        optimizer = OptunaOptimizer(model_config=model_config, hparam_config=hparam_config)
 
         # Should return empty dict or raise error when no trials
         try:
@@ -267,9 +277,6 @@ class TestHyperparameterSpace:
     def test_bilstm4_attention_space(self):
         """Test hyperparameter space for bilstm4_attention."""
         import optuna
-        from src.hyperparameter.optimizer import create_objective_function
-
-        config = HyperparameterSearchConfig(MODEL_TYPE="bilstm4_attention")
 
         # Create a study to test parameter suggestions
         study = optuna.create_study(direction='minimize')

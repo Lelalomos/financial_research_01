@@ -16,7 +16,7 @@ import pandas as pd
 from typing import Dict, Optional, List
 from pathlib import Path
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.utils.logger import EvaluationLogger
 from .metrics import (
     evaluate_model,
@@ -38,7 +38,7 @@ class Backtester:
     def __init__(
         self,
         model: nn.Module,
-        config: ModelConfig,
+        config,
         device: str = 'cuda'
     ):
         """
@@ -46,7 +46,7 @@ class Backtester:
 
         Args:
             model: PyTorch model
-            config: ModelConfig instance
+            config instance
             device: Device to use
         """
         self.model = model.to(device)

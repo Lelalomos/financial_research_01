@@ -18,8 +18,8 @@ from typing import Dict, Any
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import ModelConfig
-from config.data_config import DataConfig
+from src.config import load_config
+from src.config import load_config
 from src.prediction.predictor import create_predictor
 from src.utils.logger import get_logger
 

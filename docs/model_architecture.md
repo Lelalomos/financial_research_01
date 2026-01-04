@@ -142,50 +142,35 @@ model = TransformerModel(
 
 ## Configuration
 
-All model parameters are in `config/model_config.py`:
+All model parameters are in `config/model.json` with separate sections for each model type:
 
 ```python
-@dataclass
-class ModelConfig:
-    # Model selection
-    MODEL_TYPE: str = "crnn_attention"
+from src.config import load_config
 
-    # Embeddings
-    EMBEDDING_DIM_STOCK: int = 64
-    EMBEDDING_DIM_GROUP: int = 32
-    EMBEDDING_DIM_DAY: int = 16
-    EMBEDDING_DIM_MONTH: int = 16
+config = load_config('model')
 
-    # CNN
-    CNN_CHANNELS: tuple = (64, 128)
-    CNN_KERNEL_SIZE: int = 3
+# Access embeddings (shared across all models)
+stock_emb_dim = config.model.embeddings.EMBEDDING_DIM_STOCK  # 64
 
-    # RNN
-    RNN_HIDDEN_SIZE: int = 128
-    RNN_NUM_LAYERS: int = 2
-    USE_BIDIRECTIONAL: bool = True
+# Access model-specific parameters (e.g., LSTM3+Attention)
+lstm3_hidden = config.model.models.lstm3_attention.LSTM3_HIDDEN_SIZE  # 256
+lstm3_heads = config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS  # 8
 
-    # Attention
-    ATTENTION_HEADS: int = 4
-
-    # Training
-    LEARNING_RATE: float = 1e-4
-    BATCH_SIZE: int = 256
-    NUM_EPOCHS: int = 200
-    EARLY_STOPPING_PATIENCE: int = 15
+# Access training parameters (shared)
+learning_rate = config.model.training.LEARNING_RATE  # 0.0001
+batch_size = config.model.training.BATCH_SIZE  # 128
 ```
 
 ## Usage Example
 
 ```python
 from src.models import create_model
-from config.model_config import ModelConfig
+from src.config import load_config
 
-config = ModelConfig(
-    MODEL_TYPE="crnn_attention",
-    RNN_HIDDEN_SIZE=256,
-    ATTENTION_HEADS=8
-)
+config = load_config('model')
+
+# Optionally modify parameters
+config.model.training.LEARNING_RATE = 1e-4
 
 model = create_model(
     model_type="crnn_attention",

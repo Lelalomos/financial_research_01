@@ -15,8 +15,8 @@ from typing import Dict, List, Optional, Union, Tuple
 from pathlib import Path
 import warnings
 
-from config.data_config import DataConfig
-from config.model_config import ModelConfig
+from src.config import load_config
+from src.config import load_config
 from src.data.feature_engineering import FeatureEngineer
 from src.utils.logger import get_logger
 
@@ -42,8 +42,8 @@ class PredictionPreparator:
 
     def __init__(
         self,
-        data_config: DataConfig,
-        model_config: ModelConfig,
+        data_config,
+        model_config,
         scaler_path: Optional[str] = None,
         encoders_path: Optional[str] = None
     ):
@@ -51,8 +51,8 @@ class PredictionPreparator:
         Initialize prediction preparator.
 
         Args:
-            data_config: DataConfig instance
-            model_config: ModelConfig instance
+            data_config instance
+            model_config instance
             scaler_path: Path to saved scaler parameters (optional)
             encoders_path: Path to saved encoders (optional)
         """
@@ -390,7 +390,7 @@ class PredictionPreparator:
             Dictionary with sequences (features, stock_id, group_id, day, month, dividend_flag)
         """
         if sequence_length is None:
-            sequence_length = self.data_config.SEQUENCE_LENGTH
+            sequence_length = self.data_config.data.sequences.SEQUENCE_LENGTH
 
         self.logger.info(f"Creating sequences with length {sequence_length}...")
 
@@ -549,28 +549,28 @@ class PredictionPreparator:
 
 
 def create_prediction_preparator(
-    data_config: Optional[DataConfig] = None,
-    model_config: Optional[ModelConfig] = None,
+    data_config = None,
+    model_config = None,
     preprocessor_path: Optional[str] = None
 ) -> PredictionPreparator:
     """
     Create a PredictionPreparator instance.
 
     Args:
-        data_config: DataConfig instance
-        model_config: ModelConfig instance
+        data_config instance
+        model_config instance
         preprocessor_path: Path to saved preprocessor state
 
     Returns:
         PredictionPreparator instance
     """
     if data_config is None:
-        from config.data_config import default_data_config
-        data_config = default_data_config
+        from src.config import load_config
+        data_config = load_config('main')
 
     if model_config is None:
-        from config.model_config import default_model_config
-        model_config = default_model_config
+        from src.config import load_config
+        model_config = load_config('model')
 
     preparator = PredictionPreparator(data_config, model_config)
 

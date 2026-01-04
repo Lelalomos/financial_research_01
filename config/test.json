@@ -1,0 +1,22 @@
+{
+  "test": {
+    "data": {
+      "START_DATE": "2023-01-01",
+      "END_DATE": null,
+      "N_STOCKS": 10,
+      "N_DAYS": 200,
+      "SEQUENCE_LENGTH": 30,
+      "BATCH_SIZE": 16
+    },
+    "model": {
+      "MODEL_TYPE": "lstm3_attention",
+      "NUM_EPOCHS": 2,
+      "EARLY_STOPPING_PATIENCE": 2,
+      "BATCH_SIZE": 16
+    },
+    "paths": {
+      "TEST_DATA_DIR": "data/test",
+      "TEST_CHECKPOINT_DIR": "checkpoints/test"
+    }
+  }
+}

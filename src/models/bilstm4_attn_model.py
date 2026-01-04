@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from typing import Optional, Tuple
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from .crnn_attention import EmbeddingLayer
 
 
@@ -136,7 +136,7 @@ class BiLSTM4AttentionModel(nn.Module):
         num_features: int,
         num_stocks: int,
         num_groups: int,
-        config: ModelConfig
+        config
     ):
         """
         Initialize BiLSTM4 + Attention model.
@@ -145,7 +145,7 @@ class BiLSTM4AttentionModel(nn.Module):
             num_features: Number of input features
             num_stocks: Number of unique stocks
             num_groups: Number of unique groups
-            config: ModelConfig instance
+            config instance
         """
         super().__init__()
 
@@ -165,21 +165,21 @@ class BiLSTM4AttentionModel(nn.Module):
         # 4-layer BiLSTM block with variable hidden sizes
         self.lstm = BiLSTM4Block(
             input_size=lstm_input_dim,
-            hidden_sizes=config.LSTM4_HIDDEN_SIZES,
-            dropout=config.LSTM4_DROPOUT
+            hidden_sizes=config.model.models.bilstm4_attention.LSTM4_HIDDEN_SIZES,
+            dropout=config.model.models.bilstm4_attention.LSTM4_DROPOUT
         )
 
         # Multihead attention (4 heads, dropout 0.4)
         self.attention = nn.MultiheadAttention(
             embed_dim=self.lstm.output_dim,
-            num_heads=config.LSTM4_ATTENTION_HEADS,
-            dropout=config.LSTM4_ATTENTION_DROPOUT,
+            num_heads=config.model.models.bilstm4_attention.LSTM4_ATTENTION_HEADS,
+            dropout=config.model.models.bilstm4_attention.LSTM4_ATTENTION_DROPOUT,
             batch_first=True
         )
 
         # Single Linear FC layer
         self.fc = nn.Linear(self.lstm.output_dim, 1)
-        self.fc_dropout = nn.Dropout(config.LSTM4_DROPOUT)
+        self.fc_dropout = nn.Dropout(config.model.models.bilstm4_attention.LSTM4_DROPOUT)
 
     def forward(
         self,
@@ -232,7 +232,7 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[ModelConfig] = None
+    config = None
 ) -> BiLSTM4AttentionModel:
     """
     Create BiLSTM4 + Attention model.
@@ -241,13 +241,14 @@ def create_model(
         num_features: Number of input features
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
-        config: ModelConfig instance
+        config instance
 
     Returns:
         BiLSTM4AttentionModel instance
     """
     if config is None:
-        config = ModelConfig()
+        from src.config import load_config
+        config = load_config('model')
 
     return BiLSTM4AttentionModel(
         num_features=num_features,

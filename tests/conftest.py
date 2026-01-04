@@ -14,8 +14,7 @@ import pytest
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
 from src.data.dataset import FinancialDataset, create_data_loaders
@@ -56,8 +55,11 @@ def df():
 
 @pytest.fixture
 def data_config():
-    """Fixture that provides DataConfig instance."""
-    return DataConfig(SEQUENCE_LENGTH=20, PREDICTION_HORIZON=1)
+    """Fixture that provides data config."""
+    config = load_config('main')
+    config.data.sequences.SEQUENCE_LENGTH = 20
+    config.data.sequences.PREDICTION_HORIZON = 1
+    return config
 
 
 @pytest.fixture
@@ -84,8 +86,11 @@ def info(sequences):
 
 @pytest.fixture
 def model_config():
-    """Fixture that provides ModelConfig instance."""
-    return ModelConfig(BATCH_SIZE=8, NUM_EPOCHS=2)
+    """Fixture that provides model config."""
+    config = load_config('model')
+    config.model.training.BATCH_SIZE = 8
+    config.model.training.NUM_EPOCHS = 2
+    return config
 
 
 @pytest.fixture

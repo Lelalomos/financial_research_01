@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, Optional, List
 from dataclasses import dataclass
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.utils.logger import get_logger
 
 
@@ -39,16 +39,16 @@ class FinancialMetricsLoader:
     This class extracts those metrics and calculates ratios from quarterly data.
     """
 
-    def __init__(self, config: DataConfig):
+    def __init__(self, config):
         """
         Initialize the financial metrics loader.
 
         Args:
-            config: DataConfig instance with paths and settings
+            config instance with paths and settings
         """
         self.config = config
         self.logger = get_logger("financial_metrics", log_dir="logs")
-        self.raw_data_path = Path(self.config.FINANCIAL_METRICS_SOURCE)
+        self.raw_data_path = Path(self.config.data.financial_metrics.FINANCIAL_METRICS_SOURCE)
 
         if not self.raw_data_path.exists():
             self.logger.warning(f"Financial metrics source path not found: {self.raw_data_path}")
@@ -361,7 +361,7 @@ class FinancialMetricsLoader:
         daily_metrics = self.quarterly_to_daily(
             quarterly_df,
             daily_price_df,
-            fill_method=self.config.FINANCIAL_METRICS_FILL_METHOD
+            fill_method=self.config.data.financial_metrics.FINANCIAL_METRICS_FILL_METHOD
         )
 
         # Add highlights metrics (broadcast same value to all dates)

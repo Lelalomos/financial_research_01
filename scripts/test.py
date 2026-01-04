@@ -13,7 +13,7 @@ import torch
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import get_config_for_model
+from src.config import load_config
 from src.data.dataset import FinancialDataset
 from src.models import create_model
 from src.evaluation import evaluate_model, print_metrics
@@ -101,7 +101,7 @@ def main():
     logger.info("=" * 60)
 
     # Load config
-    config = get_config_for_model(args.model_type)
+    config = load_config('model')
 
     # Load data
     data_dir = Path(args.data_dir)
@@ -125,9 +125,9 @@ def main():
     dataset = FinancialDataset(sequences, config)
     loader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=config.BATCH_SIZE,
+        batch_size=config.model.training.BATCH_SIZE,
         shuffle=False,
-        num_workers=config.NUM_WORKERS
+        num_workers=config.model.device.NUM_WORKERS
     )
 
     # Get embedding sizes
@@ -147,7 +147,7 @@ def main():
     # Load checkpoint
     checkpoint_path = args.model
     if checkpoint_path == 'best':
-        checkpoint_path = Path(config.CHECKPOINT_DIR) / 'best_model.pth'
+        checkpoint_path = Path(config.model.checkpointing.CHECKPOINT_DIR) / 'best_model.pth'
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 

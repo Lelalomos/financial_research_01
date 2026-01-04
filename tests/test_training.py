@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.models import create_model
 from src.training import Trainer, EarlyStopping, ModelCheckpoint
 from src.data.dataset import FinancialDataset
@@ -23,7 +23,10 @@ class TestTraining(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.config = ModelConfig(NUM_EPOCHS=2, BATCH_SIZE=4, EARLY_STOPPING_PATIENCE=2)
+        self.config = load_config('model')
+        self.config.model.training.NUM_EPOCHS = 2
+        self.config.model.training.BATCH_SIZE = 4
+        self.config.model.training.EARLY_STOPPING_PATIENCE = 2
         self.device = 'cpu'
 
         # Create sample data

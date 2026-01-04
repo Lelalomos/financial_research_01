@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple, Set
 from pathlib import Path
 import json
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.utils.logger import get_logger
 from src.data.financial_metrics_loader import FinancialMetricsLoader
 
@@ -34,20 +34,22 @@ class FeatureEngineer:
     - Target calculation (percent change)
     """
 
-    def __init__(self, config: DataConfig, sector_mapping: Optional[Dict[str, str]] = None):
+    def __init__(self, config=None, sector_mapping: Optional[Dict[str, str]] = None):
         """
         Initialize feature engineer.
 
         Args:
-            config: DataConfig instance
+            config: Configuration object (defaults to load_config('main') if None)
             sector_mapping: Optional dict mapping ticker -> sector/group.
                           If None, will load from index file.
         """
+        if config is None:
+            config = load_config('main')
         self.config = config
         self.logger = get_logger("feature_engineering", log_dir="logs")
 
         # Initialize financial metrics loader if enabled
-        if config.FEATURE_FLAGS.get('financial_metrics', False):
+        if config.data.features.FEATURE_FLAGS.get('financial_metrics', False):
             self.financial_loader = FinancialMetricsLoader(config)
         else:
             self.financial_loader = None
@@ -65,7 +67,7 @@ class FeatureEngineer:
         Returns:
             Dictionary mapping ticker symbol to sector name
         """
-        index_path = Path(self.config.RAW_DATA_INDEX_PATH) / self.config.INDEX_FILE
+        index_path = Path(self.config.data.sources.RAW_DATA_INDEX_PATH) / self.config.data.sources.INDEX_FILE
         sector_map = {}
 
         try:
@@ -151,35 +153,35 @@ class FeatureEngineer:
             stock_df = stock_df.sort_values('date')
 
             # Calculate EMAs
-            for period in self.config.EMA_PERIODS:
-                if self.config.FEATURE_FLAGS.get('ema_features', True):
+            for period in self.config.data.technical_indicators.EMA_PERIODS:
+                if self.config.data.features.FEATURE_FLAGS.get('ema_features', True):
                     stock_df[f'ema_{period}'] = talib.EMA(stock_df['close'], timeperiod=period)
 
             # Calculate RSI
-            if self.config.FEATURE_FLAGS.get('rsi_features', True):
-                stock_df[f'rsi_{self.config.RSI_PERIOD}'] = talib.RSI(
+            if self.config.data.features.FEATURE_FLAGS.get('rsi_features', True):
+                stock_df[f'rsi_{self.config.data.technical_indicators.RSI_PERIOD}'] = talib.RSI(
                     stock_df['close'],
-                    timeperiod=self.config.RSI_PERIOD
+                    timeperiod=self.config.data.technical_indicators.RSI_PERIOD
                 ) / 100.0  # Normalize to 0-1
 
             # Calculate Stochastic RSI
-            if self.config.FEATURE_FLAGS.get('stochrsi_features', True):
+            if self.config.data.features.FEATURE_FLAGS.get('stochrsi_features', True):
                 stochrsi = talib.STOCHRSI(
                     stock_df['close'],
-                    timeperiod=self.config.STOCHRSI_PERIOD,
+                    timeperiod=self.config.data.technical_indicators.STOCHRSI_PERIOD,
                     fastk_period=14,
                     fastd_period=3,
                     fastd_matype=0
                 )
-                stock_df[f'stochrsi_{self.config.STOCHRSI_PERIOD}'] = stochrsi[0] / 100.0
+                stock_df[f'stochrsi_{self.config.data.technical_indicators.STOCHRSI_PERIOD}'] = stochrsi[0] / 100.0
 
             # Calculate MACD
-            if self.config.FEATURE_FLAGS.get('macd_features', True):
+            if self.config.data.features.FEATURE_FLAGS.get('macd_features', True):
                 macd, macdsignal, macdhist = talib.MACD(
                     stock_df['close'],
-                    fastperiod=self.config.MACD_PARAMS[0],
-                    slowperiod=self.config.MACD_PARAMS[1],
-                    signalperiod=self.config.MACD_PARAMS[2]
+                    fastperiod=self.config.data.technical_indicators.MACD_PARAMS[0],
+                    slowperiod=self.config.data.technical_indicators.MACD_PARAMS[1],
+                    signalperiod=self.config.data.technical_indicators.MACD_PARAMS[2]
                 )
                 stock_df['macd'] = macd
                 stock_df['macd_signal'] = macdsignal
@@ -201,7 +203,7 @@ class FeatureEngineer:
         Returns:
             DataFrame with added candlestick pattern columns
         """
-        if not self.config.FEATURE_FLAGS.get('candlestick_patterns', True):
+        if not self.config.data.features.FEATURE_FLAGS.get('candlestick_patterns', True):
             self.logger.info("Skipping candlestick patterns (disabled in config)")
             return df
 
@@ -257,7 +259,7 @@ class FeatureEngineer:
         Returns:
             DataFrame with added time features
         """
-        if not self.config.FEATURE_FLAGS.get('time_features', True):
+        if not self.config.data.features.FEATURE_FLAGS.get('time_features', True):
             self.logger.info("Skipping time features (disabled in config)")
             return df
 
@@ -290,7 +292,7 @@ class FeatureEngineer:
         Returns:
             DataFrame with target column
         """
-        self.logger.info(f"Calculating target (prediction horizon: {self.config.PREDICTION_HORIZON} days)...")
+        self.logger.info(f"Calculating target (prediction horizon: {self.config.data.sequences.PREDICTION_HORIZON} days)...")
 
         result = df.copy()
 
@@ -303,12 +305,12 @@ class FeatureEngineer:
             stock_df = stock_df.sort_values('date')
 
             # Calculate future returns
-            future_close = stock_df['close'].shift(-self.config.PREDICTION_HORIZON)
+            future_close = stock_df['close'].shift(-self.config.data.sequences.PREDICTION_HORIZON)
             target = (future_close - stock_df['close']) / stock_df['close'] * 100
 
             # Apply tanh normalization if enabled
-            if self.config.NORMALIZE_TARGET:
-                threshold = self.config.TARGET_THRESHOLD
+            if self.config.data.sequences.NORMALIZE_TARGET:
+                threshold = self.config.data.sequences.TARGET_THRESHOLD
                 target = np.tanh(target / threshold)
 
             stock_df['target'] = target
@@ -357,7 +359,7 @@ class FeatureEngineer:
         result = stock_df.copy()
 
         # Merge VIX
-        if vix_df is not None and self.config.FEATURE_FLAGS.get('vix', False):
+        if vix_df is not None and self.config.data.features.FEATURE_FLAGS.get('vix', False):
             result = pd.merge(
                 result,
                 vix_df[['date', 'vix']],
@@ -367,18 +369,18 @@ class FeatureEngineer:
             self.logger.info(f"Merged VIX data")
 
         # Merge commodities
-        if commodities_df is not None and self.config.FEATURE_FLAGS.get('commodities', False):
-            commodity_cols = ['date'] + list(self.config.COMMODITIES.values())
+        if commodities_df is not None and self.config.data.features.FEATURE_FLAGS.get('commodities', False):
+            commodity_cols = ['date'] + list(self.config.data.sources.COMMODITIES.values())
             result = pd.merge(
                 result,
                 commodities_df[commodity_cols],
                 on='date',
                 how='left'
             )
-            self.logger.info(f"Merged {len(self.config.COMMODITIES)} commodities")
+            self.logger.info(f"Merged {len(self.config.data.sources.COMMODITIES)} commodities")
 
         # Merge treasury yields
-        if treasury_df is not None and self.config.FEATURE_FLAGS.get('treasury_yields', False):
+        if treasury_df is not None and self.config.data.features.FEATURE_FLAGS.get('treasury_yields', False):
             result = pd.merge(
                 result,
                 treasury_df[['date', 'bondyield']],
@@ -404,7 +406,7 @@ class FeatureEngineer:
         Returns:
             DataFrame with added financial metric columns
         """
-        if not self.config.FEATURE_FLAGS.get('financial_metrics', False):
+        if not self.config.data.features.FEATURE_FLAGS.get('financial_metrics', False):
             self.logger.info("Skipping financial metrics (disabled in config)")
             return df
 
@@ -455,7 +457,9 @@ class FeatureEngineer:
             )
 
             self.logger.info(f"Added financial metrics for {successful_tickers}/{len(tickers)} tickers")
-            self.logger.info(f"Added columns: {', '.join(self.config.financial_metrics_columns)}")
+            financial_metrics_columns = ['pe_ratio', 'peg_ratio', 'eps', 'dividend_flag', 'roe', 'roi',
+                                         'debt_to_equity', 'debt_to_asset', 'current_ratio']
+            self.logger.info(f"Added columns: {', '.join(financial_metrics_columns)}")
             self.logger.info(f"Shape: {result.shape}")
         else:
             self.logger.warning("No financial metrics added - all tickers failed to load")
@@ -557,9 +561,10 @@ class FeatureEngineer:
         rsi_features = [c for c in feature_cols if 'rsi' in c.lower()]
         macd_features = [c for c in feature_cols if 'macd' in c.lower()]
         pattern_features = [c for c in feature_cols if c.startswith('CDL')]
-        external_features = [c for c in feature_cols if c in ['vix', 'bondyield'] or c in self.config.COMMODITIES.values()]
+        external_features = [c for c in feature_cols if c in ['vix', 'bondyield'] or c in self.config.data.sources.COMMODITIES.values()]
         time_features = ['day', 'month', 'dayofweek']
-        financial_metrics_features = self.config.financial_metrics_columns
+        financial_metrics_features = ['pe_ratio', 'peg_ratio', 'eps', 'dividend_flag', 'roe', 'roi',
+                                       'debt_to_equity', 'debt_to_asset', 'current_ratio']
 
         info = {
             'total_features': len(feature_cols),

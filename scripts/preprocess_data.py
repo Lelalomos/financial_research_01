@@ -12,7 +12,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.data.downloader import DataDownloader
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
@@ -50,6 +50,13 @@ def parse_args():
         type=int,
         default=None,
         help='Limit number of stocks from index (e.g., 400 for first 400 stocks)'
+    )
+
+    parser.add_argument(
+        '--stocks',
+        type=int,
+        default=None,
+        help='Sample N stocks balanced across ALL group_ids (default: all stocks)'
     )
 
     parser.add_argument(
@@ -94,11 +101,11 @@ def main():
     args = parse_args()
 
     # Load config
-    config = DataConfig()
+    config = load_config('main')
     if args.start_date:
-        config.START_DATE = args.start_date
+        config.data.sources.START_DATE = args.start_date
     if args.end_date:
-        config.END_DATE = args.end_date
+        config.data.sources.END_DATE = args.end_date
 
     logger = get_logger("preprocess_data", log_dir="logs")
 
@@ -142,6 +149,28 @@ def main():
         vix_df = existing_data.get('vix')
         commodities_df = existing_data.get('commodities')
         treasury_df = existing_data.get('treasury_yields')
+
+    # Sample stocks if requested (BEFORE feature engineering for performance)
+    if args.stocks:
+        logger.info(f"Sampling {args.stocks} stocks balanced across all group_ids...")
+        from src.data.sampling import sample_stocks_by_group, get_sampling_stats
+
+        # Ensure group_id column exists
+        if 'group_id' not in stock_df.columns and 'group' in stock_df.columns:
+            stock_df['group_id'] = stock_df['group']
+        elif 'group_id' not in stock_df.columns and 'GICS Sector' in stock_df.columns:
+            stock_df['group_id'] = stock_df['GICS Sector']
+        elif 'group_id' not in stock_df.columns:
+            logger.warning("No group_id column found, using single group")
+            stock_df['group_id'] = 0
+
+        selected_tickers = sample_stocks_by_group(stock_df, args.stocks, seed=42)
+        stock_df = stock_df[stock_df['tic'].isin(selected_tickers)].copy()
+
+        stats = get_sampling_stats(stock_df, selected_tickers)
+        logger.info(f"Sampled {stats['total_selected']} stocks from {stats['total_groups']} groups:")
+        for group_id, count in stats['stocks_per_group'].items():
+            logger.info(f"  Group {group_id}: {count} stocks")
 
     # Step 2: Feature engineering
     logger.info("Step 2: Engineering features...")

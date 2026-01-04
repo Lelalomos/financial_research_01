@@ -20,8 +20,9 @@ from sklearn.preprocessing import LabelEncoder
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.utils.logger import get_logger
+from src.data.sampling import sample_stocks_by_group, get_sampling_stats
 
 logger = get_logger("create_hparam_dataset")
 
@@ -112,74 +113,6 @@ def load_data(input_dir: str, pre_normalized_path: str) -> pd.DataFrame:
                     raise ValueError("Cannot sample from sequence data. Use pre-normalized data.")
 
     raise FileNotFoundError(f"No data found at {input_dir} or {pre_normalized_path}")
-
-
-def sample_stocks_by_group(
-    df: pd.DataFrame,
-    n_stocks: int,
-    seed: int
-) -> list:
-    """
-    Sample stocks ensuring ALL groups are represented.
-
-    Args:
-        df: DataFrame with 'tic' and 'group_id' columns
-        n_stocks: Total number of stocks to sample
-        seed: Random seed
-
-    Returns:
-        List of selected stock tickers
-    """
-    np.random.seed(seed)
-
-    # Get unique groups and stocks per group
-    unique_groups = df['group_id'].unique()
-    n_groups = len(unique_groups)
-
-    logger.info(f"Found {n_groups} unique groups in dataset")
-    logger.info(f"Groups: {sorted(unique_groups)}")
-
-    # Calculate stocks per group
-    stocks_per_group = max(1, n_stocks // n_groups)
-    remaining = n_stocks - (stocks_per_group * n_groups)
-
-    logger.info(f"Sampling {stocks_per_group} stocks per group + {remaining} extra")
-
-    selected_stocks = []
-
-    # Sample stocks from each group
-    for group_id in sorted(unique_groups):
-        group_stocks = df[df['group_id'] == group_id]['tic'].unique().tolist()
-
-        if len(group_stocks) == 0:
-            logger.warning(f"Group {group_id} has no stocks, skipping")
-            continue
-
-        # Sample from this group
-        n_sample = min(stocks_per_group, len(group_stocks))
-        sampled = np.random.choice(group_stocks, size=n_sample, replace=False).tolist()
-        selected_stocks.extend(sampled)
-
-        logger.info(f"  Group {group_id}: sampled {n_sample} stocks from {len(group_stocks)} available")
-
-    # Add remaining stocks randomly from any group
-    if remaining > 0 and len(selected_stocks) < n_stocks:
-        available_stocks = [s for s in df['tic'].unique() if s not in selected_stocks]
-        if len(available_stocks) > 0:
-            extra = np.random.choice(available_stocks, size=min(remaining, len(available_stocks)), replace=False).tolist()
-            selected_stocks.extend(extra)
-
-    # Ensure we don't exceed requested count
-    selected_stocks = list(set(selected_stocks))[:n_stocks]
-
-    logger.info(f"Total selected stocks: {len(selected_stocks)}")
-    logger.info(f"Selected stocks: {sorted(selected_stocks)}")
-
-    # Verify all groups are represented
-    final_groups = df[df['tic'].isin(selected_stocks)]['group_id'].unique()
-    logger.info(f"Groups represented in sample: {sorted(final_groups)}")
-
-    return selected_stocks
 
 
 def filter_by_date_range(
@@ -368,6 +301,12 @@ def main():
     # Sample stocks ensuring ALL groups are represented
     selected_stocks = sample_stocks_by_group(df, args.n_stocks, args.seed)
     df_filtered = df[df['tic'].isin(selected_stocks)].copy()
+
+    # Log sampling stats
+    stats = get_sampling_stats(df_filtered, selected_stocks)
+    logger.info(f"Sampled {stats['total_selected']} stocks from {stats['total_groups']} groups:")
+    for group_id, count in stats['stocks_per_group'].items():
+        logger.info(f"  Group {group_id}: {count} stocks")
 
     # Filter by date range
     df_filtered = filter_by_date_range(df_filtered, args.years, all_years=(args.years is None))

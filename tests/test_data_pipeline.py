@@ -12,8 +12,7 @@ import tempfile
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.data.downloader import DataDownloader
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
@@ -25,8 +24,8 @@ class TestDataPipeline(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.config = DataConfig()
-        self.model_config = ModelConfig()
+        self.config = load_config('main')
+        self.model_config = load_config('model')
 
         # Create sample data
         self.sample_data = self._create_sample_data()

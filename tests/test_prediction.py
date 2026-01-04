@@ -14,8 +14,8 @@ import json
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
-from config.model_config import ModelConfig
+from src.config import load_config
+from src.config import load_config
 from src.data.prediction_prep import PredictionPreparator, create_prediction_preparator
 from src.prediction.predictor import Predictor, create_predictor
 from src.models.lstm3_attn_model import create_model as create_lstm3_attn
@@ -28,8 +28,8 @@ class TestPredictionPreparator(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.data_config = DataConfig()
-        self.model_config = ModelConfig()
+        self.data_config = load_config('main')
+        self.model_config = load_config('model')
         self.preparator = PredictionPreparator(
             self.data_config,
             self.model_config
@@ -176,8 +176,8 @@ class TestPredictor(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.data_config = DataConfig()
-        self.model_config = ModelConfig()
+        self.data_config = load_config('main')
+        self.model_config = load_config('model')
 
         # Create temporary directory for test files
         self.temp_dir = tempfile.mkdtemp()
@@ -300,8 +300,8 @@ class TestPredictionIntegration(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.data_config = DataConfig()
-        self.model_config = ModelConfig()
+        self.data_config = load_config('main')
+        self.model_config = load_config('model')
         self.temp_dir = tempfile.mkdtemp()
 
     def tearDown(self):

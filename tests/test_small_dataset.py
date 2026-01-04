@@ -16,8 +16,8 @@ import pytest
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
-from config.model_config import ModelConfig
+from src.config import load_config
+from src.config import load_config
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
 from src.data.dataset import FinancialDataset, create_data_loaders
@@ -72,7 +72,9 @@ def _test_feature_engineering(df):
     """Test feature engineering."""
     print("\nTesting feature engineering...")
 
-    config = DataConfig(SEQUENCE_LENGTH=20, PREDICTION_HORIZON=1)
+    config = load_config('main')
+    config.data.sequences.SEQUENCE_LENGTH = 20
+    config.data.sequences.PREDICTION_HORIZON = 1
     engineer = FeatureEngineer(config)
 
     start_time = time.time()
@@ -207,7 +209,9 @@ def small_dataset():
     sequences, info = _test_preprocessing(df_with_features, data_config)
 
     # Step 4: Dataset creation with shared config
-    model_config = ModelConfig(BATCH_SIZE=8, NUM_EPOCHS=2)
+    model_config = load_config('model')
+    model_config.model.training.BATCH_SIZE = 8
+    model_config.model.training.NUM_EPOCHS = 2
     loaders = _test_dataset_creation(sequences, model_config)
 
     return {
@@ -230,11 +234,9 @@ def test_full_pipeline(small_dataset, model_type):
     model_config = small_dataset['model_config']
 
     # Create model with specific type
-    model_config_copy = ModelConfig(
-        MODEL_TYPE=model_type,
-        BATCH_SIZE=8,
-        NUM_EPOCHS=2
-    )
+    model_config_copy = load_config('model')
+    model_config_copy.model.training.BATCH_SIZE = 8
+    model_config_copy.model.training.NUM_EPOCHS = 2
 
     model = _test_model_creation(info, model_config_copy, model_type)
 
@@ -283,7 +285,9 @@ def main():
     sequences, info = _test_preprocessing(df_with_features, data_config)
 
     # Step 4: Dataset creation (shared)
-    model_config = ModelConfig(BATCH_SIZE=8, NUM_EPOCHS=2)
+    model_config = load_config('model')
+    model_config.model.training.BATCH_SIZE = 8
+    model_config.model.training.NUM_EPOCHS = 2
     loaders = _test_dataset_creation(sequences, model_config)
 
     # Step 5-6: Test each model
@@ -292,11 +296,9 @@ def main():
         print(f"TESTING MODEL: {model_type.upper()}")
         print(f"{'=' * 70}")
 
-        model_config_copy = ModelConfig(
-            MODEL_TYPE=model_type,
-            BATCH_SIZE=8,
-            NUM_EPOCHS=2
-        )
+        model_config_copy = load_config('model')
+        model_config_copy.model.training.BATCH_SIZE = 8
+        model_config_copy.model.training.NUM_EPOCHS = 2
 
         model = _test_model_creation(info, model_config_copy, model_type)
 

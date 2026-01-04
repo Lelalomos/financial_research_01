@@ -24,8 +24,7 @@ import json
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.data_config import DataConfig
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
 from src.data.dataset import create_data_loaders
@@ -33,35 +32,53 @@ from src.models.lstm3_attn_model import create_model as create_lstm3_attn
 from src.training import Trainer
 from src.prediction.predictor import create_predictor
 from src.utils.logger import get_logger
+from src.data.sampling import sample_stocks_by_group, get_sampling_stats
 
 logger = get_logger("full_flow_test", log_dir="logs")
 
 
-def create_realistic_dataset(n_stocks=5, n_days=400):
+def create_realistic_dataset(n_stocks=5, n_groups=3, n_days=400):
     """
-    Create a realistic financial dataset for testing.
+    Create a realistic financial dataset for testing with balanced groups.
 
     Simulates stock prices with:
     - Trend component
     - Random walk
     - Seasonality
     - Volatility clustering
+    - Balanced group distribution
 
     Args:
         n_stocks: Number of stocks to simulate
+        n_groups: Number of groups to distribute stocks across
         n_days: Number of trading days
 
     Returns:
         DataFrame with OHLCV data
     """
-    logger.info(f"Creating realistic dataset: {n_stocks} stocks, {n_days} days")
+    logger.info(f"Creating realistic dataset: {n_stocks} stocks, {n_groups} groups, {n_days} days")
     np.random.seed(42)
 
-    tickers = [f"STOCK{i:02d}" for i in range(n_stocks)]
+    # Calculate stocks per group (balanced)
+    stocks_per_group = n_stocks // n_groups
+    remaining = n_stocks % n_groups
+
+    # Create tickers distributed across groups
+    tickers = []
+    ticker_to_group = {}
+    for group_idx in range(n_groups):
+        n_this_group = stocks_per_group + (1 if group_idx < remaining else 0)
+        for i in range(n_this_group):
+            ticker = f"STOCK{group_idx:02d}_{i:02d}"
+            tickers.append(ticker)
+            ticker_to_group[ticker] = group_idx
+
     dates = pd.date_range('2022-01-01', periods=n_days, freq='D')
 
     data = []
     for ticker in tickers:
+        group_id = ticker_to_group[ticker]
+
         # Initial price
         price = 100 + np.random.rand() * 50
 
@@ -100,11 +117,11 @@ def create_realistic_dataset(n_stocks=5, n_days=400):
                 'close': close,
                 'volume': volume,
                 'dividend_flag': dividend_flag,  # Include in raw data
-                'group': f"GROUP{i % 3}"  # 3 groups
+                'group_id': group_id  # Use numeric group_id
             })
 
     df = pd.DataFrame(data)
-    logger.info(f"Created dataset: {len(df)} rows, {len(tickers)} stocks")
+    logger.info(f"Created dataset: {len(df)} rows, {len(tickers)} stocks, {n_groups} groups")
     logger.info(f"Date range: {df['date'].min()} to {df['date'].max()}")
 
     return df
@@ -145,20 +162,18 @@ def test_full_pipeline():
         df = create_realistic_dataset(n_stocks=n_stocks, n_days=400)
 
         # Configure for faster training
-        data_config = DataConfig(
-            SEQUENCE_LENGTH=30,
-            PREDICTION_HORIZON=5,
-            TRAIN_RATIO=0.7,
-            VAL_RATIO=0.15,
-            TEST_RATIO=0.15,
-        )
+        data_config = load_config('main')
+        data_config.data.sequences.SEQUENCE_LENGTH = 30
+        data_config.data.sequences.PREDICTION_HORIZON = 5
+        data_config.data.splits.TRAIN_RATIO = 0.7
+        data_config.data.splits.VAL_RATIO = 0.15
+        data_config.data.splits.TEST_RATIO = 0.15
 
-        model_config = ModelConfig(
-            NUM_EPOCHS=3,
-            BATCH_SIZE=32,
-            LEARNING_RATE=0.001,
-            EARLY_STOPPING_PATIENCE=2,
-        )
+        model_config = load_config('model')
+        model_config.model.training.NUM_EPOCHS = 3
+        model_config.model.training.BATCH_SIZE = 32
+        model_config.model.training.LEARNING_RATE = 0.001
+        model_config.model.training.EARLY_STOPPING_PATIENCE = 2
 
         # Feature engineering
         engineer = FeatureEngineer(data_config)
@@ -198,8 +213,8 @@ def test_full_pipeline():
         for ticker in df_sorted['tic'].unique():
             ticker_df = df_sorted[df_sorted['tic'] == ticker]
             n = len(ticker_df)
-            train_end = int(n * data_config.TRAIN_RATIO)
-            val_end = train_end + int(n * data_config.VAL_RATIO)
+            train_end = int(n * data_config.data.splits.TRAIN_RATIO)
+            val_end = train_end + int(n * data_config.data.splits.VAL_RATIO)
 
             train_data.append(ticker_df.iloc[:train_end])
             val_data.append(ticker_df.iloc[train_end:val_end])

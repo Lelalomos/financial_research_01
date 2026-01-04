@@ -1,0 +1,22 @@
+{
+  "hyperparameter": {
+    "N_TRIALS": 50,
+    "TIMEOUT": null,
+    "N_JOBS": 1,
+    "MODEL_TYPE": "bilstm4_attention",
+    "HPARAM_STOCKS": 20,
+    "HPARAM_YEARS": null,
+    "HPARAM_ALL_YEARS": true,
+    "HPARAM_START_DATE": null,
+    "HPARAM_MAX_EPOCHS": 50,
+    "HPARAM_ES_PATIENCE": 10,
+    "LEARNING_RATE_RANGE": [0.00001, 0.001],
+    "LSTM_HIDDEN_SIZE_RANGE": [64, 512],
+    "LSTM_NUM_LAYERS_RANGE": [1, 4],
+    "DROPOUT_RANGE": [0.1, 0.5],
+    "WEIGHT_DECAY_RANGE": [0.000001, 0.001],
+    "SEQUENCE_LENGTH_CHOICES": [20, 30, 60, 90],
+    "BATCH_SIZE_CHOICES": [32, 64, 128],
+    "BEST_PARAMS_PATH": "best_hyperparameters.json"
+  }
+}

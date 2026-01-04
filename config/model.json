@@ -1,0 +1,160 @@
+{
+  "model": {
+    "embeddings": {
+      "EMBEDDING_DIM_STOCK": 64,
+      "EMBEDDING_DIM_GROUP": 32,
+      "EMBEDDING_DIM_DAY": 16,
+      "EMBEDDING_DIM_MONTH": 16,
+      "EMBEDDING_DIM_DIVIDEND_FLAG": 8,
+      "DROPOUT_EMBEDDING": 0.1
+    },
+    "training": {
+      "LEARNING_RATE": 0.0001,
+      "WEIGHT_DECAY": 0.00001,
+      "BATCH_SIZE": 128,
+      "NUM_EPOCHS": 200,
+      "EARLY_STOPPING_PATIENCE": 15,
+      "GRADIENT_CLIP_VALUE": 1.0,
+      "ACCUMULATION_STEPS": 1,
+      "OPTIMIZER": "adam",
+      "SCHEDULER": "reduce_on_plateau",
+      "SCHEDULER_PARAMS": {
+        "reduce_on_plateau": {
+          "mode": "min",
+          "factor": 0.5,
+          "patience": 10
+        },
+        "cosine": {
+          "T_max": 200,
+          "eta_min": 0.000001
+        },
+        "step": {
+          "step_size": 30,
+          "gamma": 0.1
+        }
+      },
+      "USE_MIXED_PRECISION": false
+    },
+    "loss": {
+      "LOSS_TYPE": "huber",
+      "HUBER_DELTA": 0.1
+    },
+    "device": {
+      "DEVICE": "cuda",
+      "NUM_WORKERS": 4,
+      "PIN_MEMORY": true,
+      "PREFETCH_FACTOR": 2
+    },
+    "checkpointing": {
+      "CHECKPOINT_DIR": "models/checkpoints",
+      "SAVE_BEST_ONLY": true,
+      "SAVE_LAST_N": 3,
+      "CHECKPOINT_FREQUENCY": 1
+    },
+    "logging": {
+      "LOG_FREQUENCY": 10,
+      "TENSORBOARD_DIR": "logs/tensorboard",
+      "WANDB_PROJECT": null
+    },
+    "validation": {
+      "VAL_FREQUENCY": 1,
+      "VAL_BATCH_SIZE": null
+    },
+    "reproducibility": {
+      "RANDOM_SEED": 42,
+      "DETERMINISTIC": false
+    },
+    "models": {
+      "crnn": {
+        "CNN_CHANNELS": [64, 128],
+        "CNN_KERNEL_SIZE": 3,
+        "CNN_POOL_SIZE": 2,
+        "CNN_USE_BATCH_NORM": false,
+        "RNN_HIDDEN_SIZE": 128,
+        "RNN_NUM_LAYERS": 2,
+        "RNN_DROPOUT": 0.2,
+        "USE_LAYER_NORM": false,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "rnn": {
+        "RNN_HIDDEN_SIZE": 128,
+        "RNN_NUM_LAYERS": 2,
+        "RNN_DROPOUT": 0.2,
+        "USE_LAYER_NORM": false,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "rnn_attention": {
+        "RNN_HIDDEN_SIZE": 128,
+        "RNN_NUM_LAYERS": 2,
+        "RNN_DROPOUT": 0.2,
+        "USE_LAYER_NORM": false,
+        "USE_ATTENTION": true,
+        "ATTENTION_HEADS": 4,
+        "ATTENTION_DROPOUT": 0.1,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "crnn_attention": {
+        "CNN_CHANNELS": [64, 128],
+        "CNN_KERNEL_SIZE": 3,
+        "CNN_POOL_SIZE": 2,
+        "CNN_USE_BATCH_NORM": false,
+        "RNN_HIDDEN_SIZE": 128,
+        "RNN_NUM_LAYERS": 2,
+        "RNN_DROPOUT": 0.2,
+        "USE_LAYER_NORM": false,
+        "USE_ATTENTION": true,
+        "ATTENTION_HEADS": 4,
+        "ATTENTION_DROPOUT": 0.1,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "transformer": {
+        "TRANSFORMER_NUM_LAYERS": 4,
+        "TRANSFORMER_NUM_HEADS": 8,
+        "TRANSFORMER_D_MODEL": 256,
+        "TRANSFORMER_DIM_FEEDFORWARD": 512,
+        "TRANSFORMER_DROPOUT": 0.1,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "lstm3": {
+        "LSTM3_HIDDEN_SIZE": 256,
+        "LSTM3_NUM_LAYERS": 3,
+        "LSTM3_DROPOUT": 0.2,
+        "LSTM3_USE_LAYER_NORM": true,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "lstm3_attention": {
+        "LSTM3_HIDDEN_SIZE": 256,
+        "LSTM3_NUM_LAYERS": 3,
+        "LSTM3_DROPOUT": 0.2,
+        "LSTM3_USE_LAYER_NORM": true,
+        "LSTM3_ATTENTION_HIDDEN_SIZE": null,
+        "LSTM3_ATTENTION_HEADS": 8,
+        "LSTM3_ATTENTION_DROPOUT": 0.1,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      },
+      "bilstm4_attention": {
+        "LSTM4_HIDDEN_SIZES": [128, 256, 512, 256],
+        "LSTM4_DROPOUT": 0.4,
+        "LSTM4_ATTENTION_HEADS": 4,
+        "LSTM4_ATTENTION_DROPOUT": 0.4,
+        "FC_HIDDEN_SIZES": [256, 128],
+        "FC_DROPOUT": 0.3,
+        "FC_USE_BATCH_NORM": false
+      }
+    }
+  }
+}

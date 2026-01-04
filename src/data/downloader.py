@@ -20,7 +20,7 @@ import time
 from multiprocessing import Pool, cpu_count
 from functools import partial
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.utils.logger import get_logger
 
 
@@ -183,28 +183,30 @@ class DataDownloader:
     - Treasury yields
     """
 
-    def __init__(self, config: DataConfig, index_file: Optional[str] = None):
+    def __init__(self, config=None, index_file: Optional[str] = None):
         """
         Initialize data downloader.
 
         Args:
-            config: DataConfig instance with data source parameters
+            config: Configuration object (defaults to load_config('main') if None)
             index_file: Name of index file in raw_data/index/ (e.g., 'GSPC.json')
-                       If None, uses config.INDEX_FILE (default 'GSPC.json' - S&P 500)
+                       If None, uses config.data.sources.INDEX_FILE (default 'GSPC.json' - S&P 500)
         """
+        if config is None:
+            config = load_config('main')
         self.config = config
         self.logger = get_logger("downloader", log_dir="logs")
         self.session_start = time.time()
 
         # Set index file (default to config setting or GSPC - S&P 500)
-        self.index_file = index_file or config.INDEX_FILE
-        self.index_path = Path(config.RAW_DATA_INDEX_PATH) / self.index_file
+        self.index_file = index_file or config.data.sources.INDEX_FILE
+        self.index_path = Path(config.data.sources.RAW_DATA_INDEX_PATH) / self.index_file
 
         # Create directories
-        self.raw_data_path = Path(config.RAW_DATA_PATH)
+        self.raw_data_path = Path(config.data.paths.RAW_DATA_PATH)
         self.raw_data_path.mkdir(parents=True, exist_ok=True)
 
-        self.external_data_path = Path(config.EXTERNAL_DATA_PATH)
+        self.external_data_path = Path(config.data.paths.EXTERNAL_DATA_PATH)
         self.external_data_path.mkdir(parents=True, exist_ok=True)
 
     def _log_time(self):
@@ -408,9 +410,9 @@ class DataDownloader:
             tickers = self.get_sp500_tickers()
 
         if start_date is None:
-            start_date = self.config.START_DATE
+            start_date = self.config.data.sources.START_DATE
         if end_date is None:
-            end_date = self.config.END_DATE
+            end_date = self.config.data.sources.END_DATE
 
         # Set number of workers
         if n_workers is None:
@@ -429,8 +431,8 @@ class DataDownloader:
                 _download_single_ticker,
                 start_date=start_date,
                 end_date=end_date,
-                retry_attempts=self.config.DOWNLOAD_RETRY_ATTEMPTS,
-                retry_delay=self.config.DOWNLOAD_RETRY_DELAY
+                retry_attempts=self.config.data.download.DOWNLOAD_RETRY_ATTEMPTS,
+                retry_delay=self.config.data.download.DOWNLOAD_RETRY_DELAY
             )
 
             # Download all tickers in parallel
@@ -474,13 +476,13 @@ class DataDownloader:
         Returns:
             DataFrame with VIX data
         """
-        self.logger.info(f"Downloading VIX data ({self.config.VIX_SYMBOL})")
+        self.logger.info(f"Downloading VIX data ({self.config.data.sources.VIX_SYMBOL})")
 
         try:
             data = yf.download(
-                self.config.VIX_SYMBOL,
-                start=self.config.START_DATE,
-                end=self.config.END_DATE,
+                self.config.data.sources.VIX_SYMBOL,
+                start=self.config.data.sources.START_DATE,
+                end=self.config.data.sources.END_DATE,
                 progress=False,
                 multi_level_index=False
             )
@@ -523,26 +525,26 @@ class DataDownloader:
         Returns:
             DataFrame with commodity data
         """
-        self.logger.info(f"Downloading commodity data for {len(self.config.COMMODITIES)} commodities")
+        self.logger.info(f"Downloading commodity data for {len(self.config.data.sources.COMMODITIES)} commodities")
 
         # Set number of workers
         if n_workers is None:
-            n_workers = min(cpu_count(), len(self.config.COMMODITIES))
+            n_workers = min(cpu_count(), len(self.config.data.sources.COMMODITIES))
 
         self.logger.info(f"Using {n_workers} parallel workers")
 
         all_data = []
 
         # Convert to list of tuples for multiprocessing
-        commodity_list = list(self.config.COMMODITIES.items())
+        commodity_list = list(self.config.data.sources.COMMODITIES.items())
 
         # Use multiprocessing pool for parallel downloads
         with Pool(processes=n_workers) as pool:
             download_func = partial(_download_single_commodity,
-                                    start_date=self.config.START_DATE,
-                                    end_date=self.config.END_DATE,
-                                    retry_attempts=self.config.DOWNLOAD_RETRY_ATTEMPTS,
-                                    retry_delay=self.config.DOWNLOAD_RETRY_DELAY)
+                                    start_date=self.config.data.sources.START_DATE,
+                                    end_date=self.config.data.sources.END_DATE,
+                                    retry_attempts=self.config.data.download.DOWNLOAD_RETRY_ATTEMPTS,
+                                    retry_delay=self.config.data.download.DOWNLOAD_RETRY_DELAY)
             results = pool.map(download_func, commodity_list)
 
         # Process results
@@ -579,14 +581,14 @@ class DataDownloader:
         Returns:
             DataFrame with treasury yield data
         """
-        self.logger.info(f"Downloading treasury yields: {self.config.TREASURY_YIELDS}")
+        self.logger.info(f"Downloading treasury yields: {self.config.data.sources.TREASURY_YIELDS}")
 
         try:
-            start = datetime.strptime(self.config.START_DATE, "%Y-%m-%d")
-            end = datetime.strptime(self.config.END_DATE, "%Y-%m-%d") + timedelta(days=1)
+            start = datetime.strptime(self.config.data.sources.START_DATE, "%Y-%m-%d")
+            end = datetime.strptime(self.config.data.sources.END_DATE, "%Y-%m-%d") + timedelta(days=1)
 
             data = web.DataReader(
-                list(self.config.TREASURY_YIELDS),
+                list(self.config.data.sources.TREASURY_YIELDS),
                 'fred',
                 start=start,
                 end=end
@@ -645,15 +647,15 @@ class DataDownloader:
         result['stocks'] = self.download_stock_data(tickers=tickers, save=save)
 
         # Download VIX
-        if self.config.FEATURE_FLAGS.get('vix', True):
+        if self.config.data.features.FEATURE_FLAGS.get('vix', True):
             result['vix'] = self.download_vix(save=save)
 
         # Download commodities
-        if self.config.FEATURE_FLAGS.get('commodities', True):
+        if self.config.data.features.FEATURE_FLAGS.get('commodities', True):
             result['commodities'] = self.download_commodities(save=save)
 
         # Download treasury yields
-        if self.config.FEATURE_FLAGS.get('treasury_yields', True):
+        if self.config.data.features.FEATURE_FLAGS.get('treasury_yields', True):
             result['treasury_yields'] = self.download_treasury_yields(save=save)
 
         self.logger.info("=" * 60)

@@ -5,7 +5,7 @@ Unit tests for LSTM3Model and LSTM3AttentionModel.
 import pytest
 import torch
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from src.models.lstm3_model import LSTM3Model, create_model as create_lstm3
 from src.models.lstm3_attn_model import LSTM3AttentionModel, create_model as create_lstm3_attention
 
@@ -15,7 +15,7 @@ class TestLSTM3Model:
 
     def test_model_initialization(self):
         """Test that LSTM3Model can be initialized."""
-        config = ModelConfig(MODEL_TYPE='lstm3')
+        config = load_config('model')
         model = LSTM3Model(
             num_features=10,
             num_stocks=100,
@@ -27,7 +27,7 @@ class TestLSTM3Model:
 
     def test_forward_pass(self):
         """Test forward pass produces correct output shape."""
-        config = ModelConfig(MODEL_TYPE='lstm3')
+        config = load_config('model')
         model = LSTM3Model(
             num_features=10,
             num_stocks=100,
@@ -54,8 +54,8 @@ class TestLSTM3Model:
 
     def test_lstm3_num_layers(self):
         """Test that LSTM3Model uses 3 layers as configured."""
-        config = ModelConfig(MODEL_TYPE='lstm3')
-        assert config.LSTM3_NUM_LAYERS == 3
+        config = load_config('model')
+        assert config.model.models.lstm3.LSTM3_NUM_LAYERS == 3
 
         model = LSTM3Model(
             num_features=10,
@@ -73,7 +73,7 @@ class TestLSTM3AttentionModel:
 
     def test_model_initialization(self):
         """Test that LSTM3AttentionModel can be initialized."""
-        config = ModelConfig(MODEL_TYPE='lstm3_attention')
+        config = load_config('model')
         model = LSTM3AttentionModel(
             num_features=10,
             num_stocks=100,
@@ -85,7 +85,7 @@ class TestLSTM3AttentionModel:
 
     def test_forward_pass(self):
         """Test forward pass produces correct output shape."""
-        config = ModelConfig(MODEL_TYPE='lstm3_attention')
+        config = load_config('model')
         model = LSTM3AttentionModel(
             num_features=10,
             num_stocks=100,
@@ -112,8 +112,8 @@ class TestLSTM3AttentionModel:
 
     def test_lstm3_attention_num_layers(self):
         """Test that LSTM3AttentionModel uses 3 layers as configured."""
-        config = ModelConfig(MODEL_TYPE='lstm3_attention')
-        assert config.LSTM3_NUM_LAYERS == 3
+        config = load_config('model')
+        assert config.model.models.lstm3_attention.LSTM3_NUM_LAYERS == 3
 
         model = LSTM3AttentionModel(
             num_features=10,
@@ -127,7 +127,7 @@ class TestLSTM3AttentionModel:
 
     def test_attention_mechanism_exists(self):
         """Test that attention mechanism is properly initialized."""
-        config = ModelConfig(MODEL_TYPE='lstm3_attention')
+        config = load_config('model')
         model = LSTM3AttentionModel(
             num_features=10,
             num_stocks=100,
@@ -137,7 +137,7 @@ class TestLSTM3AttentionModel:
 
         assert hasattr(model, 'attention')
         assert isinstance(model.attention, torch.nn.MultiheadAttention)
-        assert model.attention.num_heads == config.LSTM3_ATTENTION_HEADS
+        assert model.attention.num_heads == config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS
 
 
 class TestModelRegistry:

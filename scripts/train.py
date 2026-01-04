@@ -15,8 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.model_config import ModelConfig, get_config_for_model
-from config.data_config import DataConfig
+from src.config import load_config
 from src.data.dataset import FinancialDataset, create_data_loaders
 from src.models import create_model
 from src.training import Trainer
@@ -182,17 +181,17 @@ def main():
     logger.info("=" * 60)
 
     # Load config
-    config = get_config_for_model(args.model_type)
+    config = load_config('model')
 
     # Override config from arguments
     if args.epochs:
-        config.NUM_EPOCHS = args.epochs
+        config.model.training.NUM_EPOCHS = args.epochs
     if args.batch_size:
-        config.BATCH_SIZE = args.batch_size
+        config.model.training.BATCH_SIZE = args.batch_size
     if args.lr:
-        config.LEARNING_RATE = args.lr
+        config.model.training.LEARNING_RATE = args.lr
 
-    config.CHECKPOINT_DIR = args.checkpoint_dir
+    config.model.checkpointing.CHECKPOINT_DIR = args.checkpoint_dir
 
     # Load config override if provided
     if args.config:
@@ -311,7 +310,7 @@ def main():
     history = trainer.train(
         train_loader=loaders['train'],
         val_loader=loaders.get('val'),
-        num_epochs=config.NUM_EPOCHS
+        num_epochs=config.model.training.NUM_EPOCHS
     )
 
     logger.info("Training complete!")
@@ -322,7 +321,7 @@ def main():
         stock_suffix = "_".join(args.stocks[:3])  # Use first 3 stock names for filename
         if len(args.stocks) > 3:
             stock_suffix += f"_etc{len(args.stocks)}"
-        final_path = Path(config.CHECKPOINT_DIR) / f"best_model_{stock_suffix}.pth"
+        final_path = Path(config.model.checkpointing.CHECKPOINT_DIR) / f"best_model_{stock_suffix}.pth"
         trainer.save_model(str(final_path))
         logger.info(f"Saved fine-tuned model to {final_path}")
 

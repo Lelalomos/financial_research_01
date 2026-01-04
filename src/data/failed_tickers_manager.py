@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 from datetime import datetime
 
-from config.data_config import DataConfig
+from src.config import load_config
 from src.utils.logger import get_logger
 
 
@@ -31,12 +31,12 @@ class FailedTickersManager:
     }
     """
 
-    def __init__(self, config: DataConfig):
+    def __init__(self, config):
         """
         Initialize the failed tickers manager.
 
         Args:
-            config: DataConfig instance
+            config instance
         """
         self.config = config
         self.logger = get_logger("failed_tickers", log_dir="logs")

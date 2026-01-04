@@ -1,0 +1,21 @@
+{
+  "validate": {
+    "data": {
+      "VAL_BATCH_SIZE": 64,
+      "STRIDE": 1
+    },
+    "metrics": [
+      "loss",
+      "mse",
+      "mae",
+      "rmse",
+      "directional_accuracy",
+      "sharpe_ratio",
+      "max_drawdown"
+    ],
+    "thresholds": {
+      "MIN_DIRECTIONAL_ACCURACY": 0.51,
+      "MAX_RMSE": 2.0
+    }
+  }
+}

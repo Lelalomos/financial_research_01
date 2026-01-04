@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
-from config.model_config import ModelConfig
+from src.config import load_config
 from .crnn_attention import EmbeddingLayer, BiLSTMBlock
 
 
@@ -34,7 +34,7 @@ class RNNAttentionModel(nn.Module):
         num_features: int,
         num_stocks: int,
         num_groups: int,
-        config: ModelConfig
+        config
     ):
         """
         Initialize RNN + Attention model.
@@ -43,7 +43,7 @@ class RNNAttentionModel(nn.Module):
             num_features: Number of input features
             num_stocks: Number of unique stocks
             num_groups: Number of unique groups
-            config: ModelConfig instance
+            config instance
         """
         super().__init__()
 
@@ -63,18 +63,18 @@ class RNNAttentionModel(nn.Module):
         # BiLSTM block
         self.lstm = BiLSTMBlock(
             input_size=rnn_input_dim,
-            hidden_size=config.RNN_HIDDEN_SIZE,
-            num_layers=config.RNN_NUM_LAYERS,
-            dropout=config.RNN_DROPOUT,
-            use_layer_norm=config.USE_LAYER_NORM
+            hidden_size=config.model.models.rnn_attention.RNN_HIDDEN_SIZE,
+            num_layers=config.model.models.rnn_attention.RNN_NUM_LAYERS,
+            dropout=config.model.models.rnn_attention.RNN_DROPOUT,
+            use_layer_norm=config.model.models.rnn_attention.USE_LAYER_NORM
         )
 
         # Multihead attention
-        if config.USE_ATTENTION:
+        if config.model.models.rnn_attention.USE_ATTENTION:
             self.attention = nn.MultiheadAttention(
                 embed_dim=self.lstm.output_dim,
-                num_heads=config.ATTENTION_HEADS,
-                dropout=config.ATTENTION_DROPOUT,
+                num_heads=config.model.models.rnn_attention.ATTENTION_HEADS,
+                dropout=config.model.models.rnn_attention.ATTENTION_DROPOUT,
                 batch_first=True
             )
         else:
@@ -86,14 +86,14 @@ class RNNAttentionModel(nn.Module):
         fc_layers = []
         prev_dim = fc_input_dim
 
-        for fc_size in config.FC_HIDDEN_SIZES:
+        for fc_size in config.model.models.rnn_attention.FC_HIDDEN_SIZES:
             fc_layers.extend([
                 nn.Linear(prev_dim, fc_size),
                 nn.LeakyReLU(0.1),
-                nn.Dropout(config.FC_DROPOUT)
+                nn.Dropout(config.model.models.rnn_attention.FC_DROPOUT)
             ])
 
-            if config.FC_USE_BATCH_NORM:
+            if config.model.models.rnn_attention.FC_USE_BATCH_NORM:
                 fc_layers.append(nn.BatchNorm1d(fc_size))
 
             prev_dim = fc_size
@@ -150,7 +150,7 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[ModelConfig] = None
+    config = None
 ) -> RNNAttentionModel:
     """
     Create RNN + Attention model.
@@ -159,13 +159,14 @@ def create_model(
         num_features: Number of input features
         num_stocks: Number of unique stocks
         num_groups: Number of unique groups
-        config: ModelConfig instance
+        config instance
 
     Returns:
         RNNAttentionModel instance
     """
     if config is None:
-        config = ModelConfig()
+        from src.config import load_config
+        config = load_config('model')
 
     return RNNAttentionModel(
         num_features=num_features,
