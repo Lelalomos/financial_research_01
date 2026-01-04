@@ -26,11 +26,18 @@ services:
     # Resource limits (adjust based on your system)
     deploy:
       resources:
+        limits:
+          memory: 16G  # Maximum RAM the container can use
         reservations:
+          memory: 4G   # Reserved RAM
           devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+    # OOM killer settings - kill processes when system RAM < 2GB
+    oom_kill_disable: false
+    memswap_limit: 18G  # Swap + RAM limit (triggers OOM when exceeded)
 
     # Keep container running
     restart: unless-stopped
@@ -58,11 +65,18 @@ services:
 
     deploy:
       resources:
+        limits:
+          memory: 16G
         reservations:
+          memory: 4G
           devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+    # OOM killer settings
+    oom_kill_disable: false
+    memswap_limit: 18G
 
     profiles:
       - gpu  # Only start with --profile gpu

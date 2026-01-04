@@ -588,6 +588,28 @@ docker-compose up jupyter
 # Access at http://localhost:8888
 ```
 
+### Memory Limits
+
+The docker-compose configuration includes memory limits to prevent the container from consuming all system RAM:
+
+- **Memory Limit**: 16GB (maximum RAM the container can use)
+- **Memory Reservation**: 4GB (reserved RAM for the container)
+- **Memory + Swap Limit**: 18GB (triggers OOM killer when exceeded)
+- **OOM Killer**: Enabled (kills processes when system RAM is low)
+
+When system RAM drops below ~2GB, the Linux OOM (Out Of Memory) killer will terminate container processes to prevent system freeze. You can adjust these limits in `docker-compose.yml`:
+
+```yaml
+deploy:
+  resources:
+    limits:
+      memory: 16G  # Adjust based on your system
+    reservations:
+      memory: 4G
+oom_kill_disable: false
+memswap_limit: 18G  # Should be slightly higher than memory limit
+```
+
 ## Testing
 
 ```bash
