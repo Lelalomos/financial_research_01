@@ -223,56 +223,277 @@ Output (batch, 1) - Percent change prediction
 All models support the following categorical embeddings:
 - **stock_id**: Unique identifier for each stock (64 dimensions)
 - **group_id**: Sector/group classification (32 dimensions)
-- **day**: Day of month (8 dimensions)
-- **month**: Month of year (8 dimensions)
+- **day**: Day of month (16 dimensions)
+- **month**: Month of year (16 dimensions)
 - **dividend_flag**: Dividend status - 1=has dividend, 2=no dividend (8 dimensions)
+
+## Workflow & Process
+
+### Complete Pipeline Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         DATA COLLECTION                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│  1. Download S&P 500 stock data (yfinance)                               │
+│  2. Download VIX index (^VIX)                                            │
+│  3. Download commodities (Gold, Silver, Copper, etc.)                    │
+│  4. Download treasury yields (FRED: 2Y, 10Y, 30Y)                        │
+│  5. Load financial metrics (PE, EPS, ROE, etc.) from JSON files         │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    OPTIONAL: STOCK SAMPLING                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/preprocess_data.py --stocks 50                          │
+│                                                                         │
+│  • Automatically balances stocks across ALL group_ids (sectors)         │
+│  • Example: 50 stocks across 11 groups = ~4-5 stocks per group          │
+│  • Uses seed=42 for reproducibility                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     FEATURE ENGINEERING                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│  Price Features:   OHLCV, returns, log_returns                          │
+│  EMA:              50, 100, 200 period exponential moving averages       │
+│  RSI:              14-period Relative Strength Index                     │
+│  StochRSI:         Stochastic RSI                                        │
+│  MACD:             (12, 26, 9) parameters                                │
+│  Candlestick:      100+ patterns (Doji, Hammer, Engulfing, etc.)        │
+│  VIX:              Volatility index                                      │
+│  Commodities:      Gold, Silver, Copper prices                          │
+│  Treasury Yields:  2Y, 10Y, 30Y rates                                   │
+│  Financial Metrics: PE, PEG, EPS, ROE, ROI, Debt ratios, Dividend       │
+│  Time Features:    Day of month, Month of year (for embeddings)         │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    PREPROCESSING & NORMALIZATION                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│  1. Log Transform:   log(x + 1) for all numeric features                │
+│  2. Stock Filtering:  Keep stocks with ≥252 trading days                │
+│  3. Train/Val/Test Split: 70% / 15% / 15% (time-based)                  │
+│  4. Sequence Creation:  Create sliding windows (seq_len=30)              │
+│  5. Target Calculation: future_return = price[t+5] / price[t] - 1       │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         MODEL TRAINING                                   │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/train.py --model-type lstm3_attention --epochs 100     │
+│                                                                         │
+│  • Load model architecture from config/model.json                       │
+│  • Create embeddings (stock, group, day, month, dividend_flag)          │
+│  • Training loop with early stopping                                    │
+│  • Save best checkpoint based on validation loss                        │
+│  • TensorBoard logging for visualization                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         VALIDATION                                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/validate.py --model best                                │
+│                                                                         │
+│  • Evaluate on validation set (15% of data)                             │
+│  • Calculate metrics: MSE, RMSE, MAE, R², Directional Accuracy          │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           TESTING                                        │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/test.py --model best                                    │
+│                                                                         │
+│  • Evaluate on test set (15% of data)                                   │
+│  • Final performance metrics                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         BACKTESTING                                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/backtest.py --model best --output report.xlsx          │
+│                                                                         │
+│  • Simulate trading strategy on test data                               │
+│  • Calculate: Sharpe Ratio, Sortino Ratio, Max Drawdown                 │
+│  • Calculate: Win Rate, Profit Factor                                   │
+│  • Generate Excel report with trade details                             │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       PREDICTION (INFERENCE)                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/predict.py --model best --mode <mode>                   │
+│                                                                         │
+│  Modes:                                                                 │
+│  • single:   Predict for 1 stock on 1 date                              │
+│  • batch:    Predict from CSV/Parquet/Excel file                        │
+│  • interactive: Manual input via CLI                                    │
+│  • info:     Display model checkpoint information                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    HYPERPARAMETER TUNING (OPTIONAL)                      │
+├─────────────────────────────────────────────────────────────────────────┤
+│  python scripts/optuna_tune.py --n-trials 50 --stocks 20               │
+│                                                                         │
+│  • Automated hyperparameter search with Optuna                          │
+│  • Searches: learning_rate, hidden_size, dropout, seq_length, etc.      │
+│  • Uses smaller dataset (20 stocks) for faster trials                   │
+│  • Outputs: best_hyperparameters.json                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Quick Reference Commands
+
+```bash
+# Full pipeline (one command)
+python scripts/run_all.py --model-type lstm3_attention --epochs 100
+
+# Step-by-step
+python scripts/preprocess_data.py --stocks 50      # Sample + preprocess
+python scripts/train.py --model-type lstm3_attention --epochs 100
+python scripts/validate.py --model best
+python scripts/test.py --model best
+python scripts/backtest.py --model best
+
+# Hyperparameter tuning
+python scripts/optuna_tune.py --model-type bilstm4_attention --n-trials 50
+
+# Make predictions
+python scripts/predict.py --model best --mode interactive
+```
 
 ## Configuration
 
-### Data Configuration (`config/data_config.py`)
+The project uses **JSON-based configuration** with a Python Config wrapper class for easy access.
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `config/main.json` | Data sources, features, sequences, technical indicators |
+| `config/model.json` | Model architecture with separate sections for each model type |
+| `config/hyperparameter.json` | Hyperparameter search settings (Optuna) |
+| `config/test.json` | Testing configuration |
+| `config/validate.json` | Validation configuration |
+| `config/deploy.json` | Deployment configuration |
+
+### Loading Configuration
 
 ```python
-@dataclass
-class DataConfig:
-    START_DATE: str = "2010-01-01"
-    TRAIN_RATIO: float = 0.70
-    SEQUENCE_LENGTH: int = 30      # Lookback window
-    PREDICTION_HORIZON: int = 5   # Days ahead to predict
+from src.config import load_config
 
-    # Feature flags for ablation
-    FEATURE_FLAGS: Dict[str, bool] = {
-        'price_features': True,
-        'ema_features': True,
-        'candlestick_patterns': True,
-        'vix': True,
-        'commodities': True,
-        ...
-    }
+# Load any config file
+main_config = load_config('main')
+model_config = load_config('model')
+hparam_config = load_config('hyperparameter')
+
+# Access values with dot notation
+start_date = main_config.data.sources.START_DATE
+seq_length = main_config.data.sequences.SEQUENCE_LENGTH
+learning_rate = model_config.model.training.LEARNING_RATE
+
+# Modify values at runtime
+main_config.data.sources.COMMODITIES._data['ZW=F'] = 'Wheat'  # Add commodity
+main_config.data.sources.TREASURY_YIELDS.append('DGS5')        # Add treasury yield
+main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
 ```
 
-### Model Configuration (`config/model_config.py`)
+### Key Configuration Options
+
+#### Data Configuration (`config/main.json`)
+
+```json
+{
+  "data": {
+    "sources": {
+      "START_DATE": "2000-01-01",
+      "END_DATE": null,
+      "COMMODITIES": {
+        "GC=F": "Gold",
+        "SI=F": "Silver",
+        "HG=F": "Copper"
+      },
+      "TREASURY_YIELDS": ["DGS10", "DGS30", "DGS2"]
+    },
+    "splits": {
+      "TRAIN_RATIO": 0.7,
+      "VAL_RATIO": 0.15,
+      "TEST_RATIO": 0.15
+    },
+    "sequences": {
+      "SEQUENCE_LENGTH": 30,
+      "PREDICTION_HORIZON": 5
+    },
+    "technical_indicators": {
+      "EMA_PERIODS": [50, 100, 200],
+      "RSI_PERIOD": 14
+    }
+  }
+}
+```
+
+#### Model Configuration (`config/model.json`)
+
+```json
+{
+  "model": {
+    "embeddings": {
+      "EMBEDDING_DIM_STOCK": 64,
+      "EMBEDDING_DIM_GROUP": 32,
+      "EMBEDDING_DIM_DAY": 16,
+      "EMBEDDING_DIM_MONTH": 16,
+      "EMBEDDING_DIM_DIVIDEND_FLAG": 8,
+      "DROPOUT_EMBEDDING": 0.2
+    },
+    "training": {
+      "LEARNING_RATE": 0.0001,
+      "BATCH_SIZE": 128,
+      "NUM_EPOCHS": 200,
+      "EARLY_STOPPING_PATIENCE": 15
+    },
+    "models": {
+      "lstm3_attention": {
+        "LSTM3_HIDDEN_SIZE": 256,
+        "LSTM3_NUM_LAYERS": 3,
+        "LSTM3_ATTENTION_HEADS": 8
+      },
+      "bilstm4_attention": {
+        "LSTM4_HIDDEN_SIZES": [128, 256, 512, 256],
+        "LSTM4_ATTENTION_HEADS": 4
+      }
+      // ... other models
+    }
+  }
+}
+```
+
+#### Hyperparameter Configuration (`config/hyperparameter.json`)
+
+```json
+{
+  "hyperparameter": {
+    "N_TRIALS": 50,
+    "HPARAM_STOCKS": 20,
+    "LEARNING_RATE_RANGE": [0.00001, 0.001],
+    "LSTM_HIDDEN_SIZE_RANGE": [64, 512],
+    "SEQUENCE_LENGTH_CHOICES": [20, 30, 60, 90]
+  }
+}
+```
+
+### Dynamic Configuration Lists
+
+These lists can be modified at runtime without changing the JSON file:
+
+- **COMMODITIES**: Add/remove commodity futures (e.g., Gold, Silver, Copper)
+- **TREASURY_YIELDS**: Add/remove FRED treasury yield series
+- **EMA_PERIODS**: Add/remove EMA periods for technical indicators
 
 ```python
-@dataclass
-class ModelConfig:
-    MODEL_TYPE: str = "lstm3_attention"
-
-    # Embeddings
-    EMBEDDING_DIM_STOCK: int = 64
-    EMBEDDING_DIM_GROUP: int = 32
-    EMBEDDING_DIM_DAY: int = 8
-    EMBEDDING_DIM_MONTH: int = 8
-    EMBEDDING_DIM_DIVIDEND_FLAG: int = 8
-
-    # Architecture
-    RNN_HIDDEN_SIZE: int = 128
-    ATTENTION_HEADS: int = 4
-
-    # Training
-    LEARNING_RATE: float = 1e-4
-    BATCH_SIZE: int = 256
-    NUM_EPOCHS: int = 200
-    EARLY_STOPPING_PATIENCE: int = 15
+# Example: Add new commodity
+config = load_config('main')
+config.data.sources.COMMODITIES._data['ZW=F'] = 'Wheat'
 ```
 
 ## Docker Deployment
@@ -310,7 +531,7 @@ pytest tests/test_prediction.py -v
 
 ### Test Coverage
 
-The project has 122 unit tests covering:
+The project has **131 unit tests** covering:
 - Data pipeline (feature engineering, preprocessing, dataset creation)
 - All model architectures (forward pass, parameter counting)
 - Training loop (train, validate, early stopping)
@@ -318,6 +539,7 @@ The project has 122 unit tests covering:
 - End-to-end pipeline (train → validate → test → predict → backtest)
 - **Stock sampling** (balanced group sampling, edge cases)
 - **Hyperparameter tuning** (Optuna optimization, dataset creation)
+- **Dynamic configuration** (COMMODITIES, TREASURY_YIELDS, EMA_PERIODS modification)
 
 ## Model Variants
 
