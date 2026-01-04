@@ -584,8 +584,15 @@ class DataDownloader:
         self.logger.info(f"Downloading treasury yields: {self.config.data.sources.TREASURY_YIELDS}")
 
         try:
+            # Parse start date
             start = datetime.strptime(self.config.data.sources.START_DATE, "%Y-%m-%d")
-            end = datetime.strptime(self.config.data.sources.END_DATE, "%Y-%m-%d") + timedelta(days=1)
+
+            # Handle None END_DATE - use today
+            end_date_str = self.config.data.sources.END_DATE
+            if end_date_str is None:
+                end = datetime.now() + timedelta(days=1)
+            else:
+                end = datetime.strptime(end_date_str, "%Y-%m-%d") + timedelta(days=1)
 
             data = web.DataReader(
                 list(self.config.data.sources.TREASURY_YIELDS),

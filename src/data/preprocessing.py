@@ -6,6 +6,7 @@ This module handles:
 - Time-based train/validation/test splitting
 - Sequence creation for RNN models
 - Categorical encoding (stock_id, group_id)
+- Dataset column validation
 """
 
 import pandas as pd
@@ -17,6 +18,7 @@ import gc
 
 from src.config import load_config
 from src.utils.logger import get_logger
+from .validation import validate_dataset, check_feature_consistency
 
 
 class DataPreprocessor:
@@ -590,7 +592,8 @@ class DataPreprocessor:
         fit: bool = True,
         feature_cols: Optional[List[str]] = None,
         export_pre_normalize: Optional[str] = None,
-        export_normalized: Optional[str] = None
+        export_normalized: Optional[str] = None,
+        validate_columns: bool = None
     ) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame], Dict[str, Dict]]:
         """
         Run full preprocessing pipeline.
@@ -601,6 +604,7 @@ class DataPreprocessor:
             feature_cols: List of feature columns
             export_pre_normalize: Path to export pre-normalization data (parquet format)
             export_normalized: Path to export normalized data (parquet format)
+            validate_columns: Whether to validate columns (default from config if None)
 
         Returns:
             Tuple of (preprocessed_df, splits_dict, sequences_dict, info_dict)
@@ -608,6 +612,18 @@ class DataPreprocessor:
         self.logger.info("=" * 60)
         self.logger.info("PREPROCESSING PIPELINE")
         self.logger.info("=" * 60)
+
+        # Check if validation should be performed
+        if validate_columns is None:
+            validate_columns = getattr(
+                self.config.data.validation,
+                'VALIDATE_ON_LOAD',
+                True
+            )
+
+        # Validate columns before processing
+        if validate_columns:
+            validate_dataset(df, "input_data", config=self.config, raise_on_missing=True)
 
         result = df.copy()
 

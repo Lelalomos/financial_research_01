@@ -80,6 +80,22 @@
       "FINANCIAL_METRICS_SOURCE": "raw_data/ticket_data/us",
       "FINANCIAL_METRICS_FILL_METHOD": "ffill"
     },
+    "validation": {
+      "REQUIRED_COLUMNS": {
+        "identifiers": ["date", "tic"],
+        "price_data": ["open", "high", "low", "close", "volume"],
+        "target": ["target"]
+      },
+      "OPTIONAL_COLUMNS": {
+        "financial_metrics": ["pe_ratio", "peg_ratio", "eps", "dividend_flag", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
+        "time_features": ["day", "month", "dayofweek"],
+        "external": ["vix", "bondyield"],
+        "grouping": ["group"],
+        "categorical_encoded": ["tic_id", "group_id"]
+      },
+      "VALIDATE_ON_LOAD": true,
+      "WARN_ON_MISSING_OPTIONAL": true
+    },
     "paths": {
       "RAW_DATA_PATH": "data/raw",
       "PROCESSED_DATA_PATH": "data/processed",

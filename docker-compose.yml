@@ -4,12 +4,13 @@ services:
   # Main service - runs in background for interactive use
   crnn-prediction:
     build: .
-    image: financial-prediction-04:latest
+    image: financial-prediction-05:latest
     container_name: crnn_predictor
 
     # Volume mounts
     volumes:
       - ./data:/app/data
+      - ./raw_data:/app/raw_data
       - ./logs:/app/logs
       - ./models:/app/models
       - ./outputs:/app/outputs
@@ -46,6 +47,7 @@ services:
 
     volumes:
       - ./data:/app/data
+      - ./raw_data:/app/raw_data
       - ./logs:/app/logs
       - ./models:/app/models
       - ./outputs:/app/outputs

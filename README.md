@@ -136,9 +136,10 @@ research_02/
 │   │   ├── downloader.py    # Data downloading (yfinance, FRED)
 │   │   ├── feature_engineering.py  # Technical indicators
 │   │   ├── preprocessing.py  # Normalization, splitting
-│   │   ├── financial_metrics_loader.py  # Financial metrics from API
+│   │   ├── financial_metrics_loader.py  # Financial metrics from JSON
 │   │   ├── prediction_prep.py  # Data preparation for prediction
 │   │   ├── sampling.py       # Balanced stock sampling
+│   │   ├── validation.py     # Dataset column validation
 │   │   └── dataset.py        # PyTorch Dataset
 │   ├── models/
 │   │   ├── crnn_attention.py # CNN + BiLSTM + Attention (base module)
@@ -181,6 +182,8 @@ research_02/
 │   ├── test_dynamic_config.py # Dynamic config list tests
 │   ├── test_training.py
 │   ├── test_prediction.py   # Prediction tests
+│   ├── test_validation.py   # Dataset column validation tests
+│   ├── test_data_download.py # Data download integration tests
 │   ├── test_small_dataset.py
 │   └── test_full_flow.py    # End-to-end test
 ├── Dockerfile
@@ -199,6 +202,78 @@ research_02/
 | **VIX Index** | Volatility index (^VIX) |
 | **Commodities** | Gold, Copper, Corn, Soybeans, Cocoa, Silver |
 | **Treasury Yields** | 2Y, 10Y, 30Y from FRED |
+
+### Financial Metrics Data
+
+The model loads financial metrics from JSON files in `raw_data/ticket_data/us/{TICKER}.json`. These files contain:
+
+**From Highlights Section (single values):**
+- `PERatio`: Price-to-Earnings ratio
+- `PEGRatio`: PEG ratio
+- `DilutedEpsTTM`: Earnings Per Share (diluted, trailing twelve months)
+- `DividendYield`: Annual dividend yield (used to calculate dividend_flag)
+
+**From Financials Section (quarterly data):**
+- Balance Sheet: `totalAssets`, `totalLiab`, `totalStockholderEquity`, `totalCurrentAssets`, `totalCurrentLiabilities`
+- Income Statement: `netIncome`
+
+**Calculated Metrics:**
+- `ROE` = netIncome / totalStockholderEquity
+- `ROI` = netIncome / totalAssets
+- `Debt-to-Equity` = totalLiab / totalStockholderEquity
+- `Debt-to-Asset` = totalLiab / totalAssets
+- `Current Ratio` = totalCurrentAssets / totalCurrentLiabilities
+
+The quarterly metrics are forward-filled to daily frequency to match price data.
+
+### Dataset Column Validation
+
+The project includes automatic column validation to ensure required data is present:
+
+**Required Columns** (must be present):
+- Identifiers: `date`, `tic`
+- Price Data: `open`, `high`, `low`, `close`, `volume`
+- Target: `target`
+
+**Optional Columns** (warn if missing):
+- Financial Metrics: `pe_ratio`, `peg_ratio`, `eps`, `dividend_flag`, `roe`, `roi`, `debt_to_equity`, `debt_to_asset`, `current_ratio`
+- Time Features: `day`, `month`, `dayofweek`
+- External Data: `vix`, `bondyield`
+- Grouping: `group`
+- Encoded: `tic_id`, `group_id`
+
+**Configuration** (`config/main.json`):
+```json
+{
+  "data": {
+    "validation": {
+      "REQUIRED_COLUMNS": {
+        "identifiers": ["date", "tic"],
+        "price_data": ["open", "high", "low", "close", "volume"],
+        "target": ["target"]
+      },
+      "OPTIONAL_COLUMNS": {
+        "financial_metrics": ["pe_ratio", "eps", "roe", ...],
+        "time_features": ["day", "month", "dayofweek"]
+      },
+      "VALIDATE_ON_LOAD": true,
+      "WARN_ON_MISSING_OPTIONAL": true
+    }
+  }
+}
+```
+
+**Why Financial Metrics Might Be Missing:**
+1. `raw_data/ticket_data/us/` directory not mounted in Docker
+2. JSON files don't exist for the tickers
+3. JSON files don't contain the required `Highlights` or `Financials` sections
+4. `financial_metrics` feature flag is disabled in config
+
+To enable the `raw_data` volume mount, ensure `docker-compose.yml` includes:
+```yaml
+volumes:
+  - ./raw_data:/app/raw_data
+```
 
 ## Model Architecture
 
@@ -531,7 +606,7 @@ pytest tests/test_prediction.py -v
 
 ### Test Coverage
 
-The project has **131 unit tests** covering:
+The project has **149 tests** covering:
 - Data pipeline (feature engineering, preprocessing, dataset creation)
 - All model architectures (forward pass, parameter counting)
 - Training loop (train, validate, early stopping)
@@ -540,6 +615,8 @@ The project has **131 unit tests** covering:
 - **Stock sampling** (balanced group sampling, edge cases)
 - **Hyperparameter tuning** (Optuna optimization, dataset creation)
 - **Dynamic configuration** (COMMODITIES, TREASURY_YIELDS, EMA_PERIODS modification)
+- **Dataset column validation** (required/optional columns, feature consistency)
+- **Data download integration** (treasury yields, VIX, commodities)
 
 ## Model Variants
 
