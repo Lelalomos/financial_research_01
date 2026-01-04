@@ -1,7 +1,7 @@
 """
 Unit tests for all model components.
 
-Tests all 7 model variants:
+Tests all 8 model variants:
 - CRNNModel
 - RNNModel
 - RNNAttentionModel
@@ -9,6 +9,7 @@ Tests all 7 model variants:
 - TransformerModel
 - LSTM3Model
 - LSTM3AttentionModel
+- BiLSTM4AttentionModel
 """
 
 import pytest
@@ -31,6 +32,7 @@ from src.models import (
     TransformerModel,
     LSTM3Model,
     LSTM3AttentionModel,
+    BiLSTM4AttentionModel,
 )
 
 
@@ -42,7 +44,8 @@ ALL_MODEL_TYPES = [
     'crnn_attention',
     'transformer',
     'lstm3',
-    'lstm3_attention'
+    'lstm3_attention',
+    'bilstm4_attention'
 ]
 
 
@@ -389,11 +392,11 @@ class TestModelRegistry:
     """Test model registry functionality."""
 
     def test_list_available_models(self):
-        """Test that all 7 models are listed."""
+        """Test that all 8 models are listed."""
         models = list_available_models()
-        assert len(models) == 7
+        assert len(models) == 8
         expected = {'crnn', 'rnn', 'rnn_attention', 'crnn_attention',
-                   'transformer', 'lstm3', 'lstm3_attention'}
+                   'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention'}
         assert set(models) == expected
 
     @pytest.mark.parametrize("model_type", ALL_MODEL_TYPES)

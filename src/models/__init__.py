@@ -9,6 +9,7 @@ This module provides all model variants:
 - Transformer
 - LSTM3 (3-layer BiLSTM)
 - LSTM3 + Attention
+- BiLSTM4 + Attention (4-layer with variable hidden sizes)
 """
 
 from typing import Optional, Type
@@ -23,6 +24,7 @@ from .crnn_attention import CRNNAttentionModel, create_model as create_crnn_atte
 from .transformer_model import TransformerModel, create_model as create_transformer
 from .lstm3_model import LSTM3Model, create_model as create_lstm3
 from .lstm3_attn_model import LSTM3AttentionModel, create_model as create_lstm3_attention
+from .bilstm4_attn_model import BiLSTM4AttentionModel, create_model as create_bilstm4_attention
 
 # Map model types to their create functions
 _MODEL_REGISTRY = {
@@ -33,6 +35,7 @@ _MODEL_REGISTRY = {
     'transformer': (TransformerModel, create_transformer),
     'lstm3': (LSTM3Model, create_lstm3),
     'lstm3_attention': (LSTM3AttentionModel, create_lstm3_attention),
+    'bilstm4_attention': (BiLSTM4AttentionModel, create_bilstm4_attention),
 }
 
 __all__ = [
@@ -43,6 +46,7 @@ __all__ = [
     'TransformerModel',
     'LSTM3Model',
     'LSTM3AttentionModel',
+    'BiLSTM4AttentionModel',
     'create_model',
     'get_model_class',
     'list_available_models',

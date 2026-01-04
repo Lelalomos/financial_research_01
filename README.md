@@ -20,7 +20,7 @@ The development process follows a human-AI collaborative approach:
 2. **Comprehensive Testing**
    - All code changes are tested automatically after implementation
    - Tests run in isolated Docker container environment
-   - 81 unit tests ensure code quality and correctness
+   - 91 unit tests ensure code quality and correctness
 
 3. **Code Quality**
    - Follows Python best practices and PEP 8 standards
@@ -30,7 +30,7 @@ The development process follows a human-AI collaborative approach:
 
 ## Features
 
-- **Multiple Model Architectures**: CRNN, RNN, RNN+Attention, CRNN+Attention, Transformer, LSTM3, LSTM3+Attention
+- **Multiple Model Architectures**: CRNN, RNN, RNN+Attention, CRNN+Attention, Transformer, LSTM3, LSTM3+Attention, **BiLSTM4+Attention**
 - **Comprehensive Feature Engineering**:
   - Technical indicators (EMA, RSI, StochRSI, MACD)
   - 100+ candlestick patterns via TA-Lib
@@ -45,6 +45,7 @@ The development process follows a human-AI collaborative approach:
 - **Comprehensive Logging** and TensorBoard integration
 - **Backtesting** with performance metrics
 - **Prediction System** with support for single/batch/interactive prediction
+- **Hyperparameter Tuning** with Optuna (automated search for best parameters)
 
 ## Quick Start
 
@@ -89,6 +90,10 @@ python scripts/backtest.py --model best --output outputs/report.xlsx
 python scripts/predict.py --model models/checkpoints/best_model.pth --mode interactive
 python scripts/predict.py --model models/checkpoints/best_model.pth --mode batch --input data/new_data.csv
 python scripts/predict.py --model models/checkpoints/best_model.pth --mode single --tic AAPL --date 2024-01-15
+
+# 7. Hyperparameter tuning (NEW)
+bash scripts/optuna_tune.sh --model-type bilstm4_attention --n-trials 50
+python scripts/optuna_tune.py --model-type bilstm4_attention --n-trials 50 --stocks 20
 ```
 
 ### Quick Test with Small Dataset
@@ -102,6 +107,9 @@ python tests/test_full_flow.py
 
 # Run all unit tests
 pytest tests/ -v
+
+# Test hyperparameter tuning
+pytest tests/test_optuna_tune.py -v
 ```
 
 ## Project Structure
@@ -126,7 +134,11 @@ research_02/
 │   │   ├── rnn_attention.py  # BiLSTM + Attention
 │   │   ├── lstm3_model.py    # 3-layer BiLSTM
 │   │   ├── lstm3_attn_model.py # 3-layer BiLSTM + Attention
+│   │   ├── bilstm4_attn_model.py # 4-layer BiLSTM + Attention (NEW)
 │   │   └── transformer_model.py  # Transformer
+│   ├── hyperparameter/       # NEW: Hyperparameter tuning
+│   │   ├── __init__.py
+│   │   └── optimizer.py       # Optuna optimizer
 │   ├── training/
 │   │   ├── trainer.py       # Training loop
 │   │   └── early_stopping.py
@@ -140,6 +152,9 @@ research_02/
 │       └── logger.py        # Logging utilities
 ├── scripts/
 │   ├── preprocess_data.py
+│   ├── create_hparam_dataset.py  # NEW: Create small dataset for hparam tuning
+│   ├── optuna_tune.py       # NEW: Optuna hyperparameter tuning
+│   ├── optuna_tune.sh       # NEW: Shell wrapper for hparam tuning
 │   ├── train.py
 │   ├── test.py
 │   ├── validate.py
@@ -150,6 +165,7 @@ research_02/
 ├── tests/
 │   ├── test_data_pipeline.py
 │   ├── test_models.py
+│   ├── test_optuna_tune.py  # NEW: Hyperparameter tuning tests
 │   ├── test_training.py
 │   ├── test_prediction.py   # Prediction tests
 │   ├── test_small_dataset.py
@@ -281,12 +297,13 @@ pytest tests/test_prediction.py -v
 
 ### Test Coverage
 
-The project has 81 unit tests covering:
+The project has 91 unit tests covering:
 - Data pipeline (feature engineering, preprocessing, dataset creation)
 - All model architectures (forward pass, parameter counting)
 - Training loop (train, validate, early stopping)
 - Prediction system (single/batch/interactive modes)
 - End-to-end pipeline (train → validate → test → predict → backtest)
+- **Hyperparameter tuning** (Optuna optimization, dataset creation)
 
 ## Model Variants
 

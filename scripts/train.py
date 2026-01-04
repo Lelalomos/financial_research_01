@@ -30,7 +30,7 @@ def parse_args():
     parser.add_argument(
         '--model-type',
         type=str,
-        choices=['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention'],
+        choices=['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention'],
         default='crnn_attention',
         help='Model type'
     )

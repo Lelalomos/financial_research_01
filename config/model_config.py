@@ -19,7 +19,7 @@ class ModelConfig:
 
     Attributes:
         # Model selection
-        MODEL_TYPE: Type of model to use ('crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention')
+        MODEL_TYPE: Type of model to use ('crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention')
 
         # Embedding dimensions
         EMBEDDING_DIM_STOCK: Dimension for stock ticker embedding
@@ -156,6 +156,14 @@ class ModelConfig:
     LSTM3_ATTENTION_HEADS: int = 8
     LSTM3_ATTENTION_DROPOUT: float = 0.1
 
+    # LSTM4 architecture (4-layer BiLSTM with variable hidden sizes)
+    LSTM4_HIDDEN_SIZES: Tuple[int, ...] = (128, 256, 512, 256)  # Per-layer hidden sizes
+    LSTM4_DROPOUT: float = 0.4
+
+    # LSTM4 + Attention
+    LSTM4_ATTENTION_HEADS: int = 4
+    LSTM4_ATTENTION_DROPOUT: float = 0.4
+
     # Fully connected layers
     FC_HIDDEN_SIZES: Tuple[int, ...] = (256, 128)
     FC_DROPOUT: float = 0.3
@@ -215,7 +223,7 @@ class ModelConfig:
     def __post_init__(self):
         """Validate configuration and set defaults."""
         # Validate model type
-        valid_models = ['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention']
+        valid_models = ['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention']
         if self.MODEL_TYPE not in valid_models:
             raise ValueError(f"MODEL_TYPE must be one of {valid_models}, got {self.MODEL_TYPE}")
 
@@ -342,5 +350,82 @@ def get_config_for_model(model_type: str) -> ModelConfig:
         base_config.LSTM3_HIDDEN_SIZE = 256
         base_config.LSTM3_NUM_LAYERS = 3
         base_config.LSTM3_ATTENTION_HEADS = 8
+    elif model_type == 'bilstm4_attention':
+        # BiLSTM4 + Attention settings
+        base_config.LSTM4_HIDDEN_SIZES = (128, 256, 512, 256)
+        base_config.LSTM4_DROPOUT = 0.4
+        base_config.LSTM4_ATTENTION_HEADS = 4
+        base_config.LSTM4_ATTENTION_DROPOUT = 0.4
 
     return base_config
+
+
+@dataclass
+class HyperparameterSearchConfig:
+    """
+    Configuration for hyperparameter search with Optuna.
+
+    Attributes:
+        # Search settings
+        N_TRIALS: Number of Optuna trials to run
+        TIMEOUT: Maximum time for search (None = no timeout)
+        N_JOBS: Number of parallel trials
+
+        # Model type to tune (configurable)
+        MODEL_TYPE: Default model type to tune
+
+        # Small dataset settings
+        HPARAM_STOCKS: Number of stocks to sample (ensuring all groups)
+        HPARAM_YEARS: Number of years to use (None = ALL years)
+        HPARAM_ALL_YEARS: If True, use all available years
+        HPARAM_START_DATE: Auto-calculated when HPARAM_ALL_YEARS=True
+
+        # Early stopping for faster trials
+        HPARAM_MAX_EPOCHS: Max epochs per trial
+        HPARAM_ES_PATIENCE: Early stopping patience per trial
+
+        # Hyperparameter search ranges
+        LEARNING_RATE_RANGE: (min, max) for learning rate (log scale)
+        LSTM_HIDDEN_SIZE_RANGE: (min, max) for LSTM hidden size
+        LSTM_NUM_LAYERS_RANGE: (min, max) for number of LSTM layers
+        DROPOUT_RANGE: (min, max) for dropout
+        WEIGHT_DECAY_RANGE: (min, max) for weight decay (log scale)
+        SEQUENCE_LENGTH_CHOICES: Tuple of sequence length options
+
+        # Output
+        BEST_PARAMS_PATH: Path to save best hyperparameters
+    """
+
+    # Search settings
+    N_TRIALS: int = 50
+    TIMEOUT: Optional[int] = None  # None = no timeout
+    N_JOBS: int = 1  # Number of parallel trials
+
+    # Model type to tune (configurable)
+    MODEL_TYPE: str = "bilstm4_attention"  # Can be changed via command line
+
+    # Small dataset settings
+    HPARAM_STOCKS: int = 20
+    HPARAM_YEARS: Optional[int] = None  # None = use ALL years (default)
+    HPARAM_ALL_YEARS: bool = True  # Default: use all available years
+    HPARAM_START_DATE: Optional[str] = None  # Uses full date range when HPARAM_ALL_YEARS=True
+
+    # Early stopping for faster trials
+    HPARAM_MAX_EPOCHS: int = 50
+    HPARAM_ES_PATIENCE: int = 10
+
+    # Hyperparameter search ranges
+    LEARNING_RATE_RANGE: tuple = (1e-5, 1e-3)
+    LSTM_HIDDEN_SIZE_RANGE: tuple = (64, 512)
+    LSTM_NUM_LAYERS_RANGE: tuple = (1, 4)
+    DROPOUT_RANGE: tuple = (0.1, 0.5)
+    WEIGHT_DECAY_RANGE: tuple = (1e-6, 1e-3)
+    SEQUENCE_LENGTH_CHOICES: tuple = (20, 30, 60, 90)
+    BATCH_SIZE_CHOICES: tuple = (32, 64, 128)
+
+    # Output
+    BEST_PARAMS_PATH: str = "best_hyperparameters.json"
+
+
+# Default hyperparameter search configuration
+default_hparam_config = HyperparameterSearchConfig()
