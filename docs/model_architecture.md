@@ -125,7 +125,7 @@ model = CRNNAttentionModel(
 
 **Use case**: Best performance, feature extraction + attention
 
-### 5. Transformer
+### 5. Transformer (with 4-layer BiLSTM)
 
 ```python
 from src.models import TransformerModel
@@ -138,7 +138,14 @@ model = TransformerModel(
 )
 ```
 
-**Use case**: Alternative approach, pure attention
+**Architecture**:
+- 4-layer BiLSTM (128, 256, 512, 256) for sequential modeling
+- Project to d_model (256)
+- Positional encoding
+- Transformer encoder (4 layers, 8 heads)
+- Single Linear FC layer
+
+**Use case**: Deep architecture combining LSTM sequential modeling with Transformer attention
 
 ## Configuration
 

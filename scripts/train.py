@@ -279,7 +279,7 @@ def main():
     )
 
     # Create trainer
-    trainer = Trainer(model, config, device=args.device)
+    trainer = Trainer(model, config, device=args.device, model_type=args.model_type)
 
     # Load checkpoint for fine-tuning if specified
     if args.fine_tune:

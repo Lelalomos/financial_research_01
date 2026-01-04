@@ -1,8 +1,9 @@
 """
-Transformer model for financial prediction.
+Transformer model with 4-layer BiLSTM for financial prediction.
 
 Model architecture:
 - Embeddings (stock, group, day, month)
+- 4-layer BiLSTM with variable hidden sizes (128, 256, 512, 256)
 - Positional encoding
 - Transformer encoder
 - Fully connected layers
@@ -13,7 +14,7 @@ import torch.nn as nn
 from typing import Optional
 
 from src.config import load_config
-from .crnn_attention import EmbeddingLayer
+from .crnn_attention import EmbeddingLayer, BiLSTM4Block
 
 
 class PositionalEncoding(nn.Module):
@@ -54,16 +55,18 @@ class PositionalEncoding(nn.Module):
 
 class TransformerModel(nn.Module):
     """
-    Transformer model for financial prediction.
+    Transformer + 4-layer BiLSTM model for financial prediction.
 
     Architecture:
-    1. Embedding layer (stock, group, day, month)
+    1. Embedding layer (stock, group, day, month, dividend_flag)
     2. Concatenate embeddings + features
-    3. Positional encoding
-    4. Transformer encoder
-    5. Mean pooling
-    6. Fully connected layers
-    7. Output (percent change prediction)
+    3. 4-layer BiLSTM with variable hidden sizes (128, 256, 512, 256)
+    4. Project to d_model
+    5. Positional encoding
+    6. Transformer encoder
+    7. Mean pooling
+    8. Single Linear FC layer
+    9. Output (percent change prediction)
     """
 
     def __init__(
@@ -95,10 +98,17 @@ class TransformerModel(nn.Module):
 
         # Calculate input dimension after embeddings
         embedding_dim = self.embeddings.output_dim
-        input_dim = embedding_dim + num_features
+        lstm_input_dim = embedding_dim + num_features
 
-        # Project to d_model if needed
-        self.input_projection = nn.Linear(input_dim, config.model.models.transformer.TRANSFORMER_D_MODEL)
+        # 4-layer BiLSTM block with variable hidden sizes
+        self.lstm = BiLSTM4Block(
+            input_size=lstm_input_dim,
+            hidden_sizes=config.model.models.transformer.LSTM4_HIDDEN_SIZES,
+            dropout=config.model.models.transformer.LSTM4_DROPOUT
+        )
+
+        # Project LSTM output to d_model
+        self.lstm_projection = nn.Linear(self.lstm.output_dim, config.model.models.transformer.TRANSFORMER_D_MODEL)
 
         # Positional encoding
         self.pos_encoding = PositionalEncoding(config.model.models.transformer.TRANSFORMER_D_MODEL)
@@ -117,26 +127,9 @@ class TransformerModel(nn.Module):
             num_layers=config.model.models.transformer.TRANSFORMER_NUM_LAYERS
         )
 
-        # Fully connected layers
-        fc_input_dim = config.model.models.transformer.TRANSFORMER_D_MODEL
-
-        fc_layers = []
-        prev_dim = fc_input_dim
-
-        for fc_size in config.model.models.transformer.FC_HIDDEN_SIZES:
-            fc_layers.extend([
-                nn.Linear(prev_dim, fc_size),
-                nn.LeakyReLU(0.1),
-                nn.Dropout(config.model.models.transformer.FC_DROPOUT)
-            ])
-
-            if config.model.models.transformer.FC_USE_BATCH_NORM:
-                fc_layers.append(nn.BatchNorm1d(fc_size))
-
-            prev_dim = fc_size
-
-        fc_layers.append(nn.Linear(prev_dim, 1))
-        self.fc = nn.Sequential(*fc_layers)
+        # Single Linear FC layer (like other models with BiLSTM4)
+        self.fc = nn.Linear(config.model.models.transformer.TRANSFORMER_D_MODEL, 1)
+        self.fc_dropout = nn.Dropout(config.model.models.transformer.TRANSFORMER_DROPOUT)
 
     def forward(
         self,
@@ -167,8 +160,11 @@ class TransformerModel(nn.Module):
         # Concatenate embeddings and features
         x = torch.cat([emb, features], dim=-1)
 
-        # Project to d_model
-        x = self.input_projection(x)
+        # 4-layer BiLSTM
+        x = self.lstm(x)
+
+        # Project LSTM output to d_model
+        x = self.lstm_projection(x)
 
         # Add positional encoding
         x = self.pos_encoding(x)
@@ -179,7 +175,10 @@ class TransformerModel(nn.Module):
         # Mean pooling over sequence
         x = x.mean(dim=1)
 
-        # Fully connected
+        # Apply dropout before FC
+        x = self.fc_dropout(x)
+
+        # Single Linear FC layer
         output = self.fc(x)
 
         return output

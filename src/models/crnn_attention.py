@@ -185,8 +185,113 @@ class CNNBlock(nn.Module):
         return 0
 
 
+class BiLSTM4Block(nn.Module):
+    """
+    4-layer bidirectional LSTM with different hidden sizes per layer.
+
+    Architecture:
+    - Layer 1: input_size -> 128 hidden (bidirectional -> 256 output)
+    - Layer 2: 256 -> 256 hidden (bidirectional -> 512 output)
+    - Layer 3: 512 -> 512 hidden (bidirectional -> 1024 output)
+    - Layer 4: 1024 -> 256 hidden (bidirectional -> 512 output)
+    - Dropout between layers
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_sizes: tuple,
+        dropout: float
+    ):
+        """
+        Initialize 4-layer BiLSTM block.
+
+        Args:
+            input_size: Input feature size
+            hidden_sizes: Tuple of 4 hidden sizes (one per layer)
+            dropout: Dropout rate
+        """
+        super().__init__()
+
+        if len(hidden_sizes) != 4:
+            raise ValueError(f"hidden_sizes must have exactly 4 elements, got {len(hidden_sizes)}")
+
+        self.hidden_sizes = hidden_sizes
+
+        # Layer 1: input_size -> hidden_sizes[0] (bidirectional)
+        self.lstm1 = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_sizes[0],
+            batch_first=True,
+            bidirectional=True
+        )
+
+        # Layer 2: hidden_sizes[0]*2 -> hidden_sizes[1] (bidirectional)
+        self.lstm2 = nn.LSTM(
+            input_size=hidden_sizes[0] * 2,
+            hidden_size=hidden_sizes[1],
+            batch_first=True,
+            bidirectional=True
+        )
+
+        # Layer 3: hidden_sizes[1]*2 -> hidden_sizes[2] (bidirectional)
+        self.lstm3 = nn.LSTM(
+            input_size=hidden_sizes[1] * 2,
+            hidden_size=hidden_sizes[2],
+            batch_first=True,
+            bidirectional=True
+        )
+
+        # Layer 4: hidden_sizes[2]*2 -> hidden_sizes[3] (bidirectional)
+        self.lstm4 = nn.LSTM(
+            input_size=hidden_sizes[2] * 2,
+            hidden_size=hidden_sizes[3],
+            batch_first=True,
+            bidirectional=True
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass.
+
+        Args:
+            x: (batch, seq_len, input_size)
+
+        Returns:
+            Output: (batch, seq_len, hidden_sizes[3] * 2)
+        """
+        # Layer 1
+        x, _ = self.lstm1(x)
+        x = self.dropout(x)
+
+        # Layer 2
+        x, _ = self.lstm2(x)
+        x = self.dropout(x)
+
+        # Layer 3
+        x, _ = self.lstm3(x)
+        x = self.dropout(x)
+
+        # Layer 4
+        x, _ = self.lstm4(x)
+        x = self.dropout(x)
+
+        return x
+
+    @property
+    def output_dim(self) -> int:
+        """Output dimension (bidirectional = 2x last hidden size)."""
+        return self.hidden_sizes[3] * 2
+
+
 class BiLSTMBlock(nn.Module):
-    """Bidirectional LSTM block."""
+    """
+    Standard bidirectional LSTM block (for backward compatibility).
+
+    Used by CRNNModel which needs a simple multi-layer BiLSTM.
+    """
 
     def __init__(
         self,
@@ -293,46 +398,24 @@ class CRNNAttentionModel(nn.Module):
             use_batch_norm=config.model.models.crnn_attention.CNN_USE_BATCH_NORM
         )
 
-        # BiLSTM block
-        self.lstm = BiLSTMBlock(
+        # 4-layer BiLSTM block with variable hidden sizes
+        self.lstm = BiLSTM4Block(
             input_size=self.cnn.output_dim,
-            hidden_size=config.model.models.crnn_attention.RNN_HIDDEN_SIZE,
-            num_layers=config.model.models.crnn_attention.RNN_NUM_LAYERS,
-            dropout=config.model.models.crnn_attention.RNN_DROPOUT,
-            use_layer_norm=config.model.models.crnn_attention.USE_LAYER_NORM
+            hidden_sizes=config.model.models.crnn_attention.LSTM4_HIDDEN_SIZES,
+            dropout=config.model.models.crnn_attention.LSTM4_DROPOUT
         )
 
         # Multihead attention
-        if config.model.models.crnn_attention.USE_ATTENTION:
-            self.attention = nn.MultiheadAttention(
-                embed_dim=self.lstm.output_dim,
-                num_heads=config.model.models.crnn_attention.ATTENTION_HEADS,
-                dropout=config.model.models.crnn_attention.ATTENTION_DROPOUT,
-                batch_first=True
-            )
-        else:
-            self.attention = None
+        self.attention = nn.MultiheadAttention(
+            embed_dim=self.lstm.output_dim,
+            num_heads=config.model.models.crnn_attention.LSTM4_ATTENTION_HEADS,
+            dropout=config.model.models.crnn_attention.LSTM4_ATTENTION_DROPOUT,
+            batch_first=True
+        )
 
-        # Fully connected layers
-        fc_input_dim = self.lstm.output_dim
-
-        fc_layers = []
-        prev_dim = fc_input_dim
-
-        for fc_size in config.model.models.crnn_attention.FC_HIDDEN_SIZES:
-            fc_layers.extend([
-                nn.Linear(prev_dim, fc_size),
-                nn.LeakyReLU(0.1),
-                nn.Dropout(config.model.models.crnn_attention.FC_DROPOUT)
-            ])
-
-            if config.model.models.crnn_attention.FC_USE_BATCH_NORM:
-                fc_layers.append(nn.BatchNorm1d(fc_size))
-
-            prev_dim = fc_size
-
-        fc_layers.append(nn.Linear(prev_dim, 1))
-        self.fc = nn.Sequential(*fc_layers)
+        # Single Linear FC layer (like bilstm4_attention)
+        self.fc = nn.Linear(self.lstm.output_dim, 1)
+        self.fc_dropout = nn.Dropout(config.model.models.crnn_attention.LSTM4_DROPOUT)
 
     def forward(
         self,
@@ -366,17 +449,19 @@ class CRNNAttentionModel(nn.Module):
         # CNN feature extraction
         x = self.cnn(x)
 
-        # BiLSTM
+        # 4-layer BiLSTM
         x = self.lstm(x)
 
-        # Attention
-        if self.attention is not None:
-            x, _ = self.attention(x, x, x)  # Self-attention
-            x = x.mean(dim=1)  # Mean pooling over sequence
-        else:
-            x = x[:, -1, :]  # Use last time step
+        # MultiheadAttention (self-attention)
+        x, _ = self.attention(x, x, x)
 
-        # Fully connected
+        # Mean pooling over sequence
+        x = x.mean(dim=1)
+
+        # Apply dropout before FC
+        x = self.fc_dropout(x)
+
+        # Single Linear FC layer
         output = self.fc(x)
 
         return output

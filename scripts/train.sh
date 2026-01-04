@@ -16,7 +16,7 @@ set -e
 
 # Default values
 MODEL_TYPE="bilstm4_attention"
-EPOCHS=20
+EPOCHS=5
 BATCH_SIZE=256
 LEARNING_RATE=0.00001
 STOCKS=""

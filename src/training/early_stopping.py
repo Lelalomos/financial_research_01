@@ -7,6 +7,10 @@ Monitors validation loss and stops training when no improvement.
 import torch
 import numpy as np
 from typing import Optional
+from datetime import datetime
+import os
+import glob
+import re
 
 
 class EarlyStopping:
@@ -97,7 +101,7 @@ class ModelCheckpoint:
     """
     Model checkpointing utility.
 
-    Saves best model checkpoints during training.
+    Saves best model checkpoints during training with timestamp and model name.
     """
 
     def __init__(
@@ -106,7 +110,8 @@ class ModelCheckpoint:
         mode: str = 'min',
         save_best_only: bool = True,
         save_last_n: int = 3,
-        verbose: bool = True
+        verbose: bool = True,
+        model_type: str = 'model'
     ):
         """
         Initialize model checkpoint.
@@ -117,17 +122,18 @@ class ModelCheckpoint:
             save_best_only: Only save best model
             save_last_n: Save last N checkpoints
             verbose: Print messages
+            model_type: Model type name for filename (e.g., 'crnn_attention')
         """
         self.save_dir = save_dir
         self.mode = mode
         self.save_best_only = save_best_only
         self.save_last_n = save_last_n
         self.verbose = verbose
+        self.model_type = model_type
 
         self.best_score = None
         self.checkpoint_history = []
 
-        import os
         os.makedirs(save_dir, exist_ok=True)
 
     def __call__(
@@ -163,8 +169,9 @@ class ModelCheckpoint:
             improved = True
 
         if improved or not self.save_best_only:
-            import os
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             checkpoint = {
+                'model_type': self.model_type,
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
@@ -175,14 +182,14 @@ class ModelCheckpoint:
             if extra_state:
                 checkpoint.update(extra_state)
 
-            # Generate filename
+            # Generate filename with model name and timestamp
             if improved:
-                filename = 'best_model.pth'
+                filename = f'{self.model_type}_best_{timestamp}.pth'
                 self.best_score = score
                 if self.verbose:
                     print(f"  -> Saving best model (score: {score:.6f})")
             else:
-                filename = f'checkpoint_epoch_{epoch}.pth'
+                filename = f'{self.model_type}_epoch{epoch}_{timestamp}.pth'
                 if self.verbose:
                     print(f"  -> Saving checkpoint (score: {score:.6f})")
 
@@ -217,17 +224,28 @@ class ModelCheckpoint:
         Returns:
             Checkpoint dictionary
         """
-        import os
-        filepath = os.path.join(self.save_dir, 'best_model.pth')
+        import glob
+        # Find best model file by pattern (supports both new and old naming)
+        pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
+        files = glob.glob(pattern)
 
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"No checkpoint found at {filepath}")
+        # Fallback to old naming convention for backward compatibility
+        if not files:
+            old_pattern = os.path.join(self.save_dir, 'best_model.pth')
+            if os.path.exists(old_pattern):
+                filepath = old_pattern
+            else:
+                raise FileNotFoundError(f"No checkpoint found matching pattern {pattern} or {old_pattern}")
+        else:
+            # Get the most recent best model
+            filepath = max(files, key=os.path.getmtime)
 
         checkpoint = torch.load(filepath, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
 
         if self.verbose:
-            print(f"Loaded best model from epoch {checkpoint['epoch']} (score: {checkpoint['score']:.6f})")
+            model_type = checkpoint.get('model_type', 'unknown')
+            print(f"Loaded best {model_type} model from {os.path.basename(filepath)} (epoch: {checkpoint['epoch']}, score: {checkpoint['score']:.6f})")
 
         return checkpoint
 
@@ -244,15 +262,27 @@ class ModelCheckpoint:
         Args:
             model: Model to load weights into
             optimizer: Optimizer to load state into (optional)
-            filepath: Checkpoint file path (default: best_model.pth)
+            filepath: Checkpoint file path (default: finds best model for model_type)
             device: Device to load to
 
         Returns:
             Checkpoint dictionary
         """
-        import os
+        import glob
         if filepath is None:
-            filepath = os.path.join(self.save_dir, 'best_model.pth')
+            # Try new pattern first
+            pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
+            files = glob.glob(pattern)
+
+            if files:
+                filepath = max(files, key=os.path.getmtime)
+            else:
+                # Fallback to old naming convention
+                old_path = os.path.join(self.save_dir, 'best_model.pth')
+                if os.path.exists(old_path):
+                    filepath = old_path
+                else:
+                    raise FileNotFoundError(f"No checkpoint found matching pattern {pattern} or {old_path}")
 
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"No checkpoint found at {filepath}")
@@ -264,12 +294,198 @@ class ModelCheckpoint:
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
         if self.verbose:
-            print(f"Loaded checkpoint from epoch {checkpoint['epoch']} (score: {checkpoint['score']:.6f})")
+            model_type = checkpoint.get('model_type', 'unknown')
+            print(f"Loaded {model_type} checkpoint from {os.path.basename(filepath)} (epoch: {checkpoint['epoch']}, score: {checkpoint['score']:.6f})")
 
         return checkpoint
 
     @property
     def has_checkpoint(self) -> bool:
         """Check if best checkpoint exists."""
-        import os
+        # Check new pattern
+        pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
+        if glob.glob(pattern):
+            return True
+        # Fallback to old naming
         return os.path.exists(os.path.join(self.save_dir, 'best_model.pth'))
+
+
+def find_checkpoint_path(
+    model_input: str,
+    checkpoint_dir: str = 'models/checkpoints',
+    model_type: Optional[str] = None
+) -> str:
+    """
+    Find checkpoint path from various input formats.
+
+    Supports:
+    - Direct file path: /path/to/model.pth
+    - "best": Find best model for model_type (or any model if model_type not specified)
+    - "latest": Find most recent checkpoint (any model or specific model_type)
+    - "{model_type}": Find best model for specific model type
+    - Pattern: "crnn_attention", "*transformer*", etc.
+
+    Args:
+        model_input: Model identifier (path, "best", "latest", or pattern)
+        checkpoint_dir: Directory to search for checkpoints
+        model_type: Preferred model type for "best" or "latest" searches
+
+    Returns:
+        Full path to checkpoint file
+
+    Raises:
+        FileNotFoundError: If no matching checkpoint found
+    """
+    # If it's an existing file path, return it
+    if os.path.isfile(model_input):
+        return model_input
+
+    # If it's a relative path that exists
+    full_path = os.path.join(checkpoint_dir, model_input)
+    if os.path.isfile(full_path):
+        return full_path
+
+    # Handle special keywords
+    if model_input.lower() == 'best':
+        return _find_best_checkpoint(checkpoint_dir, model_type)
+    elif model_input.lower() == 'latest':
+        return _find_latest_checkpoint(checkpoint_dir, model_type)
+    else:
+        # Treat as pattern/model_type and find best match
+        return _find_best_checkpoint(checkpoint_dir, model_input)
+
+
+def _find_best_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None) -> str:
+    """
+    Find best checkpoint for a model type.
+
+    Args:
+        checkpoint_dir: Directory to search
+        model_type: Model type to search for (e.g., 'crnn_attention')
+
+    Returns:
+        Path to best checkpoint
+
+    Raises:
+        FileNotFoundError: If no checkpoint found
+    """
+    if model_type:
+        # Search for new pattern: {model_type}_best_*.pth
+        pattern = os.path.join(checkpoint_dir, f'{model_type}_best_*.pth')
+        files = glob.glob(pattern)
+
+        if files:
+            # Return most recent
+            return max(files, key=os.path.getmtime)
+
+        # Search for old pattern: best_model.pth
+        old_path = os.path.join(checkpoint_dir, 'best_model.pth')
+        if os.path.exists(old_path):
+            return old_path
+
+        raise FileNotFoundError(
+            f"No best checkpoint found for model_type '{model_type}' in {checkpoint_dir}. "
+            f"Searched for: {pattern} and {old_path}"
+        )
+    else:
+        # No model_type specified, find any best model
+        # Try new pattern first
+        pattern = os.path.join(checkpoint_dir, '*_best_*.pth')
+        files = glob.glob(pattern)
+
+        if files:
+            # Return most recent
+            return max(files, key=os.path.getmtime)
+
+        # Fallback to old pattern
+        old_path = os.path.join(checkpoint_dir, 'best_model.pth')
+        if os.path.exists(old_path):
+            return old_path
+
+        raise FileNotFoundError(
+            f"No best checkpoint found in {checkpoint_dir}. "
+            f"Please specify model_type or provide a direct path."
+        )
+
+
+def _find_latest_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None) -> str:
+    """
+    Find most recent checkpoint (best or epoch checkpoint).
+
+    Args:
+        checkpoint_dir: Directory to search
+        model_type: Model type to search for
+
+    Returns:
+        Path to most recent checkpoint
+
+    Raises:
+        FileNotFoundError: If no checkpoint found
+    """
+    if model_type:
+        # Search for any checkpoint with this model_type
+        pattern = os.path.join(checkpoint_dir, f'{model_type}_*.pth')
+        files = glob.glob(pattern)
+    else:
+        # Search for any checkpoint
+        pattern = os.path.join(checkpoint_dir, '*.pth')
+        files = glob.glob(pattern)
+
+    if not files:
+        raise FileNotFoundError(
+            f"No checkpoint found in {checkpoint_dir} "
+            f"(searched: {pattern})"
+        )
+
+    # Return most recent file
+    return max(files, key=os.path.getmtime)
+
+
+def list_checkpoints(checkpoint_dir: str = 'models/checkpoints', model_type: Optional[str] = None) -> list:
+    """
+    List all available checkpoints with metadata.
+
+    Args:
+        checkpoint_dir: Directory to search
+        model_type: Filter by model type (optional)
+
+    Returns:
+        List of dicts with checkpoint info (path, model_type, timestamp, size)
+    """
+    pattern = os.path.join(checkpoint_dir, '*.pth')
+    files = glob.glob(pattern)
+
+    checkpoints = []
+    for filepath in files:
+        filename = os.path.basename(filepath)
+
+        # Extract model_type from filename
+        # Pattern: {model_type}_best_{timestamp}.pth or {model_type}_epoch{N}_{timestamp}.pth
+        # We need to find where _best_ or _epoch occurs to determine the model_type
+        model_match = re.match(r'(.+?)_(?:best|epoch\d+)_(\d{8}_\d{6})\.pth$', filename)
+        if model_match:
+            file_model_type = model_match.group(1)
+            timestamp_str = model_match.group(2)
+        elif filename == 'best_model.pth':
+            file_model_type = 'unknown'
+            timestamp_str = None
+        else:
+            file_model_type = 'unknown'
+            timestamp_str = None
+
+        # Filter by model_type if specified
+        if model_type and file_model_type != model_type:
+            continue
+
+        checkpoints.append({
+            'path': filepath,
+            'filename': filename,
+            'model_type': file_model_type,
+            'timestamp': timestamp_str,
+            'size_mb': os.path.getsize(filepath) / (1024 * 1024),
+            'mtime': datetime.fromtimestamp(os.path.getmtime(filepath)).strftime('%Y-%m-%d %H:%M:%S')
+        })
+
+    # Sort by modification time (newest first)
+    checkpoints.sort(key=lambda x: x['mtime'], reverse=True)
+    return checkpoints

@@ -104,26 +104,19 @@
         "CNN_KERNEL_SIZE": 3,
         "CNN_POOL_SIZE": 2,
         "CNN_USE_BATCH_NORM": false,
-        "RNN_HIDDEN_SIZE": 128,
-        "RNN_NUM_LAYERS": 2,
-        "RNN_DROPOUT": 0.2,
-        "USE_LAYER_NORM": false,
-        "USE_ATTENTION": true,
-        "ATTENTION_HEADS": 4,
-        "ATTENTION_DROPOUT": 0.1,
-        "FC_HIDDEN_SIZES": [256, 128],
-        "FC_DROPOUT": 0.3,
-        "FC_USE_BATCH_NORM": false
+        "LSTM4_HIDDEN_SIZES": [128, 256, 512, 256],
+        "LSTM4_DROPOUT": 0.4,
+        "LSTM4_ATTENTION_HEADS": 4,
+        "LSTM4_ATTENTION_DROPOUT": 0.4
       },
       "transformer": {
+        "LSTM4_HIDDEN_SIZES": [128, 256, 512, 256],
+        "LSTM4_DROPOUT": 0.4,
         "TRANSFORMER_NUM_LAYERS": 4,
         "TRANSFORMER_NUM_HEADS": 8,
         "TRANSFORMER_D_MODEL": 256,
         "TRANSFORMER_DIM_FEEDFORWARD": 512,
-        "TRANSFORMER_DROPOUT": 0.1,
-        "FC_HIDDEN_SIZES": [256, 128],
-        "FC_DROPOUT": 0.3,
-        "FC_USE_BATCH_NORM": false
+        "TRANSFORMER_DROPOUT": 0.1
       },
       "lstm3": {
         "LSTM3_HIDDEN_SIZE": 256,

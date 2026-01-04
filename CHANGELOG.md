@@ -2,6 +2,30 @@
 
 All notable changes to the financial prediction system are documented in this file.
 
+## [Version 3.1] - 2026-01-04
+
+### Added
+
+#### Enhanced Model Architectures
+- **CRNNAttentionModel**: Now uses 4-layer BiLSTM (128, 256, 512, 256) instead of 2-layer
+  - Shares `BiLSTM4Block` with `BiLSTM4AttentionModel`
+  - Simplified FC to single Linear layer
+  - Config parameters: `LSTM4_HIDDEN_SIZES`, `LSTM4_DROPOUT`, `LSTM4_ATTENTION_HEADS`, `LSTM4_ATTENTION_DROPOUT`
+- **TransformerModel**: Now includes 4-layer BiLSTM before transformer encoder
+  - Architecture: Embeddings → 4-layer BiLSTM → Projection → Positional Encoding → Transformer → FC
+  - Config parameters: `LSTM4_HIDDEN_SIZES`, `LSTM4_DROPOUT` added
+  - Removed multi-layer FC, now uses single Linear layer
+
+### Changed
+
+#### Model Configuration
+- `crnn_attention`: Now uses LSTM4 parameters (same as `bilstm4_attention`)
+- `transformer`: Added LSTM4 parameters, removed `FC_HIDDEN_SIZES`, `FC_DROPOUT`, `FC_USE_BATCH_NORM`
+
+#### Code Sharing
+- `BiLSTM4Block` is now shared between `CRNNAttentionModel`, `BiLSTM4AttentionModel`, and `TransformerModel`
+- `BiLSTMBlock` (2-layer) retained for backward compatibility with `CRNNModel`, `RNNModel`, `RNNAttentionModel`
+
 ## [Version 3.0] - 2026-01-04
 
 ### Added

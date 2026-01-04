@@ -548,10 +548,11 @@ The project has **131 unit tests** covering:
 | **RNN** | BiLSTM only | Baseline |
 | **RNN + Attention** | BiLSTM + Attention | Interpretability |
 | **CRNN** | CNN + BiLSTM | Feature extraction |
-| **CRNN + Attention** | CNN + BiLSTM + Attention | Rich features |
+| **CRNN + Attention** | CNN + 4-layer BiLSTM + Attention | Rich features |
 | **LSTM3** | 3-layer BiLSTM | Deeper sequential modeling |
 | **LSTM3 + Attention** | 3-layer BiLSTM + Attention | **Recommended** |
-| **Transformer** | Transformer encoder | Alternative architecture |
+| **BiLSTM4 + Attention** | 4-layer BiLSTM + Attention | Deep sequential modeling |
+| **Transformer** | 4-layer BiLSTM + Transformer encoder | Hybrid architecture |
 
 ## Output Metrics
 

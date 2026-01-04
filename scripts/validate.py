@@ -18,6 +18,7 @@ from src.data.dataset import FinancialDataset
 from src.models import create_model
 from src.evaluation import Validator
 from src.utils.logger import get_logger
+from src.training import find_checkpoint_path
 
 
 def parse_args():
@@ -137,9 +138,11 @@ def main():
     )
 
     # Load checkpoint
-    checkpoint_path = args.model
-    if checkpoint_path == 'best':
-        checkpoint_path = Path(config.model.checkpointing.CHECKPOINT_DIR) / 'best_model.pth'
+    checkpoint_path = find_checkpoint_path(
+        model_input=args.model,
+        checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
+        model_type=args.model_type
+    )
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 

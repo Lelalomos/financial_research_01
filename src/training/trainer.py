@@ -40,7 +40,8 @@ class Trainer:
         self,
         model: nn.Module,
         config,
-        device: str = 'cuda'
+        device: str = 'cuda',
+        model_type: Optional[str] = None
     ):
         """
         Initialize trainer.
@@ -49,10 +50,12 @@ class Trainer:
             model: PyTorch model
             config instance
             device: Device to use ('cuda' or 'cpu')
+            model_type: Model type name for checkpoint filenames (e.g., 'crnn_attention')
         """
         self.model = model.to(device)
         self.config = config
         self.device = device
+        self.model_type = model_type or self._infer_model_type()
 
         self.logger = TrainingLogger(log_dir="logs")
 
@@ -72,12 +75,13 @@ class Trainer:
             verbose=True
         )
 
-        # Setup checkpointing
+        # Setup checkpointing with model_type
         self.checkpoint = ModelCheckpoint(
             save_dir=config.model.checkpointing.CHECKPOINT_DIR,
             mode='min',
             save_best_only=config.model.checkpointing.SAVE_BEST_ONLY,
-            save_last_n=config.model.checkpointing.SAVE_LAST_N
+            save_last_n=config.model.checkpointing.SAVE_LAST_N,
+            model_type=self.model_type
         )
 
         # Setup TensorBoard
@@ -88,6 +92,22 @@ class Trainer:
         # Training state
         self.current_epoch = 0
         self.best_val_loss = float('inf')
+
+    def _infer_model_type(self) -> str:
+        """Infer model type from model class name."""
+        class_name = self.model.__class__.__name__
+        # Convert class name to model_type format
+        mapping = {
+            'CRNNModel': 'crnn',
+            'RNNModel': 'rnn',
+            'RNNAttentionModel': 'rnn_attention',
+            'CRNNAttentionModel': 'crnn_attention',
+            'TransformerModel': 'transformer',
+            'LSTM3Model': 'lstm3',
+            'LSTM3AttentionModel': 'lstm3_attention',
+            'BiLSTM4AttentionModel': 'bilstm4_attention',
+        }
+        return mapping.get(class_name, class_name.lower())
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Create optimizer based on config."""
