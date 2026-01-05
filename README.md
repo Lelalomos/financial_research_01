@@ -33,6 +33,7 @@ The development process follows a human-AI collaborative approach:
 - **Multiple Model Architectures**: CRNN, RNN, RNN+Attention, CRNN+Attention, Transformer, LSTM3, LSTM3+Attention, **BiLSTM4+Attention**
 - **Comprehensive Feature Engineering**:
   - Technical indicators (EMA, RSI, StochRSI, MACD)
+  - **Fibonacci retracement levels** (38.2%, 50%, 61.8%) with normalized distance features
   - 100+ candlestick patterns via TA-Lib
   - External data (VIX, commodities, treasury yields)
   - Time-based features (day, month embeddings)
@@ -237,6 +238,7 @@ The project includes automatic column validation to ensure required data is pres
 
 **Optional Columns** (warn if missing):
 - Financial Metrics: `pe_ratio`, `peg_ratio`, `eps`, `dividend_flag`, `roe`, `roi`, `debt_to_equity`, `debt_to_asset`, `current_ratio`
+- Fibonacci Features: `swing_high`, `swing_low`, `fib_range`, `fib_38`, `fib_50`, `fib_61`, `dist_fib_38`, `dist_fib_50`, `dist_fib_61`, `break_fib_61`
 - Time Features: `day`, `month`, `dayofweek`
 - External Data: `vix`, `bondyield`
 - Grouping: `group`
@@ -335,6 +337,8 @@ All models support the following categorical embeddings:
 │  RSI:              14-period Relative Strength Index                     │
 │  StochRSI:         Stochastic RSI                                        │
 │  MACD:             (12, 26, 9) parameters                                │
+│  Fibonacci:        Swing high/low, retracement levels (38.2%, 50%, 61.8%) │
+│                    Normalized distance features, break indicators        │
 │  Candlestick:      100+ patterns (Doji, Hammer, Engulfing, etc.)        │
 │  VIX:              Volatility index                                      │
 │  Commodities:      Gold, Silver, Copper prices                          │
@@ -503,6 +507,9 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
     "technical_indicators": {
       "EMA_PERIODS": [50, 100, 200],
       "RSI_PERIOD": 14
+    },
+    "fibonacci": {
+      "FIBONACCI_WINDOW": 30
     }
   }
 }
@@ -628,8 +635,9 @@ pytest tests/test_prediction.py -v
 
 ### Test Coverage
 
-The project has **149 tests** covering:
+The project has **150 tests** covering:
 - Data pipeline (feature engineering, preprocessing, dataset creation)
+  - **Fibonacci retracement features** (swing high/low, retracement levels, distance features)
 - All model architectures (forward pass, parameter counting)
 - Training loop (train, validate, early stopping)
 - Prediction system (single/batch/interactive modes)

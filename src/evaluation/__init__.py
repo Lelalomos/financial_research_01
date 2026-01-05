@@ -10,7 +10,9 @@ from .metrics import (
     calculate_max_drawdown,
     calculate_sortino_ratio,
     evaluate_model,
-    print_metrics
+    print_metrics,
+    evaluate_model_with_report,
+    print_sector_stats
 )
 from .validator import Validator
 from .backtester import Backtester
@@ -24,6 +26,8 @@ __all__ = [
     'calculate_sortino_ratio',
     'evaluate_model',
     'print_metrics',
+    'evaluate_model_with_report',
+    'print_sector_stats',
     'Validator',
     'Backtester',
 ]

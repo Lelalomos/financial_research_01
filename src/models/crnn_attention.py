@@ -17,6 +17,44 @@ from typing import Dict, Optional
 from src.config import load_config
 
 
+def init_weights_xavier_uniform(module):
+    """
+    Initialize weights using Xavier uniform initialization.
+
+    This helps prevent vanishing/exploding gradients during training.
+    Applies appropriate initialization for different layer types.
+    """
+    if isinstance(module, nn.Linear):
+        nn.init.xavier_uniform_(module.weight)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+    elif isinstance(module, nn.LSTM):
+        for name, param in module.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+    elif isinstance(module, nn.Conv1d):
+        nn.init.xavier_uniform_(module.weight)
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
+
+
+def init_embeddings_uniform(module, low: float = -0.1, high: float = 0.1):
+    """
+    Initialize embeddings with small uniform values.
+
+    Args:
+        module: PyTorch module to initialize
+        low: Lower bound for uniform distribution
+        high: Upper bound for uniform distribution
+    """
+    if isinstance(module, nn.Embedding):
+        nn.init.uniform_(module.weight, low, high)
+
+
 class EmbeddingLayer(nn.Module):
     """Embedding layer for categorical features."""
 
@@ -62,6 +100,10 @@ class EmbeddingLayer(nn.Module):
         )
 
         self.dropout = nn.Dropout(config.model.embeddings.DROPOUT_EMBEDDING)
+
+        # Initialize embeddings with small uniform values to prevent unstable outputs
+        for module in self.modules():
+            init_embeddings_uniform(module, low=-0.1, high=0.1)
 
     def forward(
         self,
@@ -416,6 +458,12 @@ class CRNNAttentionModel(nn.Module):
         # Single Linear FC layer (like bilstm4_attention)
         self.fc = nn.Linear(self.lstm.output_dim, 1)
         self.fc_dropout = nn.Dropout(config.model.models.crnn_attention.LSTM4_DROPOUT)
+
+        # Apply weight initialization to all layers
+        self.apply(init_weights_xavier_uniform)
+        # Ensure final FC layer has smaller initialization for stable output
+        nn.init.xavier_uniform_(self.fc.weight, gain=0.01)
+        nn.init.zeros_(self.fc.bias)
 
     def forward(
         self,

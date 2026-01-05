@@ -1,6 +1,13 @@
 #!/usr/bin/env python
 """
 Backtesting script for CRNN models.
+
+Generates Excel report with:
+- Ticker name, real target, predict target, distance
+- Std of real, std of predict
+- Direction score (1 if same sign, 0 if different)
+- Sector name
+- Direction accuracy by sector in terminal output
 """
 
 import argparse
@@ -45,6 +52,13 @@ def parse_args():
         type=str,
         default='data/processed',
         help='Directory with processed data'
+    )
+
+    parser.add_argument(
+        '--raw-data-dir',
+        type=str,
+        default=None,
+        help='Directory with raw data (for ticker/sector mapping). If not provided, will use IDs only.'
     )
 
     parser.add_argument(
@@ -102,7 +116,7 @@ def load_sequences(data_dir: Path, split: str):
         return None
 
     sequences = {}
-    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'target']:
+    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'dividend_flag', 'target']:
         file_path = split_dir / f'{file}.npy'
         if file_path.exists():
             sequences[file] = np.load(file_path)
@@ -111,6 +125,120 @@ def load_sequences(data_dir: Path, split: str):
         return None
 
     return sequences
+
+
+# Reuse the load_id_mappings function from test.py
+def load_id_mappings(data_dir: Path, raw_data_dir: Path = None):
+    """
+    Load stock_id to ticker and group_id to sector mappings from preprocessed data.
+
+    Args:
+        data_dir: Processed data directory
+        raw_data_dir: Raw data directory (optional, for fallback mapping)
+
+    Returns:
+        Tuple of (stock_id_to_ticker, group_id_to_sector) dictionaries
+    """
+    stock_id_to_ticker = {}
+    group_id_to_sector = {}
+
+    import pandas as pd
+
+    # First try: Check for pre_normalized.parquet in the data directory
+    pre_normalized_path = data_dir.parent / 'pre_normalized.parquet'
+    if pre_normalized_path.exists():
+        try:
+            df = pd.read_parquet(pre_normalized_path)
+
+            # Extract stock_id -> ticker mapping
+            if 'tic_id' in df.columns and 'tic' in df.columns:
+                for _, row in df[['tic_id', 'tic']].drop_duplicates().iterrows():
+                    stock_id_to_ticker[int(row['tic_id'])] = row['tic']
+
+            # Extract group_id -> sector mapping
+            if 'group_id' in df.columns and 'group' in df.columns:
+                for _, row in df[['group_id', 'group']].drop_duplicates().iterrows():
+                    group_id_to_sector[int(row['group_id'])] = row['group']
+
+            if stock_id_to_ticker and group_id_to_sector:
+                return stock_id_to_ticker, group_id_to_sector
+        except Exception as e:
+            pass
+
+    # Second try: Check for parquet files in processed split directories
+    for split in ['train', 'val', 'test']:
+        split_dir = data_dir / split
+
+        # Check for parquet files that might contain the mappings
+        for parquet_file in split_dir.glob('*.parquet'):
+            try:
+                df = pd.read_parquet(parquet_file)
+
+                # Extract stock_id -> ticker mapping
+                if 'tic_id' in df.columns and 'tic' in df.columns:
+                    for _, row in df[['tic_id', 'tic']].drop_duplicates().iterrows():
+                        stock_id_to_ticker[int(row['tic_id'])] = row['tic']
+
+                # Extract group_id -> sector mapping
+                if 'group_id' in df.columns and 'group' in df.columns:
+                    for _, row in df[['group_id', 'group']].drop_duplicates().iterrows():
+                        group_id_to_sector[int(row['group_id'])] = row['group']
+
+                break  # Found mappings, no need to check other files
+            except Exception as e:
+                continue
+
+    # If found mappings, return them
+    if stock_id_to_ticker and group_id_to_sector:
+        return stock_id_to_ticker, group_id_to_sector
+
+    # Third try: If no mappings found in parquet files, try to create from raw data
+    if not stock_id_to_ticker and raw_data_dir:
+        logger = get_logger("backtest", log_dir="logs")
+        logger.warning("No ticker/sector mappings found in processed data. Attempting to create from raw data...")
+
+        try:
+            import pandas as pd
+            from src.data.feature_engineering import FeatureEngineer
+            from src.data.preprocessing import DataPreprocessor
+
+            config = load_config('main')
+            engineer = FeatureEngineer(config)
+
+            # Create preprocessor to get encoders
+            preprocessor = DataPreprocessor(config)
+
+            # Load raw data to create encoders
+            raw_path = Path(raw_data_dir)
+            if raw_path.exists():
+                all_files = list(raw_path.rglob('*.parquet'))[:5]  # Limit files for speed
+                if all_files:
+                    dfs = []
+                    for f in all_files:
+                        try:
+                            dfs.append(pd.read_parquet(f))
+                        except:
+                            continue
+
+                    if dfs:
+                        combined_df = pd.concat(dfs, ignore_index=True)
+
+                        # Fit encoders
+                        preprocessor.encode_categorical(combined_df, fit=True)
+
+                        # Create mappings
+                        for i, ticker in enumerate(preprocessor.stock_encoder.classes_):
+                            stock_id_to_ticker[i] = ticker
+
+                        if hasattr(preprocessor.group_encoder, 'classes_'):
+                            for i, group in enumerate(preprocessor.group_encoder.classes_):
+                                group_id_to_sector[i] = group
+
+                        logger.info(f"Created mappings for {len(stock_id_to_ticker)} stocks and {len(group_id_to_sector)} sectors")
+        except Exception as e:
+            logger.warning(f"Could not create mappings from raw data: {e}")
+
+    return stock_id_to_ticker, group_id_to_sector
 
 
 def main():
@@ -128,6 +256,7 @@ def main():
 
     # Load data
     data_dir = Path(args.data_dir)
+    raw_data_dir = Path(args.raw_data_dir) if args.raw_data_dir else None
 
     logger.info(f"Loading {args.split} data from {data_dir}...")
 
@@ -138,6 +267,19 @@ def main():
         return 1
 
     logger.info(f"Loaded {len(sequences['target'])} samples")
+
+    # Load ID mappings for ticker names and sectors
+    stock_id_to_ticker, group_id_to_sector = load_id_mappings(data_dir, raw_data_dir)
+
+    if stock_id_to_ticker:
+        logger.info(f"Loaded {len(stock_id_to_ticker)} ticker mappings")
+    else:
+        logger.warning("No ticker mappings available, will use stock IDs")
+
+    if group_id_to_sector:
+        logger.info(f"Loaded {len(group_id_to_sector)} sector mappings")
+    else:
+        logger.warning("No sector mappings available, will use group IDs")
 
     # Load info
     info_path = data_dir / 'info.json'
@@ -176,7 +318,7 @@ def main():
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=args.device)
+    checkpoint = torch.load(checkpoint_path, map_location=args.device, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(args.device)
 
@@ -190,7 +332,9 @@ def main():
     results = backtester.run_backtest(
         loader,
         prediction_threshold=args.threshold,
-        initial_capital=args.initial_capital
+        initial_capital=args.initial_capital,
+        stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
+        group_id_to_sector=group_id_to_sector if group_id_to_sector else None
     )
 
     # Generate report

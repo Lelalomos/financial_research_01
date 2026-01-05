@@ -59,7 +59,9 @@ class Backtester:
         test_loader: DataLoader,
         prediction_threshold: float = 0.0,
         initial_capital: float = 100000.0,
-        commission: float = 0.001
+        commission: float = 0.001,
+        stock_id_to_ticker: Optional[Dict[int, str]] = None,
+        group_id_to_sector: Optional[Dict[int, str]] = None
     ) -> Dict[str, any]:
         """
         Run backtest simulation.
@@ -69,6 +71,8 @@ class Backtester:
             prediction_threshold: Minimum prediction magnitude to take position
             initial_capital: Starting capital
             commission: Commission per trade (as fraction)
+            stock_id_to_ticker: Optional mapping from stock_id to ticker name
+            group_id_to_sector: Optional mapping from group_id to sector name
 
         Returns:
             Dictionary with backtest results
@@ -81,6 +85,8 @@ class Backtester:
         all_targets = []
         all_dates = []
         all_tickers = []
+        all_stock_ids = []
+        all_group_ids = []
 
         with torch.no_grad():
             for batch in test_loader:
@@ -91,13 +97,24 @@ class Backtester:
                 month = batch['month'].to(self.device)
                 target = batch['target'].to(self.device)
 
-                output = self.model(features, stock_id, group_id, day, month)
+                # Get dividend_flag if available
+                if 'dividend_flag' in batch:
+                    dividend_flag = batch['dividend_flag'].to(self.device)
+                else:
+                    dividend_flag = torch.ones(features.shape[0], features.shape[1],
+                                                  dtype=torch.long, device=self.device)
+
+                output = self.model(features, stock_id, group_id, day, month, dividend_flag)
 
                 all_predictions.extend(output.cpu().numpy().flatten())
                 all_targets.extend(target.cpu().numpy().flatten())
+                all_stock_ids.extend(stock_id[:, 0].cpu().numpy().flatten())
+                all_group_ids.extend(group_id[:, 0].cpu().numpy().flatten())
 
         predictions = np.array(all_predictions)
         targets = np.array(all_targets)
+        stock_ids = np.array(all_stock_ids)
+        group_ids = np.array(all_group_ids)
 
         # Calculate returns based on strategy
         strategy_returns = calculate_returns(predictions, targets, threshold=prediction_threshold)
@@ -125,6 +142,32 @@ class Backtester:
         total_losses = abs(np.sum(strategy_returns[~winning_trades])) if np.any(~winning_trades) else 1
         profit_factor = total_wins / total_losses if total_losses != 0 else 0
 
+        # Create ticker and sector labels
+        if stock_id_to_ticker:
+            tickers = np.array([stock_id_to_ticker.get(sid, f"stock_{sid}") for sid in stock_ids])
+        else:
+            tickers = np.array([f"stock_{sid}" for sid in stock_ids])
+
+        if group_id_to_sector:
+            sectors = np.array([group_id_to_sector.get(gid, f"sector_{gid}") for gid in group_ids])
+        else:
+            sectors = np.array([f"sector_{gid}" for gid in group_ids])
+
+        # Calculate direction scores by sector
+        direction_scores = (np.sign(predictions) == np.sign(targets)).astype(int)
+        sector_stats = {}
+        for sector in np.unique(sectors):
+            sector_mask = sectors == sector
+            sector_count = sector_mask.sum()
+            sector_correct = direction_scores[sector_mask].sum()
+            sector_accuracy = sector_correct / sector_count if sector_count > 0 else 0
+
+            sector_stats[sector] = {
+                'total': int(sector_count),
+                'correct': int(sector_correct),
+                'accuracy': float(sector_accuracy),
+            }
+
         results = {
             # Portfolio metrics
             'initial_capital': initial_capital,
@@ -147,10 +190,22 @@ class Backtester:
             'targets': targets,
             'returns': strategy_returns,
             'portfolio_values': portfolio_values,
+
+            # Sector analysis
+            'tickers': tickers,
+            'sectors': sectors,
+            'direction_scores': direction_scores,
+            'sector_stats': sector_stats,
+            'stock_ids': stock_ids,
+            'group_ids': group_ids,
         }
 
         # Print summary
         self._print_backtest_summary(results)
+
+        # Print sector stats if available
+        if sector_stats:
+            self._print_sector_stats(sector_stats)
 
         return results
 
@@ -176,6 +231,23 @@ class Backtester:
         print(f"  Profit Factor:    {results['profit_factor']:.4f}")
 
         print("\n" + "=" * 70)
+
+    def _print_sector_stats(self, sector_stats: Dict[str, Dict[str, any]]):
+        """Print sector direction accuracy statistics."""
+        print("\n" + "=" * 70)
+        print("DIRECTION ACCURACY BY SECTOR")
+        print("=" * 70)
+        print(f"{'Sector':<30} | {'Correct':<10} | {'Total':<10} | {'Accuracy':<12}")
+        print("-" * 70)
+
+        for sector, stats in sorted(sector_stats.items(), key=lambda x: x[1]['accuracy'], reverse=True):
+            correct = stats['correct']
+            total = stats['total']
+            accuracy = stats['accuracy']
+            print(f"{sector:<30} | {correct:<10} | {total:<10} | {accuracy:<12.2%}")
+
+        print("-" * 70)
+        print("=" * 70)
 
     def generate_report(
         self,
@@ -203,7 +275,7 @@ class Backtester:
             raise ValueError(f"Unknown format: {format}")
 
     def _generate_excel_report(self, results: Dict[str, any], output_path: str):
-        """Generate Excel report."""
+        """Generate Excel report with detailed trades and sector analysis."""
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             # Summary sheet
             summary_data = {
@@ -239,15 +311,38 @@ class Backtester:
 
             pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
 
-            # Trades sheet
-            trades_df = pd.DataFrame({
-                'Prediction': results['predictions'],
-                'Target': results['targets'],
+            # Detailed trades sheet with ticker, sector, direction score
+            trades_data = {
+                'Ticker': results.get('tickers', [f"stock_{i}" for i in range(len(results['predictions']))]),
+                'Sector': results.get('sectors', [f"sector_{i}" for i in range(len(results['predictions']))]),
+                'Real Target': results['targets'],
+                'Predict Target': results['predictions'],
+                'Distance': results['predictions'] - results['targets'],
+                'Direction Score': results.get('direction_scores', [0] * len(results['predictions'])),
                 'Return (%)': results['returns'],
                 'Portfolio Value': results['portfolio_values'],
-            })
+            }
+
+            trades_df = pd.DataFrame(trades_data)
+
+            # Add per-ticker std columns
+            trades_df['Std Real'] = trades_df.groupby('Ticker')['Real Target'].transform(lambda x: x.std())
+            trades_df['Std Predict'] = trades_df.groupby('Ticker')['Predict Target'].transform(lambda x: x.std())
 
             trades_df.to_excel(writer, sheet_name='Trades', index=False)
+
+            # Sector statistics sheet
+            if 'sector_stats' in results and results['sector_stats']:
+                sector_df = pd.DataFrame({
+                    sector: {
+                        'Total': stats['total'],
+                        'Correct': stats['correct'],
+                        'Accuracy': stats['accuracy'],
+                    }
+                    for sector, stats in results['sector_stats'].items()
+                }).T
+
+                sector_df.to_excel(writer, sheet_name='Sector Stats')
 
         self.logger.info(f"Excel report saved to {output_path}")
 

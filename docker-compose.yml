@@ -17,6 +17,8 @@ services:
       - ./scripts:/app/scripts
       - ./src:/app/src
       - ./config:/app/config
+      - ./reports:/app/reports
+      - ./tests:/app/tests
 
     # Environment variables
     environment:

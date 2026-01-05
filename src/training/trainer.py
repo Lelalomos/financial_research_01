@@ -21,6 +21,14 @@ from tqdm import tqdm
 
 from src.config import load_config
 from src.utils.logger import TrainingLogger
+from src.utils.validation import (
+    check_tensor_for_nan_inf,
+    sanitize_tensor,
+    check_batch_for_invalid,
+    sanitize_batch,
+    check_model_parameters,
+    check_gradients
+)
 from .early_stopping import EarlyStopping, ModelCheckpoint
 
 
@@ -206,6 +214,28 @@ class Trainer:
             dividend_flag = batch['dividend_flag'].to(self.device)
             target = batch['target'].to(self.device)
 
+            # Validate inputs for NaN/Inf (if enabled in config)
+            if hasattr(self.config.model, 'nan_handling') and self.config.model.nan_handling.CHECK_INPUTS:
+                replace_val = self.config.model.nan_handling.REPLACE_VALUE
+
+                # Check and sanitize features
+                if torch.isnan(features).any() or torch.isinf(features).any():
+                    self.logger.warning(f"NaN/Inf in features at batch {batch_idx}, replacing with {replace_val}")
+                    features = torch.where(
+                        torch.isnan(features) | torch.isinf(features),
+                        torch.tensor(replace_val, device=self.device),
+                        features
+                    )
+
+                # Check and sanitize targets
+                if torch.isnan(target).any() or torch.isinf(target).any():
+                    self.logger.warning(f"NaN/Inf in target at batch {batch_idx}, replacing with {replace_val}")
+                    target = torch.where(
+                        torch.isnan(target) | torch.isinf(target),
+                        torch.tensor(replace_val, device=self.device),
+                        target
+                    )
+
             # Forward pass
             self.optimizer.zero_grad()
 
@@ -242,7 +272,41 @@ class Trainer:
                 else:
                     grad_norm = 0.0
 
+                # Clamp individual gradient values to prevent explosions
+                if hasattr(self.config.model, 'nan_handling'):
+                    max_grad_val = self.config.model.nan_handling.MAX_GRAD_VALUE
+                    for param in self.model.parameters():
+                        if param.grad is not None:
+                            param.grad.data.clamp_(-max_grad_val, max_grad_val)
+
                 self.optimizer.step()
+
+                # Check for NaN/Inf loss
+                if torch.isnan(loss) or torch.isinf(loss):
+                    self.logger.error(f"NaN/Inf loss detected at epoch {self.current_epoch}, batch {batch_idx}")
+                    self.logger.error(f"Loss value: {loss.item()}")
+
+                    # Check gradients
+                    if hasattr(self.config.model, 'nan_handling') and self.config.model.nan_handling.LOG_NAN_DETAILS:
+                        for name, param in self.model.named_parameters():
+                            if param.grad is not None:
+                                if torch.isnan(param.grad).any() or torch.isinf(param.grad).any():
+                                    self.logger.error(f"NaN/Inf gradient in {name}")
+
+                        # Check model weights
+                        for name, param in self.model.named_parameters():
+                            if torch.isnan(param).any() or torch.isinf(param).any():
+                                self.logger.error(f"NaN/Inf weight in {name}")
+
+                        # Check batch inputs
+                        for key, value in batch.items():
+                            if isinstance(value, torch.Tensor):
+                                if torch.isnan(value).any() or torch.isinf(value).any():
+                                    self.logger.error(f"NaN/Inf in batch[{key}]")
+
+                    # Raise exception to stop training if configured
+                    if hasattr(self.config.model, 'nan_handling') and self.config.model.nan_handling.STOP_ON_NAN:
+                        raise RuntimeError(f"NaN/Inf loss at epoch {self.current_epoch}, batch {batch_idx}")
 
             # Accumulate metrics
             batch_size = len(target)
@@ -304,6 +368,17 @@ class Trainer:
                 # Forward pass
                 output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                 loss = self.criterion(output, target)
+
+                # Check for NaN/Inf validation loss
+                if torch.isnan(loss) or torch.isinf(loss):
+                    self.logger.error(f"NaN/Inf validation loss detected!")
+                    # Return NaN metrics to signal failure
+                    return {
+                        'loss': float('nan'),
+                        'mse': float('nan'),
+                        'mae': float('nan'),
+                        'rmse': float('nan'),
+                    }
 
                 # Accumulate metrics
                 batch_size = len(target)
@@ -445,3 +520,21 @@ class Trainer:
     def load_best_model(self):
         """Load best model checkpoint."""
         self.checkpoint.load_best(self.model, device=self.device)
+
+    def check_model_state(self) -> Tuple[bool, list]:
+        """
+        Check model parameters for NaN/Inf values.
+
+        Returns:
+            Tuple of (is_valid, issues):
+            - is_valid: True if no NaN/Inf found
+            - issues: List of issue descriptions
+        """
+        is_valid, issues = check_model_parameters(self.model)
+
+        if not is_valid:
+            self.logger.error(f"Model state check failed:")
+            for issue in issues:
+                self.logger.error(f"  {issue}")
+
+        return is_valid, issues

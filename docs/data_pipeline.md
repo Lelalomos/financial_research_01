@@ -45,6 +45,19 @@ data = downloader.load_saved_data()
 - **StochRSI**: Stochastic RSI (14)
 - **MACD**: Moving Average Convergence Divergence
 
+### Fibonacci Retracement Features
+
+- **Swing High/Low**: Rolling maximum/minimum over configurable window (default: 30 days)
+- **Retracement Levels**:
+  - `fib_38`: 38.2% retracement level (swing_high - 0.382 * range)
+  - `fib_50`: 50% retracement level (swing_high - 0.5 * range)
+  - `fib_61`: 61.8% retracement level (swing_high - 0.618 * range)
+- **Distance Features** (RNN-friendly normalized distances):
+  - `dist_fib_38`: (close - fib_38) / range
+  - `dist_fib_50`: (close - fib_50) / range
+  - `dist_fib_61`: (close - fib_61) / range
+- **Break Indicator**: `break_fib_61` = 1 if close < fib_61, else 0
+
 ### Candlestick Patterns
 
 All 100+ TA-Lib patterns are included:
@@ -143,6 +156,9 @@ prediction_horizon = config.data.sequences.PREDICTION_HORIZON  # 5
 
 # Access technical indicators
 ema_periods = config.data.technical_indicators.EMA_PERIODS  # [50, 100, 200]
+
+# Access Fibonacci configuration
+fib_window = config.data.fibonacci.FIBONACCI_WINDOW  # 30
 
 # Access feature flags
 feature_flags = config.data.features.FEATURE_FLAGS

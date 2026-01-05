@@ -37,7 +37,7 @@
     },
     "loss": {
       "LOSS_TYPE": "huber",
-      "HUBER_DELTA": 0.1
+      "HUBER_DELTA": 1.0
     },
     "device": {
       "DEVICE": "cuda",
@@ -59,6 +59,15 @@
     "validation": {
       "VAL_FREQUENCY": 1,
       "VAL_BATCH_SIZE": null
+    },
+    "nan_handling": {
+      "CHECK_INPUTS": true,
+      "SANITIZE_INPUTS": true,
+      "CHECK_GRADIENTS": true,
+      "STOP_ON_NAN": true,
+      "LOG_NAN_DETAILS": true,
+      "MAX_GRAD_VALUE": 100.0,
+      "REPLACE_VALUE": 0.0
     },
     "reproducibility": {
       "RANDOM_SEED": 42,

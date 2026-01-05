@@ -2,6 +2,43 @@
 
 All notable changes to the financial prediction system are documented in this file.
 
+## [Version 3.2] - 2026-01-05
+
+### Added
+
+#### Fibonacci Retracement Features
+- **Fibonacci retracement level features** for technical analysis
+  - `swing_high`: Rolling maximum of `high` over configurable window (default: 30 days)
+  - `swing_low`: Rolling minimum of `low` over configurable window
+  - `fib_range`: Price range (swing_high - swing_low)
+  - `fib_38`, `fib_50`, `fib_61`: Fibonacci retracement levels (38.2%, 50%, 61.8%)
+  - `dist_fib_38`, `dist_fib_50`, `dist_fib_61`: Normalized distance features for RNN compatibility
+  - `break_fib_61`: Binary indicator (1 if close < fib_61, else 0)
+- **`FeatureEngineer.add_fibonacci_features()`** method in `src/data/feature_engineering.py`
+- **`FIBONACCI_WINDOW`** configuration parameter in `config/main.json`
+- **`fibonacci_features`** feature flag in `FEATURE_FLAGS` (enabled by default)
+- Fibonacci columns added to `OPTIONAL_COLUMNS` validation schema
+- **`test_fibonacci_features()`** unit test in `tests/test_data_pipeline.py`
+
+### Changed
+
+#### Configuration
+- Updated `config/main.json`:
+  - Added `fibonacci` section with `FIBONACCI_WINDOW: 30` parameter
+  - Added `fibonacci_features: true` to `FEATURE_FLAGS`
+  - Added 10 Fibonacci columns to `OPTIONAL_COLUMNS`
+
+#### Feature Engineering Pipeline
+- Updated `add_all_features()` orchestrator to include Fibonacci features
+- Updated `get_feature_info()` to track Fibonacci feature count
+
+### Test Results
+
+All 150 tests passing (including new Fibonacci features test):
+```
+=========== 150 passed, 4 warnings in 3.70s ============
+```
+
 ## [Version 3.1] - 2026-01-04
 
 ### Added

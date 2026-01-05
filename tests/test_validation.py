@@ -1,11 +1,12 @@
 """
-Unit tests for dataset column validation.
+Unit tests for dataset column validation and NaN handling.
 """
 
 import sys
 import pytest
 import pandas as pd
 import numpy as np
+import torch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -15,6 +16,13 @@ from src.data.validation import (
     DatasetValidator,
     validate_dataset,
     check_feature_consistency
+)
+from src.utils.validation import (
+    check_tensor_for_nan_inf,
+    sanitize_tensor,
+    check_batch_for_invalid,
+    sanitize_batch,
+    check_model_parameters
 )
 
 
@@ -277,3 +285,169 @@ class TestCheckFeatureConsistency:
 
         with pytest.raises(ValueError, match="Expected feature columns missing"):
             check_feature_consistency(all_splits[0], all_splits[1], all_splits[2], feature_cols)
+
+
+class TestNaNHandling:
+    """Test NaN/Inf detection and handling utilities."""
+
+    def test_check_tensor_for_nan(self):
+        """Test NaN detection in tensors."""
+        # Clean tensor
+        tensor = torch.randn(10, 10)
+        has_issues, msg = check_tensor_for_nan_inf(tensor, "test")
+        assert has_issues is False
+        assert msg == ""
+
+        # Tensor with NaN
+        tensor[0, 0] = float('nan')
+        has_issues, msg = check_tensor_for_nan_inf(tensor, "test")
+        assert has_issues is True
+        assert "NaN" in msg
+
+    def test_check_tensor_for_inf(self):
+        """Test Inf detection in tensors."""
+        # Tensor with positive Inf
+        tensor = torch.randn(10, 10)
+        tensor[0, 0] = float('inf')
+        has_issues, msg = check_tensor_for_nan_inf(tensor, "test")
+        assert has_issues is True
+        assert "Inf" in msg
+
+        # Tensor with negative Inf
+        tensor = torch.randn(10, 10)
+        tensor[1, 1] = float('-inf')
+        has_issues, msg = check_tensor_for_nan_inf(tensor, "test")
+        assert has_issues is True
+        assert "Inf" in msg
+
+    def test_sanitize_tensor(self):
+        """Test tensor sanitization."""
+        # Tensor with NaN and Inf
+        tensor = torch.randn(10, 10)
+        tensor[0, 0] = float('nan')
+        tensor[1, 1] = float('inf')
+        tensor[2, 2] = float('-inf')
+
+        sanitized = sanitize_tensor(tensor, "test", replace_value=0.0)
+
+        # Check no NaN or Inf remains
+        assert not torch.isnan(sanitized).any()
+        assert not torch.isinf(sanitized).any()
+        assert sanitized[0, 0].item() == 0.0
+        assert sanitized[1, 1].item() == 0.0
+        assert sanitized[2, 2].item() == 0.0
+
+    def test_sanitize_tensor_custom_value(self):
+        """Test tensor sanitization with custom replacement value."""
+        tensor = torch.randn(10, 10)
+        tensor[0, 0] = float('nan')
+
+        sanitized = sanitize_tensor(tensor, "test", replace_value=1.0)
+
+        assert not torch.isnan(sanitized).any()
+        assert sanitized[0, 0].item() == 1.0
+
+    def test_check_batch_for_invalid(self):
+        """Test batch validation."""
+        # Clean batch
+        batch = {
+            'features': torch.randn(4, 30, 20),
+            'stock_id': torch.randint(0, 10, (4, 30)),
+            'target': torch.randn(4, 1)
+        }
+
+        has_issues, msg = check_batch_for_invalid(batch)
+        assert has_issues is False
+        assert msg == ""
+
+        # Batch with NaN
+        batch['features'][0, 0, 0] = float('nan')
+        has_issues, msg = check_batch_for_invalid(batch)
+        assert has_issues is True
+        assert "features" in msg
+        assert "NaN" in msg
+
+    def test_sanitize_batch(self):
+        """Test batch sanitization."""
+        batch = {
+            'features': torch.randn(4, 30, 20),
+            'target': torch.randn(4, 1)
+        }
+
+        # Add NaN/Inf
+        batch['features'][0, 0, 0] = float('nan')
+        batch['target'][1, 0] = float('inf')
+
+        sanitized = sanitize_batch(batch, replace_value=0.0)
+
+        # Check sanitized
+        assert not torch.isnan(sanitized['features']).any()
+        assert not torch.isinf(sanitized['target']).any()
+        assert sanitized['features'][0, 0, 0].item() == 0.0
+        assert sanitized['target'][1, 0].item() == 0.0
+
+    def test_check_model_parameters(self):
+        """Test model parameter checking."""
+        from src.models.crnn_attention import CRNNAttentionModel
+
+        config = load_config('model')
+
+        # Ensure nan_handling config exists
+        if not hasattr(config.model, 'nan_handling'):
+            from types import SimpleNamespace
+            config.model.nan_handling = SimpleNamespace(
+                CHECK_INPUTS=True,
+                SANITIZE_INPUTS=True,
+                CHECK_GRADIENTS=True,
+                STOP_ON_NAN=True,
+                LOG_NAN_DETAILS=True,
+                MAX_GRAD_VALUE=100.0,
+                REPLACE_VALUE=0.0
+            )
+
+        model = CRNNAttentionModel(
+            num_features=20,
+            num_stocks=10,
+            num_groups=5,
+            config=config
+        )
+
+        # Healthy model should pass
+        is_valid, issues = check_model_parameters(model)
+        assert is_valid is True
+        assert len(issues) == 0
+
+    def test_check_tensor_with_mixed_invalid(self):
+        """Test detection of mixed NaN and Inf values."""
+        tensor = torch.randn(100, 100)
+
+        # Add multiple invalid values
+        tensor[0, 0] = float('nan')
+        tensor[1, 1] = float('inf')
+        tensor[2, 2] = float('-inf')
+        tensor[3, 3] = float('nan')
+
+        has_issues, msg = check_tensor_for_nan_inf(tensor, "mixed_test")
+
+        # Should detect issues
+        assert has_issues is True
+        assert "mixed_test" in msg
+        # Should count NaN values (2 in our case)
+        assert "NaN" in msg
+
+    def test_sanitize_preserves_valid_values(self):
+        """Test that sanitization preserves valid values."""
+        tensor = torch.randn(10, 10)
+        original_valid_value = tensor[5, 5].item()
+
+        # Add some invalid values
+        tensor[0, 0] = float('nan')
+        tensor[1, 1] = float('inf')
+
+        sanitized = sanitize_tensor(tensor, "test", replace_value=-999.0)
+
+        # Check that valid value was preserved
+        assert sanitized[5, 5].item() == original_valid_value
+        # Check that invalid values were replaced
+        assert sanitized[0, 0].item() == -999.0
+        assert sanitized[1, 1].item() == -999.0

@@ -3,13 +3,31 @@
 # Usage: ./scripts/test.sh [options]
 #
 # Options:
-#   --model PATH       Model checkpoint path (default: models/best_model.pth)
+#   --model PATH       Model checkpoint path (default: models/bilstm4_attention_best_20260105_113045.pth)
+#   --excel-report PATH Custom Excel report path (default: reports/test_report_TIMESTAMP.xlsx)
+#   --no-cleanup       Skip cleanup of old test files before running
 #   --help             Show this help message
 
 set -e
 
 # Default values
-MODEL_PATH="models/best_model.pth"
+MODEL_PATH="models/bilstm4_attention_best_20260105_113045.pth"
+REPORTS_DIR="reports"
+CLEANUP_OLD_FILES=true
+
+# Create reports directory if it doesn't exist
+mkdir -p "$REPORTS_DIR"
+
+# Cleanup function to remove old test files using Python cleanup module
+cleanup_old_test_files() {
+    echo "Cleaning up old test files..."
+    python -c "from src.utils.cleanup import cleanup_test_files; cleanup_test_files(keep_latest=3, verbose=True)"
+    echo ""
+}
+
+# Generate default report path with timestamp (ALWAYS generate Excel report)
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+EXCEL_REPORT="$REPORTS_DIR/test_report_${TIMESTAMP}.xlsx"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -18,11 +36,22 @@ while [[ $# -gt 0 ]]; do
             MODEL_PATH="$2"
             shift 2
             ;;
+        --excel-report)
+            # Custom path
+            EXCEL_REPORT="$2"
+            shift 2
+            ;;
+        --no-cleanup)
+            CLEANUP_OLD_FILES=false
+            shift
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --model PATH       Model checkpoint path (default: models/best_model.pth)"
+            echo "  --model PATH       Model checkpoint path (default: models/bilstm4_attention_best_20260105_113045.pth)"
+            echo "  --excel-report PATH Custom Excel report path (default: auto-generated with timestamp)"
+            echo "  --no-cleanup       Skip cleanup of old test files before running"
             echo "  --help             Show this help message"
             exit 0
             ;;
@@ -34,13 +63,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Build command
-CMD="python scripts/test.py --model $MODEL_PATH"
+# Build command - ALWAYS include Excel report
+CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT"
+
+# Run cleanup before testing if enabled
+if [ "$CLEANUP_OLD_FILES" = true ]; then
+    cleanup_old_test_files
+fi
 
 echo "=========================================="
 echo "TESTING MODEL"
 echo "=========================================="
 echo "Model path: $MODEL_PATH"
+echo "Excel report: $EXCEL_REPORT"
 echo "Command: $CMD"
 echo "=========================================="
 echo ""
@@ -51,4 +86,5 @@ eval $CMD
 echo ""
 echo "=========================================="
 echo "TESTING COMPLETE"
+echo "Excel report saved to: $EXCEL_REPORT"
 echo "=========================================="

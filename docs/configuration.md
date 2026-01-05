@@ -93,10 +93,33 @@ config.data.technical_indicators.EMA_PERIODS.append(20)
       "RSI_PERIOD": 14,
       "STOCHRSI_PERIOD": 14,
       "MACD_PARAMS": [12, 26, 9]
+    },
+    "fibonacci": {
+      "FIBONACCI_WINDOW": 30
     }
   }
 }
 ```
+
+### Fibonacci Retracement Features
+
+```json
+{
+  "data": {
+    "fibonacci": {
+      "FIBONACCI_WINDOW": 30
+    }
+  }
+}
+```
+
+The Fibonacci retracement features include:
+- `swing_high`: Rolling maximum of `high` over the window
+- `swing_low`: Rolling minimum of `low` over the window
+- `fib_range`: Difference between swing_high and swing_low
+- `fib_38`, `fib_50`, `fib_61`: Fibonacci retracement levels (38.2%, 50%, 61.8%)
+- `dist_fib_38`, `dist_fib_50`, `dist_fib_61`: Normalized distance features
+- `break_fib_61`: Binary indicator (1 if close < fib_61)
 
 ### Feature Flags
 
@@ -110,6 +133,7 @@ config.data.technical_indicators.EMA_PERIODS.append(20)
         "rsi_features": true,
         "stochrsi_features": true,
         "macd_features": true,
+        "fibonacci_features": true,
         "candlestick_patterns": true,
         "vix": true,
         "commodities": true,
