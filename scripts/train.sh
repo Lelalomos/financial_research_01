@@ -7,6 +7,8 @@
 #   --epochs N            Number of epochs (default: 100)
 #   --batch-size N        Batch size (default: 256)
 #   --learning-rate RATE  Learning rate (default: 1e-4)
+#   --device DEV          Device to use: cuda or cpu (default: auto-detect)
+#   --force-cpu           Force CPU usage even if GPU is available
 #   --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT GOOGL)
 #   --fine-tune PATH      Path to checkpoint to fine-tune from
 #   --freeze-embeddings   Freeze stock/group embeddings during fine-tuning
@@ -22,6 +24,8 @@ LEARNING_RATE=0.00001
 STOCKS=""
 FINE_TUNE=""
 FREEZE_EMBEDDINGS=""
+DEVICE=""
+FORCE_CPU=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -41,6 +45,14 @@ while [[ $# -gt 0 ]]; do
         --learning-rate)
             LEARNING_RATE="$2"
             shift 2
+            ;;
+        --device)
+            DEVICE="$2"
+            shift 2
+            ;;
+        --force-cpu)
+            FORCE_CPU="--force-cpu"
+            shift
             ;;
         --stocks)
             shift
@@ -63,6 +75,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --epochs N            Number of epochs (default: 100)"
             echo "  --batch-size N        Batch size (default: 256)"
             echo "  --learning-rate RATE  Learning rate (default: 1e-4)"
+            echo "  --device DEV          Device to use: cuda or cpu (default: auto-detect)"
+            echo "  --force-cpu           Force CPU usage even if GPU is available"
             echo "  --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT)"
             echo "  --fine-tune PATH      Path to checkpoint to fine-tune from"
             echo "  --freeze-embeddings   Freeze stock/group embeddings during fine-tuning"
@@ -78,7 +92,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Build command
-CMD="python scripts/train.py --model-type $MODEL_TYPE --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE"
+CMD="python scripts/train.py --model-type $MODEL_TYPE --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+
+# Add device if specified
+if [ -n "$DEVICE" ]; then
+    CMD="$CMD --device $DEVICE"
+fi
 
 if [ -n "$STOCKS" ]; then
     CMD="$CMD --stocks $STOCKS"
@@ -99,6 +118,12 @@ echo "Model type: $MODEL_TYPE"
 echo "Epochs: $EPOCHS"
 echo "Batch size: $BATCH_SIZE"
 echo "Learning rate: $LEARNING_RATE"
+if [ -n "$DEVICE" ]; then
+    echo "Device: $DEVICE"
+fi
+if [ -n "$FORCE_CPU" ]; then
+    echo "Force CPU: yes"
+fi
 if [ -n "$STOCKS" ]; then
     echo "Stocks: $STOCKS"
 fi

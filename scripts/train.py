@@ -20,6 +20,7 @@ from src.data.dataset import FinancialDataset, create_data_loaders
 from src.models import create_model
 from src.training import Trainer
 from src.utils.logger import get_logger
+from src.utils.device import get_device, print_gpu_info, get_device_info
 
 
 def parse_args():
@@ -72,8 +73,14 @@ def parse_args():
     parser.add_argument(
         '--device',
         type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use'
+        default=None,
+        help='Device to use (cuda or cpu). If not specified, will auto-detect the best available device.'
+    )
+
+    parser.add_argument(
+        '--force-cpu',
+        action='store_true',
+        help='Force CPU usage even if GPU is available'
     )
 
     parser.add_argument(
@@ -180,6 +187,19 @@ def main():
     logger.info("TRAINING SCRIPT")
     logger.info("=" * 60)
 
+    # Determine device
+    if args.device:
+        device = torch.device(args.device)
+        logger.info(f"Using manually specified device: {device}")
+    else:
+        device = get_device(force_cpu=args.force_cpu, verbose=True)
+        device_info = get_device_info(verbose=False)
+        logger.info(f"Auto-detected device: {device}")
+        logger.info(f"CUDA available: {device_info['cuda_available']}")
+        if device_info.get('cuda_working'):
+            logger.info(f"GPU: {device_info.get('gpu_name', 'Unknown')}")
+            logger.info(f"GPU Memory: {device_info.get('gpu_memory_gb', 0):.2f} GB")
+
     # Load config
     config = load_config('model')
 
@@ -279,7 +299,7 @@ def main():
     )
 
     # Create trainer
-    trainer = Trainer(model, config, device=args.device, model_type=args.model_type)
+    trainer = Trainer(model, config, device=str(device), model_type=args.model_type)
 
     # Load checkpoint for fine-tuning if specified
     if args.fine_tune:

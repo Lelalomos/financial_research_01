@@ -6,6 +6,7 @@ Downloads data, calculates features, normalizes, and creates train/val/test spli
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -114,7 +115,35 @@ def main():
     logger.info("=" * 60)
 
     output_dir = Path(args.output_dir)
+
+    # Check if we can write to the output directory
+    # If there are root-owned files from previous runs, we need to handle them
+    can_write = True
+    for split in ['train', 'val', 'test']:
+        split_dir = output_dir / split
+        if split_dir.exists():
+            # Check if we can write to this directory
+            test_file = split_dir / '.write_test'
+            try:
+                test_file.touch()
+                test_file.unlink()
+            except (PermissionError, OSError):
+                logger.warning(f"Cannot write to {split_dir} - permission denied")
+                can_write = False
+                break
+
+    if not can_write:
+        logger.warning("Cannot write to existing output directory due to permission issues.")
+        logger.warning("This usually happens when the directory contains files owned by root from previous Docker runs.")
+        logger.warning("Please run from the host machine to clean up:")
+        logger.warning(f"  docker exec -u root crnn_predictor rm -rf {output_dir}")
+        logger.warning("Or use a different output directory with --output-dir")
+        return 1
+
+    # Ensure directories exist
     output_dir.mkdir(parents=True, exist_ok=True)
+    for split in ['train', 'val', 'test']:
+        (output_dir / split).mkdir(exist_ok=True)
 
     # Step 1: Download data
     if not args.skip_download:

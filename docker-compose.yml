@@ -3,8 +3,10 @@ version: '3.8'
 services:
   # Main service - runs in background for interactive use
   crnn-prediction:
-    build: .
-    image: financial-prediction-05:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: financial-prediction-06:latest
     container_name: crnn_predictor
 
     # Volume mounts
@@ -30,7 +32,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 16G  # Maximum RAM the container can use
+          memory: 17.8G  # Maximum RAM the container can use
         reservations:
           memory: 4G   # Reserved RAM
           devices:
@@ -51,7 +53,9 @@ services:
 
   # Training-only service (for GPU nodes)
   trainer:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: crnn-financial-prediction:latest
     container_name: crnn_trainer
 
@@ -69,7 +73,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 16G
+          memory: 17.8G
         reservations:
           memory: 4G
           devices:
