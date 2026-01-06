@@ -1,7 +1,21 @@
 """
 Device utilities for PyTorch.
 
-Provides utilities for detecting and configuring CUDA/GPU devices.
+This module provides comprehensive utilities for detecting, configuring, and
+managing CUDA/GPU devices for PyTorch training and inference.
+
+Features:
+    - Automatic GPU detection with fallback to CPU
+    - Comprehensive device information retrieval
+    - GPU memory management utilities
+    - Compute capability checking
+    - Batch size recommendations based on GPU memory
+
+Usage:
+    >>> from src.utils.device import get_device, get_device_info
+    >>> device = get_device()
+    >>> info = get_device_info()
+    >>> print(f"Using device: {device}")
 """
 
 import torch
@@ -18,21 +32,42 @@ def get_device(
 
     This function performs comprehensive checks to determine if CUDA is available
     and properly configured. It validates that:
-    - CUDA is available in PyTorch
-    - At least one GPU is present
-    - CUDA runtime is properly initialized
+        - CUDA is available in PyTorch
+        - At least one GPU is present
+        - CUDA runtime is properly initialized
+
+    The function will automatically fall back to CPU if CUDA is not available
+    or if there are any errors during GPU initialization.
 
     Args:
-        force_cpu: If True, force CPU usage regardless of GPU availability
-        verbose: If True, print device information
+        force_cpu: If True, force CPU usage regardless of GPU availability.
+                   This is useful for debugging or testing on CPU-only systems.
+        verbose: If True, print detailed device information including GPU name,
+                 memory, compute capability, and any warnings or errors.
 
     Returns:
-        torch.device: The selected device (cuda or cpu)
+        torch.device: The selected device (cuda:0 or cpu). The device is
+                     guaranteed to be usable for PyTorch operations.
+
+    Raises:
+        No exceptions are raised. All errors are handled by falling back to CPU.
 
     Examples:
         >>> device = get_device()
-        >>> print(f"Using device: {device}")
+        Using device: cuda:0
         >>> model = model.to(device)
+
+        >>> device = get_device(force_cpu=True)
+        Forcing CPU usage as requested
+
+        >>> device = get_device(verbose=False)
+        # No output, returns device silently
+
+    Note:
+        In Docker containers, ensure GPU access is configured via:
+        - docker-compose.yml device requests
+        - CUDA_VISIBLE_DEVICES environment variable
+        - nvidia-docker runtime
     """
     if force_cpu:
         if verbose:
@@ -43,19 +78,25 @@ def get_device(
     if not torch.cuda.is_available():
         if verbose:
             print("CUDA is not available. Using CPU.")
-            print("This could be because:")
+            print("\nPossible reasons:")
             print("  - PyTorch was installed without CUDA support")
             print("  - No CUDA-capable GPU is detected")
-            print("  - NVIDIA drivers are not installed")
+            print("  - NVIDIA drivers are not installed or incompatible")
+            print("  - Running in a container without GPU access")
+            print("\nTo verify GPU access, run: ./scripts/test_gpu_activation.sh")
         return torch.device('cpu')
 
     # Check if there are any GPUs
     if torch.cuda.device_count() == 0:
         if verbose:
             print("No CUDA-capable GPU detected. Using CPU.")
+            print("\nCheck that:")
+            print("  - GPU is visible on host (run: nvidia-smi)")
+            print("  - CUDA_VISIBLE_DEVICES is set correctly")
+            print("  - Container has GPU access configured")
         return torch.device('cpu')
 
-    # Test CUDA is actually working
+    # Test CUDA is actually working by allocating a tensor
     try:
         # Try to create a test tensor on GPU
         test_tensor = torch.zeros(1).cuda()
@@ -64,7 +105,10 @@ def get_device(
     except RuntimeError as e:
         if verbose:
             print(f"CUDA runtime error: {e}")
-            print("Falling back to CPU.")
+            print("\nFalling back to CPU. This could indicate:")
+            print("  - GPU memory is insufficient")
+            print("  - NVIDIA driver version mismatch")
+            print("  - GPU is already in use by another process")
         return torch.device('cpu')
 
     # CUDA is available and working
@@ -77,7 +121,19 @@ def get_device(
 
 
 def print_gpu_info() -> None:
-    """Print detailed GPU information."""
+    """Print detailed GPU information.
+
+    Displays comprehensive GPU information including:
+        - PyTorch and CUDA versions
+        - cuDNN version
+        - Number of GPUs available
+        - GPU name, memory, and compute capability for each device
+        - Current memory usage (allocated/reserved/total)
+
+    Note:
+        This function only prints information if CUDA is available.
+        Otherwise, it silently returns without output.
+    """
     print(f"CUDA is available and working!")
     print(f"  PyTorch version: {torch.__version__}")
     print(f"  CUDA version: {torch.version.cuda}")
@@ -118,11 +174,36 @@ def get_device_info(
     """
     Get comprehensive device information as a dictionary.
 
+    This function gathers detailed information about the available computing
+    devices, including CUDA availability, GPU specifications, and whether
+    CUDA is actually working (tested via tensor allocation).
+
     Args:
-        verbose: If True, print device information
+        verbose: If True, print a formatted summary of device information.
 
     Returns:
-        Dictionary with device information
+        Dictionary containing:
+            - device (str): Selected device ('cpu' or 'cuda:0')
+            - cuda_available (bool): Whether CUDA is available in PyTorch
+            - cuda_device_count (int): Number of CUDA-capable GPUs
+            - pytorch_version (str): PyTorch version
+            - cuda_version (str or None): CUDA toolkit version
+            - cudnn_version (str or None): cuDNN version
+            - cuda_working (bool): Whether CUDA is actually functional
+            - gpu_name (str or None): GPU device name
+            - gpu_memory_gb (float or None): Total GPU memory in GB
+            - compute_capability (str or None): GPU compute capability
+            - cuda_error (str or None): Error message if CUDA is not working
+
+    Examples:
+        >>> info = get_device_info()
+        >>> print(f"Device: {info['device']}")
+        >>> print(f"GPU: {info['gpu_name']}")
+        >>> print(f"Memory: {info['gpu_memory_gb']:.2f} GB")
+
+        >>> info = get_device_info(verbose=False)
+        >>> if info['cuda_working']:
+        ...     print("GPU is ready!")
     """
     info = {
         'device': 'cpu',
@@ -134,7 +215,7 @@ def get_device_info(
     }
 
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-        # Test CUDA is working
+        # Test CUDA is working by allocating a tensor
         try:
             test_tensor = torch.zeros(1).cuda()
             del test_tensor

@@ -580,6 +580,8 @@ config.data.sources.COMMODITIES._data['ZW=F'] = 'Wheat'
 
 ## Docker Deployment
 
+### Quick Start
+
 ```bash
 # Build image
 docker-compose build
@@ -594,6 +596,100 @@ docker-compose --profile gpu run --rm trainer
 docker-compose up jupyter
 # Access at http://localhost:8888
 ```
+
+### GPU Setup and Testing
+
+The project includes comprehensive GPU support with automatic detection and testing.
+
+#### Testing GPU Activation
+
+A dedicated script is available to test GPU activation in Docker containers:
+
+```bash
+# Test GPU in the running container (container ID or name)
+./scripts/test_gpu_activation.sh
+```
+
+This script performs the following checks:
+1. Container status verification
+2. NVIDIA driver and nvidia-smi availability
+3. CUDA library detection
+4. PyTorch CUDA availability
+5. GPU device detection and information
+6. GPU memory allocation tests
+7. Comprehensive unit tests
+
+#### Manual GPU Verification
+
+```bash
+# Check if nvidia-smi works in container
+docker exec crnn_predictor nvidia-smi
+
+# Test PyTorch CUDA
+docker exec crnn_predictor python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Run GPU detection unit tests
+docker exec crnn_predictor python3 -m pytest tests/test_gpu_detection.py -v
+```
+
+#### GPU Configuration
+
+The GPU is configured through environment variables and Docker device requests:
+
+```yaml
+# docker-compose.yml
+environment:
+  - CUDA_VISIBLE_DEVICES=0  # GPU device to use
+  - TORCH_CUDA_ARCH_LIST=8.0 8.6 8.9 9.0+PTX  # CUDA compute capabilities
+
+deploy:
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: 1
+          capabilities: [gpu]
+```
+
+#### Common GPU Issues and Solutions
+
+| Issue | Symptoms | Solution |
+|-------|----------|----------|
+| **CUDA not available** | `torch.cuda.is_available()` returns `False` | Ensure nvidia-docker2 is installed and restart Docker |
+| **No GPU detected** | `torch.cuda.device_count()` returns `0` | Check `CUDA_VISIBLE_DEVICES` and verify GPU is visible on host |
+| **CUDA runtime error** | Tensor operations fail | Verify NVIDIA driver version matches CUDA version |
+| **Out of memory** | `RuntimeError: CUDA out of memory` | Reduce `BATCH_SIZE` or use gradient accumulation |
+
+#### Troubleshooting Steps
+
+1. **Check host GPU availability**:
+   ```bash
+   nvidia-smi  # Should show GPU info on host
+   ```
+
+2. **Verify Docker NVIDIA runtime**:
+   ```bash
+   docker info | grep nvidia  # Should show nvidia runtime
+   ```
+
+3. **Test container GPU access**:
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.8-base-ubuntu22.04 nvidia-smi
+   ```
+
+4. **Check PyTorch CUDA installation**:
+   ```python
+   import torch
+   print(f"PyTorch: {torch.__version__}")
+   print(f"CUDA: {torch.version.cuda}")
+   print(f"cuDNN: {torch.backends.cudnn.version()}")
+   print(f"GPU Count: {torch.cuda.device_count()}")
+   ```
+
+5. **Run GPU diagnostics**:
+   ```bash
+   ./scripts/test_gpu_activation.sh
+   ```
 
 ### Memory Limits
 
@@ -619,10 +715,38 @@ memswap_limit: 18G  # Should be slightly higher than memory limit
 
 ## Testing
 
+### Unit Tests
+
 ```bash
-# Unit tests
+# Run all unit tests
 pytest tests/
 
+# Run specific test file
+pytest tests/test_gpu_detection.py -v
+
+# Run tests with coverage
+pytest tests/ --cov=src --cov-report=html
+
+# Run specific test
+pytest tests/test_models.py::TestCRNNAttention::test_forward_pass -v
+```
+
+### GPU Testing
+
+```bash
+# Run GPU activation test script
+./scripts/test_gpu_activation.sh
+
+# Run GPU detection unit tests
+pytest tests/test_gpu_detection.py -v
+
+# Run training integration tests (includes GPU)
+pytest tests/test_training_integration.py -v
+```
+
+### Integration Tests
+
+```bash
 # Small dataset performance test
 python tests/test_small_dataset.py
 
@@ -631,11 +755,15 @@ python tests/test_full_flow.py
 
 # Test prediction system
 pytest tests/test_prediction.py -v
+
+# Test hyperparameter tuning
+pytest tests/test_optuna_tune.py -v
 ```
 
 ### Test Coverage
 
-The project has **150 tests** covering:
+The project has **166 tests** covering:
+- **GPU detection and device utilities** (CUDA availability, memory management, device selection)
 - Data pipeline (feature engineering, preprocessing, dataset creation)
   - **Fibonacci retracement features** (swing high/low, retracement levels, distance features)
 - All model architectures (forward pass, parameter counting)
@@ -647,6 +775,7 @@ The project has **150 tests** covering:
 - **Dynamic configuration** (COMMODITIES, TREASURY_YIELDS, EMA_PERIODS modification)
 - **Dataset column validation** (required/optional columns, feature consistency)
 - **Data download integration** (treasury yields, VIX, commodities)
+- **Training integration** (GPU training, model saving/loading, checkpointing)
 
 ## Model Variants
 
