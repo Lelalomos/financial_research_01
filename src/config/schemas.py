@@ -177,7 +177,7 @@ class ExperimentTrackingConfig(StrictBaseModel):
     ENABLED: bool = False
     BACKEND: Literal['mlflow'] = 'mlflow'
     MLFLOW_TRACKING_URI: str = 'file:./mlruns'
-    EXPERIMENT_NAME: str = 'crnn-financial-prediction'
+    EXPERIMENT_NAME: str = 'multi-model-financial-forecasting'
     LOG_PARAMS: bool = True
     LOG_METRICS: bool = True
     LOG_ARTIFACTS: bool = False

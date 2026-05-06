@@ -1,5 +1,5 @@
 """
-Backtester for CRNN Financial Prediction Model.
+Backtester for Multi-Model Financial Forecasting.
 
 This module provides:
 - Trading strategy simulation

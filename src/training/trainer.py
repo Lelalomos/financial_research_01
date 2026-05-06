@@ -1,5 +1,5 @@
 """
-Training loop for CRNN Financial Prediction Model.
+Training loop for Multi-Model Financial Forecasting.
 
 This module provides:
 - Training and validation loops

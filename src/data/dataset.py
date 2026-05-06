@@ -1,5 +1,5 @@
 """
-PyTorch Dataset for CRNN Financial Prediction Model.
+PyTorch Dataset for Multi-Model Financial Forecasting.
 
 This module provides:
 - FinancialDataset class for PyTorch DataLoader

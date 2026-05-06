@@ -1,6 +1,6 @@
 # GPU Troubleshooting Guide
 
-This guide helps diagnose and resolve GPU-related issues when running the CRNN Financial Prediction Model.
+This guide helps diagnose and resolve GPU-related issues when running Multi-Model Financial Forecasting.
 
 ## Quick Diagnostics
 

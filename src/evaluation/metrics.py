@@ -1,5 +1,5 @@
 """
-Evaluation metrics for CRNN Financial Prediction Model.
+Evaluation metrics for Multi-Model Financial Forecasting.
 
 This module provides:
 - Regression metrics (MSE, MAE, RMSE, R², MAPE)

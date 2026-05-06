@@ -328,7 +328,7 @@ Experiment tracking is disabled by default. Enable local MLflow in
       "ENABLED": true,
       "BACKEND": "mlflow",
       "MLFLOW_TRACKING_URI": "file:./mlruns",
-      "EXPERIMENT_NAME": "crnn-financial-prediction",
+      "EXPERIMENT_NAME": "multi-model-financial-forecasting",
       "LOG_PARAMS": true,
       "LOG_METRICS": true,
       "LOG_ARTIFACTS": false

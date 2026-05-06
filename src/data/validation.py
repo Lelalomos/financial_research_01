@@ -1,5 +1,5 @@
 """
-Dataset validation for CRNN Financial Prediction Model.
+Dataset validation for Multi-Model Financial Forecasting.
 
 This module provides validation functions to verify that datasets contain
 required columns and warns about missing optional columns.

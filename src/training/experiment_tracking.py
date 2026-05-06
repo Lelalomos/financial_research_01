@@ -38,7 +38,7 @@ class LocalMLflowTracker:
     def __init__(
         self,
         tracking_uri: str = "file:./mlruns",
-        experiment_name: str = "crnn-financial-prediction",
+        experiment_name: str = "multi-model-financial-forecasting",
         log_params_enabled: bool = True,
         log_metrics_enabled: bool = True,
         log_artifacts_enabled: bool = False,

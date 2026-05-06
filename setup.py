@@ -1,5 +1,5 @@
 """
-Setup script for CRNN Financial Prediction Model.
+Setup script for Multi-Model Financial Forecasting.
 """
 
 from setuptools import setup, find_packages
@@ -10,14 +10,14 @@ readme_file = Path(__file__).parent / "README.md"
 long_description = readme_file.read_text() if readme_file.exists() else ""
 
 setup(
-    name="crnn-financial-prediction",
+    name="multi-model-financial-forecasting",
     version="1.0.0",
-    description="CRNN model for financial time series prediction",
+    description="AI-assisted multi-model financial forecasting platform",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Your Name",
     author_email="your.email@example.com",
-    url="https://github.com/yourusername/crnn-financial-prediction",
+    url="https://github.com/yourusername/multi-model-financial-forecasting",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     python_requires=">=3.10",

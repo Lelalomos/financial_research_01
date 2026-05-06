@@ -1,5 +1,5 @@
 """
-Feature engineering for CRNN Financial Prediction Model.
+Feature engineering for Multi-Model Financial Forecasting.
 
 This module handles:
 - Technical indicator calculation (EMA, RSI, StochRSI, MACD)

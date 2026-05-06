@@ -1,5 +1,5 @@
 """
-Utilities module for CRNN Financial Prediction Model.
+Utilities module for Multi-Model Financial Forecasting.
 """
 
 from .logger import (

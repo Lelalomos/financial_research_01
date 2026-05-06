@@ -1,5 +1,5 @@
 """
-Evaluation module for CRNN Financial Prediction Model.
+Evaluation module for Multi-Model Financial Forecasting.
 """
 
 from .metrics import (

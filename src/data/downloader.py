@@ -1,5 +1,5 @@
 """
-Data downloader for CRNN Financial Prediction Model.
+Data downloader for Multi-Model Financial Forecasting.
 
 This module handles downloading financial data from various sources:
 - Stock data from local index files (raw_data/index/) and yfinance

@@ -1,5 +1,5 @@
 """
-CRNN Financial Prediction Model.
+Multi-Model Financial Forecasting.
 
 Main package for financial prediction using CRNN architectures.
 """

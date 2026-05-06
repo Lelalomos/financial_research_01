@@ -1,5 +1,5 @@
 """
-Validator for CRNN Financial Prediction Model.
+Validator for Multi-Model Financial Forecasting.
 
 This module provides:
 - Model validation

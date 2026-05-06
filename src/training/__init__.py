@@ -1,5 +1,5 @@
 """
-Training module for CRNN Financial Prediction Model.
+Training module for Multi-Model Financial Forecasting.
 """
 
 from .trainer import Trainer

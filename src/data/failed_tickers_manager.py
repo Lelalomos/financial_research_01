@@ -1,5 +1,5 @@
 """
-Failed Tickers Manager for CRNN Financial Prediction Model.
+Failed Tickers Manager for Multi-Model Financial Forecasting.
 
 This module tracks stocks that failed to download or process, allowing them
 to be skipped in future runs to avoid repeated failures.

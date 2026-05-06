@@ -1,5 +1,5 @@
 """
-Preprocessing for CRNN Financial Prediction Model.
+Preprocessing for Multi-Model Financial Forecasting.
 
 This module handles:
 - Log transform normalization

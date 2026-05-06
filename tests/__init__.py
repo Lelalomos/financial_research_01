@@ -1,3 +1,3 @@
 """
-Tests for CRNN Financial Prediction Model.
+Tests for Multi-Model Financial Forecasting.
 """

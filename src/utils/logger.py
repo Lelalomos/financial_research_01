@@ -1,5 +1,5 @@
 """
-Logging utilities for CRNN Financial Prediction Model.
+Logging utilities for Multi-Model Financial Forecasting.
 
 This module provides comprehensive logging functionality including:
 - File logging

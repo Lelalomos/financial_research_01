@@ -1,5 +1,5 @@
 """
-Data module for CRNN Financial Prediction Model.
+Data module for Multi-Model Financial Forecasting.
 """
 
 from .downloader import DataDownloader

@@ -1,6 +1,6 @@
-# CRNN Financial Prediction Model
+# Multi-Model Financial Forecasting
 
-A PyTorch-based CRNN (CNN + BiLSTM + Attention) model for predicting stock price movements. The model learns patterns from S&P 500 stocks using technical indicators, candlestick patterns, and external market data.
+An AI-assisted multi-model financial forecasting platform built with PyTorch. It learns patterns from S&P 500 stocks using deep learning models, technical indicators, candlestick patterns, and external market data.
 
 ## Development Approach
 

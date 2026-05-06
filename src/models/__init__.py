@@ -1,5 +1,5 @@
 """
-Models module for CRNN Financial Prediction Model.
+Models module for Multi-Model Financial Forecasting.
 
 This module provides all model variants:
 - CRNN (CNN + BiLSTM)

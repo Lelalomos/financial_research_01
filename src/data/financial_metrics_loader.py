@@ -1,5 +1,5 @@
 """
-Financial Metrics Loader for CRNN Financial Prediction Model.
+Financial Metrics Loader for Multi-Model Financial Forecasting.
 
 This module loads and parses financial metrics from JSON files in raw_data/ticket_data/us/.
 Each JSON file contains:
