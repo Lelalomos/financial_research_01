@@ -73,10 +73,17 @@ class TestDataPipeline(unittest.TestCase):
 
     def test_fibonacci_features(self):
         """Test Fibonacci retracement feature calculation."""
-        engineer = FeatureEngineer(self.config)
+        feature_flags = self.config.data.features.FEATURE_FLAGS
+        original_fibonacci_flag = feature_flags.get('fibonacci_features', False)
+        feature_flags._data['fibonacci_features'] = True
 
-        # Test adding Fibonacci features
-        result = engineer.add_fibonacci_features(self.sample_data)
+        try:
+            engineer = FeatureEngineer(self.config)
+
+            # Test adding Fibonacci features
+            result = engineer.add_fibonacci_features(self.sample_data)
+        finally:
+            feature_flags._data['fibonacci_features'] = original_fibonacci_flag
 
         # Verify all Fibonacci columns exist
         fibonacci_cols = ['swing_high', 'swing_low', 'fib_range', 'fib_38', 'fib_50',

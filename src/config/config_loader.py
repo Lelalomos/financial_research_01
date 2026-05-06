@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional, List, ItemsView, KeysView, ValuesView
 
+from .schemas import validate_config_data
+
 
 class Config:
     """Base config class that provides attribute access to dict."""
@@ -79,7 +81,8 @@ _config_cache: Dict[str, Config] = {}
 
 def load_config(
     config_name: str,
-    config_dir: Optional[str] = None
+    config_dir: Optional[str] = None,
+    validate: bool = True
 ) -> Config:
     """
     Load configuration from JSON file.
@@ -87,6 +90,7 @@ def load_config(
     Args:
         config_name: Name of config ('model', 'main', 'test', 'deploy', 'validate')
         config_dir: Directory containing config files (default: 'config/')
+        validate: Whether to validate known config files with Pydantic schemas
 
     Returns:
         Config object with attribute access
@@ -112,6 +116,9 @@ def load_config(
 
     with open(config_file, 'r') as f:
         data = json.load(f)
+
+    if validate:
+        validate_config_data(config_name, data)
 
     config = Config(data)
     _config_cache[config_name] = config

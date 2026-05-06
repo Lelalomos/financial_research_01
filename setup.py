@@ -25,6 +25,7 @@ setup(
         "torch>=2.0.0",
         "numpy>=1.24.0",
         "pandas>=2.0.0",
+        "polars>=0.20.0",
         "yfinance>=0.2.28",
         "pandas-datareader>=0.10.0",
         "TA-Lib>=0.4.28",
@@ -32,7 +33,9 @@ setup(
         "scikit-learn>=1.3.0",
         "tqdm>=4.65.0",
         "tensorboard>=2.13.0",
+        "lightning>=2.2.0",
         "openpyxl>=3.1.2",
+        "pydantic>=2.0.0",
     ],
     extras_require={
         "dev": [

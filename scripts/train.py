@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import load_config
 from src.data.dataset import FinancialDataset, create_data_loaders
 from src.models import create_model
-from src.training import Trainer
+from src.training import LightningDependencyError, Trainer, train_with_lightning
 from src.utils.logger import get_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
 
@@ -120,6 +120,14 @@ def parse_args():
         help='Freeze stock and group embeddings during fine-tuning'
     )
 
+    parser.add_argument(
+        '--backend',
+        type=str,
+        choices=['lightning', 'custom'],
+        default=None,
+        help='Training backend. Defaults to config.model.training_backend.DEFAULT.'
+    )
+
     return parser.parse_args()
 
 
@@ -177,6 +185,12 @@ def load_sequences(data_dir: Path, split: str, stock_names: Optional[List[str]] 
     return sequences
 
 
+def _load_model_weights(model, checkpoint_path: str, device) -> None:
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    state_dict = checkpoint.get('model_state_dict', checkpoint)
+    model.load_state_dict(state_dict)
+
+
 def main():
     """Main training function."""
     args = parse_args()
@@ -212,6 +226,7 @@ def main():
         config.model.training.LEARNING_RATE = args.lr
 
     config.model.checkpointing.CHECKPOINT_DIR = args.checkpoint_dir
+    backend = args.backend or config.model.training_backend.DEFAULT
 
     # Load config override if provided
     if args.config:
@@ -228,6 +243,13 @@ def main():
     data_dir = Path(args.data_dir)
 
     logger.info(f"Loading data from {data_dir}...")
+
+    preprocessing_info = {}
+    info_path = data_dir / 'info.json'
+    if info_path.exists():
+        with open(info_path, 'r') as f:
+            preprocessing_info = json.load(f)
+        logger.info(f"Loaded preprocessing info from {info_path}")
 
     # Load stock encoders if needed for stock filtering
     stock_encoder = None
@@ -299,12 +321,40 @@ def main():
     )
 
     # Create trainer
-    trainer = Trainer(model, config, device=str(device), model_type=args.model_type)
+    checkpoint_metadata = {
+        'feature_cols': preprocessing_info.get('feature_cols'),
+        'num_features': preprocessing_info.get('num_features'),
+        'target_normalization': {
+            'NORMALIZE_TARGET': preprocessing_info.get(
+                'normalize_target',
+                load_config('main').data.sequences.NORMALIZE_TARGET
+            ),
+            'TARGET_THRESHOLD': preprocessing_info.get(
+                'target_threshold',
+                load_config('main').data.sequences.TARGET_THRESHOLD
+            ),
+        },
+        'regime_params': preprocessing_info.get('regime_params'),
+    }
+    checkpoint_metadata = {
+        key: value for key, value in checkpoint_metadata.items()
+        if value is not None
+    }
 
     # Load checkpoint for fine-tuning if specified
     if args.fine_tune:
         logger.info(f"Loading checkpoint for fine-tuning: {args.fine_tune}")
-        trainer.load_checkpoint(args.fine_tune)
+        if backend == 'custom':
+            trainer = Trainer(
+                model,
+                config,
+                device=str(device),
+                model_type=args.model_type,
+                checkpoint_metadata=checkpoint_metadata
+            )
+            trainer.load_checkpoint(args.fine_tune)
+        else:
+            _load_model_weights(model, args.fine_tune, device)
         logger.info("Checkpoint loaded successfully")
 
         # Freeze embeddings if requested
@@ -318,7 +368,18 @@ def main():
     # Resume from checkpoint if specified (different from fine-tune)
     elif args.resume:
         logger.info(f"Resuming from checkpoint: {args.resume}")
-        trainer.load_checkpoint(args.resume)
+        if backend == 'custom':
+            trainer = Trainer(
+                model,
+                config,
+                device=str(device),
+                model_type=args.model_type,
+                checkpoint_metadata=checkpoint_metadata
+            )
+            trainer.load_checkpoint(args.resume)
+        else:
+            logger.warning("Lightning backend loads model weights from custom checkpoints; optimizer resume is not available in Task 5.1")
+            _load_model_weights(model, args.resume, device)
 
     # Train
     if is_finetuning:
@@ -327,14 +388,61 @@ def main():
     else:
         logger.info("Starting training...")
 
-    history = trainer.train(
-        train_loader=loaders['train'],
-        val_loader=loaders.get('val'),
-        num_epochs=config.model.training.NUM_EPOCHS
-    )
+    logger.info(f"Training backend: {backend}")
+    trainer = None
+    lightning_result = None
+    try:
+        if backend == 'lightning':
+            lightning_result = train_with_lightning(
+                model=model,
+                config=config,
+                train_loader=loaders['train'],
+                val_loader=loaders.get('val'),
+                device=str(device),
+                model_type=args.model_type,
+                checkpoint_metadata=checkpoint_metadata,
+            )
+        else:
+            trainer = Trainer(
+                model,
+                config,
+                device=str(device),
+                model_type=args.model_type,
+                checkpoint_metadata=checkpoint_metadata
+            )
+            trainer.train(
+                train_loader=loaders['train'],
+                val_loader=loaders.get('val'),
+                num_epochs=config.model.training.NUM_EPOCHS
+            )
+    except LightningDependencyError as exc:
+        if backend != 'lightning' or not config.model.training_backend.ALLOW_CUSTOM_FALLBACK:
+            raise
+        logger.warning(f"{exc}")
+        logger.warning("Falling back to custom Trainer because ALLOW_CUSTOM_FALLBACK=true")
+        backend = 'custom'
+        trainer = Trainer(
+            model,
+            config,
+            device=str(device),
+            model_type=args.model_type,
+            checkpoint_metadata=checkpoint_metadata
+        )
+        trainer.train(
+            train_loader=loaders['train'],
+            val_loader=loaders.get('val'),
+            num_epochs=config.model.training.NUM_EPOCHS
+        )
 
     logger.info("Training complete!")
-    logger.info(f"Best validation loss: {trainer.checkpoint.best_score:.6f}")
+    if backend == 'lightning' and lightning_result is not None:
+        best_score = lightning_result.get('best_score')
+        if best_score is not None:
+            logger.info(f"Best validation loss: {best_score:.6f}")
+        if lightning_result.get('best_model_path'):
+            logger.info(f"Saved Lightning custom-compatible checkpoint to {lightning_result['best_model_path']}")
+    elif trainer is not None:
+        logger.info(f"Best validation loss: {trainer.checkpoint.best_score:.6f}")
 
     # Save final model with suffix if fine-tuning
     if args.stocks:
@@ -342,6 +450,14 @@ def main():
         if len(args.stocks) > 3:
             stock_suffix += f"_etc{len(args.stocks)}"
         final_path = Path(config.model.checkpointing.CHECKPOINT_DIR) / f"best_model_{stock_suffix}.pth"
+        if trainer is None:
+            trainer = Trainer(
+                model,
+                config,
+                device=str(device),
+                model_type=args.model_type,
+                checkpoint_metadata=checkpoint_metadata
+            )
         trainer.save_model(str(final_path))
         logger.info(f"Saved fine-tuned model to {final_path}")
 

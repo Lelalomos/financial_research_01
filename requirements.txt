@@ -4,6 +4,7 @@
 torch>=2.0.0
 numpy>=1.24.0
 pandas>=2.0.0
+polars>=0.20.0
 scipy>=1.10.0
 
 # Data downloading
@@ -24,6 +25,7 @@ optuna>=3.0.0
 # Training utilities
 tqdm>=4.65.0
 tensorboard>=2.13.0
+lightning>=2.2.0
 
 # Visualization (optional)
 matplotlib>=3.7.0
@@ -40,6 +42,7 @@ pyarrow>=12.0.0  # For parquet file support
 # Utilities
 python-dateutil>=2.8.2
 pytz>=2023.3
+pydantic>=2.0.0
 
 # Weights & Biases (optional, for experiment tracking)
 # wandb>=0.15.0

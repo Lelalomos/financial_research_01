@@ -159,6 +159,37 @@ class LSTM3AttentionModel(nn.Module):
 
         return output
 
+    def forward_with_attention(
+        self,
+        features: torch.Tensor,
+        stock_id: torch.Tensor,
+        group_id: torch.Tensor,
+        day: torch.Tensor,
+        month: torch.Tensor,
+        dividend_flag: torch.Tensor
+    ):
+        """
+        Forward pass that also returns per-head attention weights.
+
+        Returns:
+            Tuple of (output, attention_weights). Attention weights have shape
+            (batch, num_heads, seq_len, seq_len).
+        """
+        emb = self.embeddings(stock_id, group_id, day, month, dividend_flag)
+        x = torch.cat([emb, features], dim=-1)
+        x = self.lstm(x)
+        x = self.attention_projection(x)
+        x, attention_weights = self.attention(
+            x,
+            x,
+            x,
+            need_weights=True,
+            average_attn_weights=False
+        )
+        x = x.mean(dim=1)
+        output = self.fc(x)
+        return output, attention_weights
+
 
 def create_model(
     num_features: int,

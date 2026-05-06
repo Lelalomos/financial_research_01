@@ -20,7 +20,7 @@ The development process follows a human-AI collaborative approach:
 2. **Comprehensive Testing**
    - All code changes are tested automatically after implementation
    - Tests run in isolated Docker container environment
-   - 91 unit tests ensure code quality and correctness
+   - Latest recorded full validation: 246 tests passed in Docker
 
 3. **Code Quality**
    - Follows Python best practices and PEP 8 standards
@@ -39,8 +39,17 @@ The development process follows a human-AI collaborative approach:
   - Time-based features (day, month embeddings)
   - **Dividend flag feature** (1=has dividend, 2=no dividend) with embedding
   - Financial metrics (PE ratio, PEG ratio, EPS, ROE, ROI, debt ratios, current ratio)
+  - Optional market regime feature (`regime_id`) fit on train dates only
+- **Typed Configuration Validation** with Pydantic while preserving JSON configs
 - **Log Transform Normalization** for all features
-- **Time-based Data Splitting** (70% train, 15% val, 15% test)
+- **Time-based Data Splitting** (70% train, 10% val, 20% test)
+- **Walk-forward and purged time-series split utilities**
+- **Custom Financial Losses** (directional, directional-MSE, Sharpe-style)
+- **Model Ensembling** with checkpoint compatibility checks
+- **Meta-labeling Utilities** for offline second-stage trade-filter analysis
+- **Interpretability Utilities**:
+  - attention weight extraction for attention models
+  - optional Captum-based feature attribution
 - **Balanced Stock Sampling** (`--stocks` option) - Sample stocks evenly across all group_ids
 - **Configurable Prediction Horizon** (default: 5 days)
 - **Docker Deployment** with GPU support
@@ -90,9 +99,9 @@ python scripts/test.py --model best
 python scripts/backtest.py --model best --output outputs/report.xlsx
 
 # 6. Predict (single/batch/interactive)
-python scripts/predict.py --model models/checkpoints/best_model.pth --mode interactive
-python scripts/predict.py --model models/checkpoints/best_model.pth --mode batch --input data/new_data.csv
-python scripts/predict.py --model models/checkpoints/best_model.pth --mode single --tic AAPL --date 2024-01-15
+python scripts/predict.py interactive --model models/checkpoints/best_model.pth
+python scripts/predict.py batch --model models/checkpoints/best_model.pth --input data/new_data.csv
+python scripts/predict.py single --model models/checkpoints/best_model.pth --ticker AAPL --date 2024-01-15 --input "open=150,high=152,low=149,close=151,volume=50000000"
 
 # 7. Hyperparameter tuning (NEW)
 bash scripts/optuna_tune.sh --model-type bilstm4_attention --n-trials 50
@@ -110,6 +119,9 @@ python tests/test_full_flow.py
 
 # Run all unit tests
 pytest tests/ -v
+
+# Latest recorded full validation in Docker
+docker exec crnn_predictor pytest -q
 
 # Test stock sampling (NEW)
 pytest tests/test_sampling.py -v
@@ -132,6 +144,7 @@ research_02/
 ├── src/
 │   ├── config/
 │   │   ├── config_loader.py # JSON config loader with Config class
+│   │   ├── schemas.py       # Pydantic validation for known configs
 │   │   └── __init__.py       # Convenience functions
 │   ├── data/
 │   │   ├── downloader.py    # Data downloading (yfinance, FRED)
@@ -139,7 +152,9 @@ research_02/
 │   │   ├── preprocessing.py  # Normalization, splitting
 │   │   ├── financial_metrics_loader.py  # Financial metrics from JSON
 │   │   ├── prediction_prep.py  # Data preparation for prediction
+│   │   ├── regime.py         # Optional train-only market regime detection
 │   │   ├── sampling.py       # Balanced stock sampling
+│   │   ├── time_series_split.py # Walk-forward and purged splits
 │   │   ├── validation.py     # Dataset column validation
 │   │   └── dataset.py        # PyTorch Dataset
 │   ├── models/
@@ -155,13 +170,18 @@ research_02/
 │   │   └── optimizer.py       # Optuna optimizer
 │   ├── training/
 │   │   ├── trainer.py       # Training loop
+│   │   ├── losses.py        # Custom financial losses
 │   │   └── early_stopping.py
 │   ├── prediction/
-│   │   └── predictor.py     # Prediction module
+│   │   ├── predictor.py     # Prediction module
+│   │   └── ensemble.py      # Optional ensemble prediction
 │   ├── evaluation/
 │   │   ├── metrics.py       # Evaluation metrics
 │   │   ├── validator.py     # Validation
-│   │   └── backtester.py    # Backtesting
+│   │   ├── backtester.py    # Backtesting
+│   │   ├── meta_labeling.py # Offline meta-label generation
+│   │   ├── interpretability.py # Attention reports
+│   │   └── feature_attribution.py # Optional Captum attribution
 │   └── utils/
 │       └── logger.py        # Logging utilities
 ├── scripts/
@@ -183,6 +203,11 @@ research_02/
 │   ├── test_dynamic_config.py # Dynamic config list tests
 │   ├── test_training.py
 │   ├── test_prediction.py   # Prediction tests
+│   ├── test_ensemble.py     # Ensemble prediction tests
+│   ├── test_regime.py       # Market regime tests
+│   ├── test_meta_labeling.py # Meta-labeling tests
+│   ├── test_interpretability.py # Attention report tests
+│   ├── test_feature_attribution.py # Attribution tests
 │   ├── test_validation.py   # Dataset column validation tests
 │   ├── test_data_download.py # Data download integration tests
 │   ├── test_small_dataset.py
@@ -241,6 +266,7 @@ The project includes automatic column validation to ensure required data is pres
 - Fibonacci Features: `swing_high`, `swing_low`, `fib_range`, `fib_38`, `fib_50`, `fib_61`, `dist_fib_38`, `dist_fib_50`, `dist_fib_61`, `break_fib_61`
 - Time Features: `day`, `month`, `dayofweek`
 - External Data: `vix`, `bondyield`
+- Market Regime: `regime_id`
 - Grouping: `group`
 - Encoded: `tic_id`, `group_id`
 
@@ -304,6 +330,23 @@ All models support the following categorical embeddings:
 - **month**: Month of year (16 dimensions)
 - **dividend_flag**: Dividend status - 1=has dividend, 2=no dividend (8 dimensions)
 
+## Advanced Evaluation and Interpretability
+
+The roadmap implementation has added several optional analysis utilities:
+
+| Utility | Purpose | Docs |
+|---------|---------|------|
+| Model ensembling | Average compatible checkpoint predictions | `docs/roadmap_execution_plan.md` |
+| Market regime detection | Optional `regime_id` fit on train dates only | `docs/data_pipeline.md` |
+| Meta-labeling | Build offline correctness labels for second-stage analysis | `docs/meta_labeling.md` |
+| Attention reports | Extract and aggregate attention weights | `docs/interpretability.md` |
+| Feature attribution | Optional Captum-based feature importance reports | `docs/feature_attribution.md` |
+
+These utilities are conservative by default. Ensembling and market regimes must
+be enabled in config, and Captum is imported only when attribution is requested.
+Interpretability and attribution reports are diagnostic evidence, not causal
+proof or automatic feature-removal decisions.
+
 ## Workflow & Process
 
 ### Complete Pipeline Flow
@@ -337,24 +380,26 @@ All models support the following categorical embeddings:
 │  RSI:              14-period Relative Strength Index                     │
 │  StochRSI:         Stochastic RSI                                        │
 │  MACD:             (12, 26, 9) parameters                                │
-│  Fibonacci:        Swing high/low, retracement levels (38.2%, 50%, 61.8%) │
-│                    Normalized distance features, break indicators        │
+│  Fibonacci:        Optional swing high/low, retracement levels,          │
+│                    normalized distance features, break indicators        │
 │  Candlestick:      100+ patterns (Doji, Hammer, Engulfing, etc.)        │
 │  VIX:              Volatility index                                      │
 │  Commodities:      Gold, Silver, Copper prices                          │
 │  Treasury Yields:  2Y, 10Y, 30Y rates                                   │
 │  Financial Metrics: PE, PEG, EPS, ROE, ROI, Debt ratios, Dividend       │
 │  Time Features:    Day of month, Month of year (for embeddings)         │
+│  Market Regime:    Optional train-only quantile regime_id from VIX       │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    PREPROCESSING & NORMALIZATION                         │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  1. Log Transform:   log(x + 1) for all numeric features                │
-│  2. Stock Filtering:  Keep stocks with ≥252 trading days                │
-│  3. Train/Val/Test Split: 70% / 15% / 15% (time-based)                  │
+│  1. Split First:     Global date split before fitting normalization      │
+│  2. Log Transform:   Fit on train only, transform val/test               │
+│  3. Train/Val/Test Split: 70% / 10% / 20% (time-based)                  │
 │  4. Sequence Creation:  Create sliding windows (seq_len=30)              │
-│  5. Target Calculation: future_return = price[t+5] / price[t] - 1       │
+│  5. Optional Regime: Fit train-only thresholds, apply to all splits      │
+│  6. Target Calculation: future_return = price[t+5] / price[t] - 1       │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -374,7 +419,7 @@ All models support the following categorical embeddings:
 ├─────────────────────────────────────────────────────────────────────────┤
 │  python scripts/validate.py --model best                                │
 │                                                                         │
-│  • Evaluate on validation set (15% of data)                             │
+│  • Evaluate on validation set (10% of data)                             │
 │  • Calculate metrics: MSE, RMSE, MAE, R², Directional Accuracy          │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
@@ -383,7 +428,7 @@ All models support the following categorical embeddings:
 ├─────────────────────────────────────────────────────────────────────────┤
 │  python scripts/test.py --model best                                    │
 │                                                                         │
-│  • Evaluate on test set (15% of data)                                   │
+│  • Evaluate on test set (20% of data)                                   │
 │  • Final performance metrics                                            │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
@@ -401,13 +446,14 @@ All models support the following categorical embeddings:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                       PREDICTION (INFERENCE)                             │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  python scripts/predict.py --model best --mode <mode>                   │
+│  python scripts/predict.py <mode> --model best                          │
 │                                                                         │
 │  Modes:                                                                 │
 │  • single:   Predict for 1 stock on 1 date                              │
 │  • batch:    Predict from CSV/Parquet/Excel file                        │
 │  • interactive: Manual input via CLI                                    │
 │  • info:     Display model checkpoint information                       │
+│  • ensemble: Enable through config/model.json, not a separate mode       │
 └─────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -439,12 +485,14 @@ python scripts/backtest.py --model best
 python scripts/optuna_tune.py --model-type bilstm4_attention --n-trials 50
 
 # Make predictions
-python scripts/predict.py --model best --mode interactive
+python scripts/predict.py interactive --model best
 ```
 
 ## Configuration
 
 The project uses **JSON-based configuration** with a Python Config wrapper class for easy access.
+Known configs are validated with Pydantic at load time while preserving
+backward-compatible dot notation.
 
 ### Configuration Files
 
@@ -497,8 +545,8 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
     },
     "splits": {
       "TRAIN_RATIO": 0.7,
-      "VAL_RATIO": 0.15,
-      "TEST_RATIO": 0.15
+      "VAL_RATIO": 0.1,
+      "TEST_RATIO": 0.2
     },
     "sequences": {
       "SEQUENCE_LENGTH": 30,
@@ -510,6 +558,12 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
     },
     "fibonacci": {
       "FIBONACCI_WINDOW": 30
+    },
+    "regime": {
+      "ENABLED": false,
+      "METHOD": "quantile",
+      "PROXY_COLUMN": "vix",
+      "N_REGIMES": 3
     }
   }
 }
@@ -533,6 +587,14 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
       "BATCH_SIZE": 128,
       "NUM_EPOCHS": 200,
       "EARLY_STOPPING_PATIENCE": 15
+    },
+    "loss": {
+      "LOSS_TYPE": "huber"
+    },
+    "ensemble": {
+      "ENABLED": false,
+      "CHECKPOINT_PATHS": [],
+      "WEIGHTS": null
     },
     "models": {
       "lstm3_attention": {
@@ -577,6 +639,20 @@ These lists can be modified at runtime without changing the JSON file:
 config = load_config('main')
 config.data.sources.COMMODITIES._data['ZW=F'] = 'Wheat'
 ```
+
+## Documentation Index
+
+| Document | Purpose |
+|----------|---------|
+| `docs/configuration.md` | Configuration guide |
+| `docs/data_pipeline.md` | Data pipeline and optional regime feature |
+| `docs/model_architecture.md` | Model architecture reference |
+| `docs/meta_labeling.md` | Meta-labeling usage and leakage guidance |
+| `docs/interpretability.md` | Attention report usage |
+| `docs/feature_attribution.md` | Optional Captum attribution usage |
+| `docs/roadmap_execution_plan.md` | Roadmap status and next tasks |
+| `docs/implementation_log.md` | Completed work and validation history |
+| `docs/gpu_troubleshooting.md` | GPU diagnostics and fixes |
 
 ## Docker Deployment
 
@@ -762,13 +838,21 @@ pytest tests/test_optuna_tune.py -v
 
 ### Test Coverage
 
-The project has **166 tests** covering:
+Latest recorded Docker validation: **246 passed, 23 warnings**. See
+`docs/implementation_log.md` for the current validation history.
+
+The test suite covers:
 - **GPU detection and device utilities** (CUDA availability, memory management, device selection)
 - Data pipeline (feature engineering, preprocessing, dataset creation)
   - **Fibonacci retracement features** (swing high/low, retracement levels, distance features)
+  - **Market regime detection** (train-only threshold fitting)
 - All model architectures (forward pass, parameter counting)
+- Pydantic config validation
+- Custom financial losses
+- Walk-forward and purged time-series splits
 - Training loop (train, validate, early stopping)
 - Prediction system (single/batch/interactive modes)
+- Ensemble prediction compatibility checks
 - End-to-end pipeline (train → validate → test → predict → backtest)
 - **Stock sampling** (balanced group sampling, edge cases)
 - **Hyperparameter tuning** (Optuna optimization, dataset creation)
@@ -776,6 +860,7 @@ The project has **166 tests** covering:
 - **Dataset column validation** (required/optional columns, feature consistency)
 - **Data download integration** (treasury yields, VIX, commodities)
 - **Training integration** (GPU training, model saving/loading, checkpointing)
+- Meta-labeling, attention interpretability, and optional feature attribution utilities
 
 ## Model Variants
 

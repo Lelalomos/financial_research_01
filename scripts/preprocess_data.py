@@ -260,6 +260,7 @@ def main():
             'sequence_length': info['sequence_length'],
             'prediction_horizon': info['prediction_horizon'],
             'feature_cols': info['feature_cols'],
+            'regime_params': info.get('regime_params'),
         }, f, indent=2)
 
     logger.info(f"Saved info to {info_path}")

@@ -29,7 +29,9 @@ from src.utils.validation import (
     check_model_parameters,
     check_gradients
 )
-from .early_stopping import EarlyStopping, ModelCheckpoint
+from .early_stopping import EarlyStopping, ModelCheckpoint, make_weights_only_safe
+from .experiment_tracking import create_experiment_tracker, training_params
+from .common import create_loss_function
 
 
 class Trainer:
@@ -49,7 +51,9 @@ class Trainer:
         model: nn.Module,
         config,
         device: str = 'cuda',
-        model_type: Optional[str] = None
+        model_type: Optional[str] = None,
+        checkpoint_metadata: Optional[Dict] = None,
+        experiment_tracker: Optional[object] = None
     ):
         """
         Initialize trainer.
@@ -59,11 +63,14 @@ class Trainer:
             config instance
             device: Device to use ('cuda' or 'cpu')
             model_type: Model type name for checkpoint filenames (e.g., 'crnn_attention')
+            checkpoint_metadata: Additional weights-only-safe metadata to save in checkpoints
+            experiment_tracker: Optional injected tracker for tests or custom tracking
         """
         self.model = model.to(device)
         self.config = config
         self.device = device
         self.model_type = model_type or self._infer_model_type()
+        self.checkpoint_metadata = checkpoint_metadata or {}
 
         self.logger = TrainingLogger(log_dir="logs")
 
@@ -96,6 +103,8 @@ class Trainer:
         self.writer = None
         if config.model.logging.TENSORBOARD_DIR:
             self.writer = SummaryWriter(config.model.logging.TENSORBOARD_DIR)
+
+        self.experiment_tracker = experiment_tracker or create_experiment_tracker(config)
 
         # Training state
         self.current_epoch = 0
@@ -149,16 +158,7 @@ class Trainer:
 
     def _create_criterion(self) -> nn.Module:
         """Create loss function based on config."""
-        if self.config.model.loss.LOSS_TYPE == 'mse':
-            return nn.MSELoss()
-        elif self.config.model.loss.LOSS_TYPE == 'mae':
-            return nn.L1Loss()
-        elif self.config.model.loss.LOSS_TYPE == 'smooth_l1':
-            return nn.SmoothL1Loss()
-        elif self.config.model.loss.LOSS_TYPE == 'huber':
-            return nn.HuberLoss(delta=self.config.model.loss.HUBER_DELTA)
-        else:
-            raise ValueError(f"Unknown loss type: {self.config.model.loss.LOSS_TYPE}")
+        return create_loss_function(self.config)
 
     def _create_scheduler(self) -> Optional[object]:
         """Create learning rate scheduler based on config."""
@@ -329,6 +329,11 @@ class Trainer:
                 self.writer.add_scalar('train/lr', self.optimizer.param_groups[0]['lr'], global_step)
 
         # Calculate epoch metrics
+        if total_samples == 0:
+            raise ValueError(
+                "Training loader produced zero batches. Reduce BATCH_SIZE, provide more samples, or disable drop_last."
+            )
+
         metrics = {
             'loss': total_loss / total_samples,
             'mse': np.mean((np.array(all_predictions) - np.array(all_targets)) ** 2),
@@ -389,6 +394,9 @@ class Trainer:
                 all_targets.extend(target.cpu().numpy().flatten())
 
         # Calculate metrics
+        if total_samples == 0:
+            raise ValueError("Validation loader produced zero batches.")
+
         predictions = np.array(all_predictions)
         targets = np.array(all_targets)
 
@@ -438,68 +446,88 @@ class Trainer:
 
         self.logger.log_config(self.config.__dict__)
         self.logger.log_model_summary(self.model)
+        self.experiment_tracker.start_run(run_name=self.model_type)
+        self.experiment_tracker.log_params(training_params(self.config, self.model_type))
 
-        for epoch in range(num_epochs):
-            self.current_epoch = epoch
-            self.logger.log_epoch_start(epoch + 1, num_epochs)
+        try:
+            for epoch in range(num_epochs):
+                self.current_epoch = epoch
+                self.logger.log_epoch_start(epoch + 1, num_epochs)
 
-            # Train
-            train_metrics = self.train_epoch(train_loader)
-            history['train_loss'].append(train_metrics['loss'])
+                # Train
+                train_metrics = self.train_epoch(train_loader)
+                history['train_loss'].append(train_metrics['loss'])
 
-            self.logger.log_epoch_end(epoch + 1, train_metrics)
+                self.logger.log_epoch_end(epoch + 1, train_metrics)
+                self.experiment_tracker.log_metrics(
+                    {f"train/{key}": value for key, value in train_metrics.items()},
+                    step=epoch + 1,
+                )
 
-            # Validate
-            if val_loader is not None:
-                val_metrics = self.validate(val_loader)
-                history['val_loss'].append(val_metrics['loss'])
+                # Validate
+                if val_loader is not None:
+                    val_metrics = self.validate(val_loader)
+                    history['val_loss'].append(val_metrics['loss'])
 
-                self.logger.log_validation(val_metrics, step=epoch + 1)
+                    self.logger.log_validation(val_metrics, step=epoch + 1)
+                    self.experiment_tracker.log_metrics(
+                        {f"val/{key}": value for key, value in val_metrics.items()},
+                        step=epoch + 1,
+                    )
+
+                    # Log to TensorBoard
+                    if self.writer:
+                        for key, value in val_metrics.items():
+                            self.writer.add_scalar(f'val/{key}', value, epoch)
+
+                    # Learning rate scheduling
+                    if self.scheduler is not None:
+                        if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                            self.scheduler.step(val_metrics['loss'])
+                        else:
+                            self.scheduler.step()
+
+                    # Early stopping check
+                    should_stop = self.early_stopping(val_metrics['loss'], epoch + 1)
+
+                    # Checkpointing
+                    extra_state = {
+                        'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+                        'epoch': epoch + 1,
+                        'train_metrics': train_metrics,
+                        'val_metrics': val_metrics,
+                        **self.checkpoint_metadata,
+                        'metadata': {
+                            'model_type': self.model_type,
+                            **self.checkpoint_metadata,
+                        },
+                    }
+                    self.checkpoint(
+                        self.model,
+                        self.optimizer,
+                        epoch + 1,
+                        val_metrics['loss'],
+                        train_metrics['loss'],
+                        extra_state=extra_state
+                    )
+
+                    if should_stop:
+                        self.logger.info(f"Training stopped early at epoch {epoch + 1}")
+                        break
 
                 # Log to TensorBoard
                 if self.writer:
-                    for key, value in val_metrics.items():
-                        self.writer.add_scalar(f'val/{key}', value, epoch)
-
-                # Learning rate scheduling
-                if self.scheduler is not None:
-                    if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                        self.scheduler.step(val_metrics['loss'])
-                    else:
-                        self.scheduler.step()
-
-                # Early stopping check
-                should_stop = self.early_stopping(val_metrics['loss'], epoch + 1)
-
-                # Checkpointing
-                extra_state = {
-                    'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
-                    'epoch': epoch + 1,
-                    'train_metrics': train_metrics,
-                    'val_metrics': val_metrics,
-                }
-                self.checkpoint(
-                    self.model,
-                    self.optimizer,
-                    epoch + 1,
-                    val_metrics['loss'],
-                    train_metrics['loss'],
-                    extra_state=extra_state
-                )
-
-                if should_stop:
-                    self.logger.info(f"Training stopped early at epoch {epoch + 1}")
-                    break
-
-            # Log to TensorBoard
-            if self.writer:
-                for key, value in train_metrics.items():
-                    self.writer.add_scalar(f'train/{key}', value, epoch)
+                    for key, value in train_metrics.items():
+                        self.writer.add_scalar(f'train/{key}', value, epoch)
+        except Exception:
+            self.experiment_tracker.end_run(status="FAILED")
+            raise
 
         self.logger.info("Training complete!")
 
         if self.writer:
             self.writer.close()
+        self.experiment_tracker.end_run(status="FINISHED")
 
         return history
 
@@ -516,6 +544,30 @@ class Trainer:
             filepath=checkpoint_path,
             device=self.device
         )
+
+    def save_model(self, filepath: str):
+        """
+        Save current model and optimizer state to a checkpoint file.
+
+        Args:
+            filepath: Destination checkpoint path.
+        """
+        checkpoint = {
+            'model_type': self.model_type,
+            'epoch': self.current_epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'score': self.best_val_loss,
+            'loss': None,
+            'best_val_loss': self.best_val_loss,
+            **self.checkpoint_metadata,
+            'metadata': {
+                'model_type': self.model_type,
+                **self.checkpoint_metadata,
+            },
+        }
+        torch.save(make_weights_only_safe(checkpoint), filepath)
+        self.logger.info(f"Saved model checkpoint to {filepath}")
 
     def load_best_model(self):
         """Load best model checkpoint."""

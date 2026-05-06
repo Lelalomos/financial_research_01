@@ -15,9 +15,8 @@ from typing import Dict, List, Optional, Union, Tuple
 from pathlib import Path
 import warnings
 
-from src.config import load_config
-from src.config import load_config
 from src.data.feature_engineering import FeatureEngineer
+from src.data.regime import MarketRegimeDetector
 from src.utils.logger import get_logger
 
 # Optional financial metrics loader
@@ -74,6 +73,7 @@ class PredictionPreparator:
         self.feature_scaler_params = {}
         self.stock_encoder_mapping = {}
         self.group_encoder_mapping = {}
+        self.regime_params = None
 
         if scaler_path:
             self._load_scaler(scaler_path)
@@ -163,6 +163,16 @@ class PredictionPreparator:
         df = self._encode_categoricals(df)
 
         return df
+
+    def _apply_market_regime_if_needed(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add regime_id for models trained with the optional regime feature."""
+        if "regime_id" not in self.feature_cols or "regime_id" in df.columns:
+            return df
+        if not self.regime_params:
+            raise ValueError("regime_id is required by the model, but regime_params were not loaded")
+
+        detector = MarketRegimeDetector.from_metadata(self.regime_params)
+        return detector.transform(df)
 
     def prepare_batch(
         self,
@@ -340,7 +350,7 @@ class PredictionPreparator:
                 self.logger.warning(f"Column {col} not in DataFrame, skipping")
                 continue
 
-            if col in ['day', 'month', 'dayofweek', 'dividend_flag']:
+            if col in ['day', 'month', 'dayofweek', 'dividend_flag', 'regime_id']:
                 # Don't normalize categorical features
                 continue
 
@@ -491,6 +501,8 @@ class PredictionPreparator:
         else:
             raise ValueError(f"Unsupported data type: {type(data)}")
 
+        df = self._apply_market_regime_if_needed(df)
+
         # Normalize features
         if normalize and self.feature_scaler_params:
             df = self.normalize_features(df)
@@ -546,6 +558,10 @@ class PredictionPreparator:
         # Load feature columns if available
         if 'feature_cols' in state:
             self.set_feature_columns(state['feature_cols'])
+
+        if 'regime_params' in state:
+            self.regime_params = state['regime_params']
+            self.logger.info("Loaded market regime parameters")
 
 
 def create_prediction_preparator(

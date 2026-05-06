@@ -28,7 +28,7 @@ def main():
 
     # First, load the checkpoint to get the necessary parameters
     logger.info(f"Loading checkpoint from {model_path}...")
-    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
 
     state_dict = checkpoint['model_state_dict']
 

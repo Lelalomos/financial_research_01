@@ -69,7 +69,16 @@ class FinancialDataset(Dataset):
         self.group_id = torch.LongTensor(sequences['group_id'])
         self.day = torch.LongTensor(sequences['day'])
         self.month = torch.LongTensor(sequences['month'])
-        self.dividend_flag = torch.LongTensor(sequences['dividend_flag'])
+        dividend_flag = np.asarray(sequences['dividend_flag'])
+        if dividend_flag.ndim == 3 and dividend_flag.shape[-1] == 1:
+            dividend_flag = np.squeeze(dividend_flag, axis=-1)
+        if dividend_flag.shape != sequences['stock_id'].shape:
+            raise ValueError(
+                f"dividend_flag shape {dividend_flag.shape} must match stock_id shape {sequences['stock_id'].shape}"
+            )
+        if not np.isin(dividend_flag, [0, 1, 2]).all():
+            raise ValueError("dividend_flag values must be 0, 1, or 2")
+        self.dividend_flag = torch.LongTensor(dividend_flag)
         self.target = torch.FloatTensor(sequences['target']).unsqueeze(-1)  # (n_samples,) -> (n_samples, 1)
 
         self.num_samples = len(self.target)
@@ -183,6 +192,7 @@ def create_data_loaders(
         if batch_size is None:
             batch_size = config.model.training.BATCH_SIZE
         shuffle = (split_name == 'train')
+        drop_last = shuffle and len(dataset) >= batch_size
 
         loader = DataLoader(
             dataset,
@@ -192,7 +202,7 @@ def create_data_loaders(
             pin_memory=config.model.device.PIN_MEMORY,
             prefetch_factor=config.model.device.PREFETCH_FACTOR if config.model.device.NUM_WORKERS > 0 else None,
             collate_fn=FinancialDataset.collate_fn,
-            drop_last=shuffle  # Drop last incomplete batch in training
+            drop_last=drop_last
         )
 
         loaders[split_name] = loader

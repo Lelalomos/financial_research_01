@@ -13,6 +13,27 @@ import glob
 import re
 
 
+def make_weights_only_safe(value):
+    """
+    Convert checkpoint metadata to PyTorch weights_only-compatible types.
+
+    Safe checkpoint loading accepts tensors, primitive Python types, lists,
+    tuples, and dicts. Metrics often contain NumPy scalar values, so convert
+    those before saving.
+    """
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: make_weights_only_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [make_weights_only_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(make_weights_only_safe(item) for item in value)
+    return value
+
+
 class EarlyStopping:
     """
     Early stopping to stop training when validation loss doesn't improve.
@@ -181,6 +202,7 @@ class ModelCheckpoint:
 
             if extra_state:
                 checkpoint.update(extra_state)
+            checkpoint = make_weights_only_safe(checkpoint)
 
             # Generate filename with model name and timestamp
             if improved:
@@ -240,7 +262,7 @@ class ModelCheckpoint:
             # Get the most recent best model
             filepath = max(files, key=os.path.getmtime)
 
-        checkpoint = torch.load(filepath, map_location=device)
+        checkpoint = torch.load(filepath, map_location=device, weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
 
         if self.verbose:
@@ -287,7 +309,7 @@ class ModelCheckpoint:
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"No checkpoint found at {filepath}")
 
-        checkpoint = torch.load(filepath, map_location=device)
+        checkpoint = torch.load(filepath, map_location=device, weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
 
         if optimizer is not None and 'optimizer_state_dict' in checkpoint:

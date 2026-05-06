@@ -15,8 +15,6 @@ from typing import Dict, List, Optional, Union, Tuple
 from pathlib import Path
 import warnings
 
-from src.config import load_config
-from src.config import load_config
 from src.data.prediction_prep import PredictionPreparator, create_prediction_preparator
 from src.utils.logger import get_logger
 
@@ -82,7 +80,7 @@ class Predictor:
         """Load trained model from checkpoint."""
         self.logger.info(f"Loading model from {self.model_path}...")
 
-        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=True)
 
         # Load model metadata - store all checkpoint info for access
         self.model_metadata = {
@@ -90,6 +88,11 @@ class Predictor:
             'num_features': checkpoint.get('num_features'),
             'num_stocks': checkpoint.get('num_stocks'),
             'num_groups': checkpoint.get('num_groups'),
+            'feature_cols': checkpoint.get('feature_cols'),
+            'target_normalization': checkpoint.get('target_normalization'),
+            'normalize_target': checkpoint.get('normalize_target'),
+            'target_threshold': checkpoint.get('target_threshold'),
+            'regime_params': checkpoint.get('regime_params'),
         }
 
         # Get model parameters
@@ -103,6 +106,10 @@ class Predictor:
         # Set feature columns
         if 'feature_cols' in checkpoint:
             self.preparator.set_feature_columns(checkpoint['feature_cols'])
+
+        regime_params = checkpoint.get('regime_params') or checkpoint.get('metadata', {}).get('regime_params')
+        if regime_params:
+            self.preparator.regime_params = regime_params
 
         # Create model based on type
         model_type = self.model_metadata.get('metadata', {}).get('model_type', 'lstm3_attention')

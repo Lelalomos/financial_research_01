@@ -18,6 +18,7 @@ import gc
 
 from src.config import load_config
 from src.utils.logger import get_logger
+from .regime import MarketRegimeDetector
 from .validation import validate_dataset, check_feature_consistency
 
 
@@ -52,6 +53,7 @@ class DataPreprocessor:
 
         # Store normalization parameters for inverse transform
         self.normalization_params = {}
+        self.regime_params = None
 
     def normalize_features(
         self,
@@ -76,7 +78,7 @@ class DataPreprocessor:
 
         if feature_cols is None:
             # Exclude non-feature columns
-            exclude = {'date', 'tic', 'tic_id', 'group', 'group_id', 'target', 'split'}
+            exclude = {'date', 'tic', 'tic_id', 'group', 'group_id', 'target', 'split', '_row_order'}
             feature_cols = [c for c in result.columns if c not in exclude]
 
         # Fill NaN/None/empty values with 0 before normalization
@@ -89,7 +91,7 @@ class DataPreprocessor:
 
         # Handle each feature based on normalization method
         for col in feature_cols:
-            if col in ['day', 'month', 'dayofweek', 'dividend_flag']:
+            if col in ['day', 'month', 'dayofweek', 'dividend_flag', 'regime_id']:
                 # Don't normalize categorical features (they use embeddings)
                 continue
 
@@ -255,6 +257,9 @@ class DataPreprocessor:
         all_dates = sorted(df[date_col].unique())
         n_dates = len(all_dates)
 
+        if n_dates == 0:
+            raise ValueError("Cannot split an empty dataset")
+
         self.logger.info(f"Total unique dates in dataset: {n_dates}")
         self.logger.info(f"Date range: {all_dates[0]} to {all_dates[-1]}")
 
@@ -264,20 +269,26 @@ class DataPreprocessor:
 
         # Get date boundaries for each split
         # Train: oldest dates (first 70%)
-        # Test: middle dates (next 10%) - swapped with val
-        # Val: newest dates (last 20%) - swapped with test
+        # Val: middle dates (next 10%)
+        # Test: newest dates (last 20%)
         train_dates = set(all_dates[:train_end_idx])
-        test_dates = set(all_dates[train_end_idx:val_end_idx])  # Middle -> test
-        val_dates = set(all_dates[val_end_idx:])  # Newest -> val
+        val_dates = set(all_dates[train_end_idx:val_end_idx])
+        test_dates = set(all_dates[val_end_idx:])
 
-        self.logger.info(f"Train dates: {all_dates[0]} to {all_dates[train_end_idx-1]} ({len(train_dates)} dates)")
-        self.logger.info(f"Test dates: {all_dates[train_end_idx]} to {all_dates[val_end_idx-1]} ({len(test_dates)} dates)")
-        self.logger.info(f"Val dates: {all_dates[val_end_idx]} to {all_dates[-1]} ({len(val_dates)} dates)")
+        def _date_range_label(dates: set) -> str:
+            if not dates:
+                return "empty"
+            sorted_dates = sorted(dates)
+            return f"{sorted_dates[0]} to {sorted_dates[-1]}"
+
+        self.logger.info(f"Train dates: {_date_range_label(train_dates)} ({len(train_dates)} dates)")
+        self.logger.info(f"Val dates: {_date_range_label(val_dates)} ({len(val_dates)} dates)")
+        self.logger.info(f"Test dates: {_date_range_label(test_dates)} ({len(test_dates)} dates)")
 
         # Assign split labels based on global date ranges
-        df['split'] = 'val'
+        df['split'] = 'test'
         df.loc[df[date_col].isin(train_dates), 'split'] = 'train'
-        df.loc[df[date_col].isin(test_dates), 'split'] = 'test'
+        df.loc[df[date_col].isin(val_dates), 'split'] = 'val'
 
         # Create splits and ensure each is sorted by tic_id, then date (old to new)
         splits = {
@@ -565,8 +576,9 @@ class DataPreprocessor:
         sequences = {}
 
         for key in memmaps.keys():
-            # Load in read-only mode
-            sequences[key] = np.array(memmaps[key][:])
+            # Only return rows that were actually written. Some candidate
+            # windows are skipped after allocation because of NaN targets/features.
+            sequences[key] = np.array(memmaps[key][:current_idx])
             self.logger.info(f"    Loaded {key}: {sequences[key].shape}")
 
         # Flush and close memmaps
@@ -637,23 +649,65 @@ class DataPreprocessor:
             result.to_parquet(export_pre_normalize, index=False)
             self.logger.info(f"Pre-normalization data exported successfully")
 
-        # 3. Normalize features
-        result = self.normalize_features(result, fit=fit, feature_cols=feature_cols)
+        result['_row_order'] = np.arange(len(result))
 
-        # 3.3. Fill NaN values in target column with 0 (if any remain after feature engineering)
+        # 3. Fill NaN values in target column with 0 (if any remain after feature engineering)
         if 'target' in result.columns:
             target_nan_count = result['target'].isna().sum()
             if target_nan_count > 0:
                 self.logger.info(f"Filling {target_nan_count} NaN values in target column with 0...")
                 result['target'] = result['target'].fillna(0)
 
-        # 3.5. Export normalized data if requested
+        # 4. Time-based split before normalization so scalers are fit on train only.
+        splits = self.time_based_split(result)
+
+        # 4.5. Fit market regime thresholds on train only, then transform all splits.
+        regime_enabled = (
+            hasattr(self.config.data, 'regime')
+            and self.config.data.regime.ENABLED
+            and self.config.data.features.FEATURE_FLAGS.get('market_regime', False)
+        )
+        if regime_enabled:
+            self.logger.info("Adding market regime feature using train-only thresholds...")
+            regime_detector = MarketRegimeDetector.from_config(self.config)
+            splits = regime_detector.fit_transform_splits(splits)
+            self.regime_params = regime_detector.to_metadata()
+            self.logger.info(f"Market regime thresholds: {self.regime_params['thresholds']}")
+        else:
+            self.regime_params = None
+
+        # 5. Normalize each split. Fit on train, transform val/test with train parameters.
+        normalized_splits = {}
+        for split_name, split_df in splits.items():
+            if split_df.empty:
+                normalized_splits[split_name] = split_df
+                continue
+
+            normalized_splits[split_name] = self.normalize_features(
+                split_df,
+                fit=(fit and split_name == 'train'),
+                feature_cols=feature_cols
+            )
+
+        splits = normalized_splits
+        result = pd.concat(
+            [splits[name] for name in ['train', 'val', 'test'] if name in splits],
+            ignore_index=True
+        )
+        if '_row_order' in result.columns:
+            result = result.sort_values('_row_order').drop(columns=['_row_order']).reset_index(drop=True)
+            splits = {
+                name: split_df.drop(columns=['_row_order']) if '_row_order' in split_df.columns else split_df
+                for name, split_df in splits.items()
+            }
+
+        # 5.5. Export normalized data if requested
         if export_normalized is not None:
             self.logger.info(f"Exporting normalized data to {export_normalized}...")
             Path(export_normalized).parent.mkdir(parents=True, exist_ok=True)
 
             # Drop unused columns before export (keep only numeric columns)
-            columns_to_drop = ['date', 'tic', 'group', 'split']
+            columns_to_drop = ['date', 'tic', 'group', 'split', '_row_order']
             export_df = result.drop(columns=[col for col in columns_to_drop if col in result.columns])
 
             # Verify all columns are numeric
@@ -666,13 +720,10 @@ class DataPreprocessor:
             export_df.to_parquet(export_normalized, index=False)
             self.logger.info(f"Normalized data exported successfully")
 
-        # 4. Time-based split
-        splits = self.time_based_split(result)
-
-        # 5. Create sequences for each split
+        # 6. Create sequences for each split
         if feature_cols is None:
             exclude = {'date', 'tic', 'tic_id', 'group', 'group_id', 'target', 'split',
-                      'day', 'month', 'dayofweek', 'dividend_flag'}
+                      'day', 'month', 'dayofweek', 'dividend_flag', '_row_order'}
             feature_cols = [c for c in result.columns if c not in exclude]
 
         sequences = {}
@@ -699,6 +750,7 @@ class DataPreprocessor:
             'num_features': len(feature_cols),
             'sequence_length': self.config.data.sequences.SEQUENCE_LENGTH,
             'prediction_horizon': self.config.data.sequences.PREDICTION_HORIZON,
+            'regime_params': self.regime_params,
         }
 
         self.logger.info("=" * 60)

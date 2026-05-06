@@ -35,6 +35,11 @@
       },
       "USE_MIXED_PRECISION": false
     },
+    "training_backend": {
+      "DEFAULT": "lightning",
+      "FALLBACK": "custom",
+      "ALLOW_CUSTOM_FALLBACK": true
+    },
     "loss": {
       "LOSS_TYPE": "huber",
       "HUBER_DELTA": 1.0
@@ -51,10 +56,26 @@
       "SAVE_LAST_N": 3,
       "CHECKPOINT_FREQUENCY": 1
     },
+    "ensemble": {
+      "ENABLED": false,
+      "CHECKPOINT_PATHS": [],
+      "WEIGHTS": null,
+      "REQUIRE_MATCHING_FEATURES": true,
+      "REQUIRE_MATCHING_TARGET_NORMALIZATION": true
+    },
     "logging": {
       "LOG_FREQUENCY": 10,
       "TENSORBOARD_DIR": "logs/tensorboard",
       "WANDB_PROJECT": null
+    },
+    "experiment_tracking": {
+      "ENABLED": false,
+      "BACKEND": "mlflow",
+      "MLFLOW_TRACKING_URI": "file:./mlruns",
+      "EXPERIMENT_NAME": "crnn-financial-prediction",
+      "LOG_PARAMS": true,
+      "LOG_METRICS": true,
+      "LOG_ARTIFACTS": false
     },
     "validation": {
       "VAL_FREQUENCY": 1,

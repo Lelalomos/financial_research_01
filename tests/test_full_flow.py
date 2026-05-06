@@ -30,6 +30,7 @@ from src.data.preprocessing import DataPreprocessor
 from src.data.dataset import create_data_loaders
 from src.models.lstm3_attn_model import create_model as create_lstm3_attn
 from src.training import Trainer
+from src.training.early_stopping import make_weights_only_safe
 from src.prediction.predictor import create_predictor
 from src.utils.logger import get_logger
 from src.data.sampling import sample_stocks_by_group, get_sampling_stats
@@ -352,7 +353,7 @@ def test_full_pipeline():
 
         # Save model in format expected by predictor
         predictor_checkpoint_path = checkpoint_dir / "model_for_predictor.pt"
-        torch.save({
+        torch.save(make_weights_only_safe({
             'model_state_dict': model.state_dict(),
             'metadata': {
                 'model_type': 'lstm3_attention',
@@ -365,7 +366,7 @@ def test_full_pipeline():
             'num_stocks': num_stocks,
             'num_groups': num_groups,
             'feature_cols': feature_cols,
-        }, predictor_checkpoint_path)
+        }), predictor_checkpoint_path)
 
         logger.info(f"Saved model for predictor: {predictor_checkpoint_path}")
 

@@ -133,18 +133,59 @@ The Fibonacci retracement features include:
         "rsi_features": true,
         "stochrsi_features": true,
         "macd_features": true,
-        "fibonacci_features": true,
+        "fibonacci_features": false,
         "candlestick_patterns": true,
         "vix": true,
         "commodities": true,
         "treasury_yields": true,
         "time_features": true,
-        "financial_metrics": true
+        "financial_metrics": true,
+        "polars_time_features": false,
+        "polars_fibonacci_features": false,
+        "polars_external_merges": false
       }
     }
   }
 }
 ```
+
+`fibonacci_features` is disabled by default. Enable it when you want the
+additional retracement columns included in training features.
+
+The `polars_*` flags are disabled by default. They enable opt-in Polars
+implementations for time features, Fibonacci features, and external data merges
+while preserving pandas DataFrame outputs. See `docs/polars_migration.md`.
+
+### Market Regime Detection
+
+Market regime detection is disabled by default. Enable both the feature flag and
+the regime section:
+
+```json
+{
+  "data": {
+    "features": {
+      "FEATURE_FLAGS": {
+        "market_regime": true
+      }
+    },
+    "regime": {
+      "ENABLED": true,
+      "METHOD": "quantile",
+      "PROXY_COLUMN": "vix",
+      "N_REGIMES": 3,
+      "LOW_QUANTILE": 0.33,
+      "HIGH_QUANTILE": 0.66,
+      "DEFAULT_REGIME": 1
+    }
+  }
+}
+```
+
+`PROXY_COLUMN` must exist before preprocessing, usually from external data such
+as `vix`. Thresholds are fit on the training split only and then reused for
+validation/test. The resulting `regime_id` feature is included in model feature
+columns when enabled.
 
 ## Model Configuration (`config/model.json`)
 
@@ -248,12 +289,56 @@ config.model.training.NUM_EPOCHS = 200
 config.model.training.EARLY_STOPPING_PATIENCE = 15
 ```
 
+### Training Backend
+
+Lightning is the default training backend, and the custom trainer remains the
+backup path:
+
+```json
+{
+  "model": {
+    "training_backend": {
+      "DEFAULT": "lightning",
+      "FALLBACK": "custom",
+      "ALLOW_CUSTOM_FALLBACK": true
+    }
+  }
+}
+```
+
+Use `python scripts/train.py --backend custom` to force the custom trainer.
+See `docs/lightning_backend.md` for compatibility and checkpoint details.
+
 ### Loss Function
 
 ```python
 config.model.loss.LOSS_TYPE = "huber"  # 'huber', 'mse', 'mae', 'smooth_l1'
 config.model.loss.HUBER_DELTA = 0.1
 ```
+
+### Local MLflow Experiment Tracking
+
+Experiment tracking is disabled by default. Enable local MLflow in
+`config/model.json` only when you want local run tracking:
+
+```json
+{
+  "model": {
+    "experiment_tracking": {
+      "ENABLED": true,
+      "BACKEND": "mlflow",
+      "MLFLOW_TRACKING_URI": "file:./mlruns",
+      "EXPERIMENT_NAME": "crnn-financial-prediction",
+      "LOG_PARAMS": true,
+      "LOG_METRICS": true,
+      "LOG_ARTIFACTS": false
+    }
+  }
+}
+```
+
+This local MLflow mode does not require an API key. See
+`docs/experiment_tracking.md` for install, training, and local UI commands.
 
 ## Hyperparameter Configuration (`config/hyperparameter.json`)
 

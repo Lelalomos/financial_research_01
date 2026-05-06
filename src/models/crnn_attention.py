@@ -105,6 +105,23 @@ class EmbeddingLayer(nn.Module):
         for module in self.modules():
             init_embeddings_uniform(module, low=-0.1, high=0.1)
 
+    @staticmethod
+    def _prepare_embedding_input(
+        tensor: torch.Tensor,
+        name: str,
+        max_value: int
+    ) -> torch.Tensor:
+        """Normalize categorical tensors before embedding lookup."""
+        if tensor.dim() == 3 and tensor.shape[-1] == 1:
+            tensor = tensor.squeeze(-1)
+        if tensor.dim() != 2:
+            raise ValueError(f"{name} must have shape (batch, seq_len), got {tuple(tensor.shape)}")
+
+        tensor = tensor.long()
+        if torch.any((tensor < 0) | (tensor > max_value)):
+            raise ValueError(f"{name} values must be between 0 and {max_value}")
+        return tensor
+
     def forward(
         self,
         stock_id: torch.Tensor,
@@ -126,6 +143,16 @@ class EmbeddingLayer(nn.Module):
         Returns:
             embeddings: (batch, seq_len, total_embedding_dim)
         """
+        stock_id = self._prepare_embedding_input(stock_id, "stock_id", self.stock_embedding.num_embeddings - 1)
+        group_id = self._prepare_embedding_input(group_id, "group_id", self.group_embedding.num_embeddings - 1)
+        day = self._prepare_embedding_input(day, "day", self.day_embedding.num_embeddings - 1)
+        month = self._prepare_embedding_input(month, "month", self.month_embedding.num_embeddings - 1)
+        dividend_flag = self._prepare_embedding_input(
+            dividend_flag,
+            "dividend_flag",
+            self.dividend_flag_embedding.num_embeddings - 1
+        )
+
         stock_emb = self.stock_embedding(stock_id)
         group_emb = self.group_embedding(group_id)
         day_emb = self.day_embedding(day)
@@ -513,6 +540,39 @@ class CRNNAttentionModel(nn.Module):
         output = self.fc(x)
 
         return output
+
+    def forward_with_attention(
+        self,
+        features: torch.Tensor,
+        stock_id: torch.Tensor,
+        group_id: torch.Tensor,
+        day: torch.Tensor,
+        month: torch.Tensor,
+        dividend_flag: torch.Tensor
+    ):
+        """
+        Forward pass that also returns per-head attention weights.
+
+        Returns:
+            Tuple of (output, attention_weights). Attention weights have shape
+            (batch, num_heads, reduced_seq_len, reduced_seq_len) because the CNN
+            block may reduce sequence length.
+        """
+        emb = self.embeddings(stock_id, group_id, day, month, dividend_flag)
+        x = torch.cat([emb, features], dim=-1)
+        x = self.cnn(x)
+        x = self.lstm(x)
+        x, attention_weights = self.attention(
+            x,
+            x,
+            x,
+            need_weights=True,
+            average_attn_weights=False
+        )
+        x = x.mean(dim=1)
+        x = self.fc_dropout(x)
+        output = self.fc(x)
+        return output, attention_weights
 
     def get_num_parameters(self) -> int:
         """Get total number of parameters."""

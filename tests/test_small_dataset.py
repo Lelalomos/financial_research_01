@@ -350,7 +350,7 @@ def test_load_trained_model_checkpoint(small_dataset, tmp_path):
         config=model_config_copy
     )
 
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model_loaded.load_state_dict(checkpoint['model_state_dict'])
     model_loaded = model_loaded.to(device)
     model_loaded.eval()

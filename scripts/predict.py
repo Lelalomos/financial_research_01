@@ -19,12 +19,35 @@ from typing import Dict, Any
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
-from src.config import load_config
+from src.prediction.ensemble import create_ensemble_predictor_from_config
 from src.prediction.predictor import create_predictor
 from src.utils.logger import get_logger
 
 
 logger = get_logger("predict", log_dir="logs")
+
+
+def create_configured_predictor(args):
+    """Create a single-model or ensemble predictor from CLI args and config."""
+    model_config = load_config('model')
+    ensemble_config = model_config.model.ensemble
+
+    if ensemble_config.ENABLED:
+        return create_ensemble_predictor_from_config(
+            model_config=model_config,
+            preprocessor_path=args.preprocessor,
+            device=args.device,
+        )
+
+    if not args.model:
+        raise ValueError("--model is required when model.ensemble.ENABLED is false")
+
+    return create_predictor(
+        model_path=args.model,
+        model_config=model_config,
+        preprocessor_path=args.preprocessor,
+        device=args.device,
+    )
 
 
 def parse_single_input(input_str: str) -> Dict[str, float]:
@@ -63,11 +86,7 @@ def predict_single_row(args):
     logger.info("=" * 60)
 
     # Create predictor
-    predictor = create_predictor(
-        model_path=args.model,
-        preprocessor_path=args.preprocessor,
-        device=args.device
-    )
+    predictor = create_configured_predictor(args)
 
     # Parse input data
     data = parse_single_input(args.input)
@@ -120,11 +139,7 @@ def predict_batch_file(args):
     logger.info("=" * 60)
 
     # Create predictor
-    predictor = create_predictor(
-        model_path=args.model,
-        preprocessor_path=args.preprocessor,
-        device=args.device
-    )
+    predictor = create_configured_predictor(args)
 
     # Make predictions
     result_df = predictor.predict_from_file(
@@ -167,11 +182,7 @@ def predict_interactive(args):
     logger.info("=" * 60)
 
     # Create predictor
-    predictor = create_predictor(
-        model_path=args.model,
-        preprocessor_path=args.preprocessor,
-        device=args.device
-    )
+    predictor = create_configured_predictor(args)
 
     print("\nPredictor initialized. Enter 'quit' to exit.")
     print("\nRequired fields for each prediction:")
@@ -243,11 +254,7 @@ def show_model_info(args):
     logger.info("MODEL INFORMATION")
     logger.info("=" * 60)
 
-    predictor = create_predictor(
-        model_path=args.model,
-        preprocessor_path=args.preprocessor,
-        device=args.device
-    )
+    predictor = create_configured_predictor(args)
 
     info = predictor.get_model_info()
 
@@ -315,8 +322,8 @@ Examples:
     parser.add_argument(
         '--model',
         type=str,
-        required=True,
-        help='Path to trained model checkpoint'
+        default=None,
+        help='Path to trained model checkpoint. Optional when model.ensemble.ENABLED is true.'
     )
 
     parser.add_argument(

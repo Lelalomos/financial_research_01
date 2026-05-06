@@ -13,6 +13,7 @@ from .config_loader import (
     get_validate_config,
     get_hyperparameter_config,
 )
+from .schemas import validate_config_data
 
 __all__ = [
     'Config',
@@ -24,4 +25,5 @@ __all__ = [
     'get_deploy_config',
     'get_validate_config',
     'get_hyperparameter_config',
+    'validate_config_data',
 ]

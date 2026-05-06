@@ -47,6 +47,9 @@ data = downloader.load_saved_data()
 
 ### Fibonacci Retracement Features
 
+Fibonacci features are implemented but disabled by default in `config/main.json`.
+Set `data.features.FEATURE_FLAGS.fibonacci_features` to `true` to include them.
+
 - **Swing High/Low**: Rolling maximum/minimum over configurable window (default: 30 days)
 - **Retracement Levels**:
   - `fib_38`: 38.2% retracement level (swing_high - 0.382 * range)
@@ -73,6 +76,42 @@ All 100+ TA-Lib patterns are included:
 - Month (1-12)
 - Day of week (0-6)
 
+### Optional Polars Feature Engineering
+
+Polars implementations are available for selected feature engineering paths but
+are disabled by default:
+
+- `data.features.FEATURE_FLAGS.polars_time_features`
+- `data.features.FEATURE_FLAGS.polars_fibonacci_features`
+- `data.features.FEATURE_FLAGS.polars_external_merges`
+
+The pipeline still returns pandas DataFrames for downstream compatibility.
+TA-Lib technical indicators, stockstats integration, financial metrics loading,
+sklearn preprocessing, prediction APIs, and reports remain pandas-based.
+
+See `docs/polars_migration.md` for enablement, profiling, and parity testing.
+
+### Market Regime Feature
+
+Market regime detection is implemented but disabled by default in
+`config/main.json`. Set both `data.regime.ENABLED` and
+`data.features.FEATURE_FLAGS.market_regime` to `true` to include `regime_id`.
+
+The current implementation is quantile-based and dependency-light. During
+preprocessing, thresholds are fit on the training split only using the
+configured proxy column, then reused for validation and test rows. This avoids
+future-data leakage from validation/test market conditions.
+
+Default settings use `vix` as the proxy and produce three regimes:
+
+- `0`: lower proxy values
+- `1`: middle proxy values
+- `2`: higher proxy values
+
+`regime_id` is included as a regular sequence feature when enabled. It is not
+normalized, and the fitted regime parameters are written to preprocessing info
+for later inference/checkpoint use.
+
 ### Target Calculation
 
 ```
@@ -85,7 +124,11 @@ Where H is the prediction horizon (default 5 days).
 
 ### Normalization
 
-All features are normalized using log transform:
+Features are split first, then normalization parameters are fit on the
+training split only and reused for validation/test. This avoids future-data
+leakage.
+
+The default normalization uses log transform:
 
 ```python
 normalized = log1p(x - min(x) + offset)
@@ -93,13 +136,13 @@ normalized = log1p(x - min(x) + offset)
 
 ### Time-Based Split
 
-Each stock is split independently by date:
+Splits use global date ranges shared by all stocks:
 
 - **Train**: First 70% of dates
 - **Val**: Next 10% of dates
 - **Test**: Last 20% of dates
 
-This ensures no temporal leakage.
+This avoids overlap between validation/test dates and training dates.
 
 ### Sequence Creation
 

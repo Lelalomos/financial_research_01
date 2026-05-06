@@ -19,6 +19,11 @@ from pathlib import Path
 import json
 
 from src.config import load_config
+from src.data.feature_engineering_polars import (
+    add_fibonacci_features_polars,
+    add_time_features_polars,
+    merge_external_data_polars,
+)
 from src.utils.logger import get_logger
 from src.data.financial_metrics_loader import FinancialMetricsLoader
 
@@ -215,6 +220,11 @@ class FeatureEngineer:
 
         result = df.copy()
         window = self.config.data.fibonacci.FIBONACCI_WINDOW
+        if self.config.data.features.FEATURE_FLAGS.get('polars_fibonacci_features', False):
+            self.logger.info("Using opt-in Polars implementation for Fibonacci features")
+            result = add_fibonacci_features_polars(result, window=window)
+            self.logger.info(f"Added Fibonacci features. Shape: {result.shape}")
+            return result
 
         # Group by ticker and calculate Fibonacci levels for each stock
         for ticker in result['tic'].unique():
@@ -323,6 +333,12 @@ class FeatureEngineer:
 
         self.logger.info("Adding time features...")
 
+        if self.config.data.features.FEATURE_FLAGS.get('polars_time_features', False):
+            self.logger.info("Using opt-in Polars implementation for time features")
+            result = add_time_features_polars(df)
+            self.logger.info(f"Added time features. Shape: {result.shape}")
+            return result
+
         result = df.copy()
         result['date'] = pd.to_datetime(result['date'])
 
@@ -413,6 +429,23 @@ class FeatureEngineer:
             Merged DataFrame
         """
         self.logger.info("Merging external data...")
+
+        if self.config.data.features.FEATURE_FLAGS.get('polars_external_merges', False):
+            self.logger.info("Using opt-in Polars implementation for external data merges")
+            commodity_cols = list(self.config.data.sources.COMMODITIES.values())
+            result = merge_external_data_polars(
+                stock_df=stock_df,
+                vix_df=vix_df,
+                commodities_df=commodities_df,
+                treasury_df=treasury_df,
+                include_vix=self.config.data.features.FEATURE_FLAGS.get('vix', False),
+                commodity_columns=(
+                    commodity_cols if self.config.data.features.FEATURE_FLAGS.get('commodities', False) else None
+                ),
+                include_treasury=self.config.data.features.FEATURE_FLAGS.get('treasury_yields', False),
+            )
+            self.logger.info("Merged external data")
+            return result
 
         result = stock_df.copy()
 
@@ -628,6 +661,7 @@ class FeatureEngineer:
                                        'debt_to_equity', 'debt_to_asset', 'current_ratio']
         fibonacci_features = ['swing_high', 'swing_low', 'fib_range', 'fib_38', 'fib_50',
                                'fib_61', 'dist_fib_38', 'dist_fib_50', 'dist_fib_61', 'break_fib_61']
+        regime_features = ['regime_id']
 
         info = {
             'total_features': len(feature_cols),
@@ -640,6 +674,7 @@ class FeatureEngineer:
             'time_features': len([f for f in time_features if f in feature_cols]),
             'financial_metrics': len([f for f in financial_metrics_features if f in feature_cols]),
             'fibonacci_features': len([f for f in fibonacci_features if f in feature_cols]),
+            'regime_features': len([f for f in regime_features if f in feature_cols]),
             'feature_list': feature_cols
         }
 
