@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Build command
-CMD="python scripts/backtest.py --model $MODEL_PATH --output $OUTPUT_PATH"
+CMD="python scripts/backtest.py --model latest --output $OUTPUT_PATH"
 
 echo "=========================================="
 echo "BACKTESTING MODEL"

@@ -34,6 +34,7 @@ setup(
         "tqdm>=4.65.0",
         "tensorboard>=2.13.0",
         "lightning>=2.2.0",
+        "mlflow>=2.14.0",
         "openpyxl>=3.1.2",
         "pydantic>=2.0.0",
     ],

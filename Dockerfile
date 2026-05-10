@@ -33,7 +33,8 @@ WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir uv \
+    && uv pip install --system --no-cache --index-strategy unsafe-best-match -r requirements.txt
 
 # Copy application code and change ownership
 COPY --chown=appuser:appuser . .

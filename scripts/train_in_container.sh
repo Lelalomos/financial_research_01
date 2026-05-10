@@ -1,28 +1,27 @@
 #!/bin/bash
-# Train model script
-# Usage: ./scripts/train.sh [options]
+# Train model from inside the runtime container
+# Usage: ./scripts/train_in_container.sh [options]
 #
 # Options:
 #   --model-type TYPE     Model type: crnn, rnn, rnn_attention, crnn_attention, transformer (default: crnn_attention)
-#   --epochs N            Number of epochs (default: 100)
-#   --batch-size N        Batch size (default: 256)
-#   --learning-rate RATE  Learning rate (default: 1e-4)
+#   --epochs N            Number of epochs (default: 5)
+#   --batch-size N        Batch size (default: 64)
+#   --learning-rate RATE  Learning rate (default: 1e-5)
 #   --backend TYPE        Training backend: lightning or custom (default: lightning)
 #   --device DEV          Device to use: cuda or cpu (default: auto-detect)
 #   --force-cpu           Force CPU usage even if GPU is available
 #   --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT GOOGL)
 #   --fine-tune PATH      Path to checkpoint to fine-tune from
 #   --freeze-embeddings   Freeze stock/group embeddings during fine-tuning
-#   --monitor             Start TensorBoard on the host
-#   --mlflow              Start MLflow UI on the host
-#   --monitor-all         Start both TensorBoard and MLflow UI on the host
+#   --monitor             Start TensorBoard inside the container
+#   --mlflow              Start MLflow UI inside the container
+#   --monitor-all         Start both TensorBoard and MLflow UI inside the container
 #   --tensorboard-port N  TensorBoard port (default: 6006)
 #   --mlflow-port N       MLflow UI port (default: 5000)
 #   --help                Show this help message
 
 set -e
 
-# Default values
 MODEL_TYPE="bilstm4_attention"
 EPOCHS=30
 BATCH_SIZE=32
@@ -33,12 +32,13 @@ FINE_TUNE=""
 FREEZE_EMBEDDINGS=""
 DEVICE=""
 FORCE_CPU=""
-START_TENSORBOARD=0
-START_MLFLOW=0
+START_TENSORBOARD=1
+START_MLFLOW=1
 TENSORBOARD_PORT=6006
 MLFLOW_PORT=5000
 
-# Parse arguments
+export PATH="$HOME/.local/bin:$PATH"
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --model-type)
@@ -108,18 +108,18 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --model-type TYPE     Model type (default: crnn_attention)"
-            echo "  --epochs N            Number of epochs (default: 100)"
-            echo "  --batch-size N        Batch size (default: 256)"
-            echo "  --learning-rate RATE  Learning rate (default: 1e-4)"
+            echo "  --epochs N            Number of epochs (default: 5)"
+            echo "  --batch-size N        Batch size (default: 64)"
+            echo "  --learning-rate RATE  Learning rate (default: 1e-5)"
             echo "  --backend TYPE        Training backend: lightning or custom (default: lightning)"
             echo "  --device DEV          Device to use: cuda or cpu (default: auto-detect)"
             echo "  --force-cpu           Force CPU usage even if GPU is available"
             echo "  --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT)"
             echo "  --fine-tune PATH      Path to checkpoint to fine-tune from"
             echo "  --freeze-embeddings   Freeze stock/group embeddings during fine-tuning"
-            echo "  --monitor             Start TensorBoard on the host"
-            echo "  --mlflow              Start MLflow UI on the host"
-            echo "  --monitor-all         Start both TensorBoard and MLflow UI on the host"
+            echo "  --monitor             Start TensorBoard inside the container"
+            echo "  --mlflow              Start MLflow UI inside the container"
+            echo "  --monitor-all         Start both TensorBoard and MLflow UI inside the container"
             echo "  --tensorboard-port N  TensorBoard port (default: 6006)"
             echo "  --mlflow-port N       MLflow UI port (default: 5000)"
             echo "  --help                Show this help message"
@@ -133,42 +133,81 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
 start_tensorboard() {
     if ! command -v tensorboard >/dev/null 2>&1; then
-        echo "TensorBoard not found on host. Install it first to use --monitor."
+        echo "TensorBoard is not installed inside the container."
         return
     fi
 
-    if pgrep -f "tensorboard.*--logdir[= ]$REPO_ROOT/logs/tensorboard.*--port[= ]$TENSORBOARD_PORT" >/dev/null 2>&1; then
+    if is_local_port_open "$TENSORBOARD_PORT"; then
         echo "TensorBoard is already running on port $TENSORBOARD_PORT"
         return
     fi
 
-    nohup tensorboard --logdir "$REPO_ROOT/logs/tensorboard" --host 127.0.0.1 --port "$TENSORBOARD_PORT" >/tmp/research_02_tensorboard.log 2>&1 &
+    nohup tensorboard --logdir logs/tensorboard --host 0.0.0.0 --port "$TENSORBOARD_PORT" >/tmp/research_02_tensorboard_in_container.log 2>&1 &
     echo "TensorBoard started: http://127.0.0.1:$TENSORBOARD_PORT"
 }
 
 start_mlflow_ui() {
-    if ! command -v mlflow >/dev/null 2>&1; then
-        echo "MLflow CLI not found on host. Install it first to use --mlflow."
-        return
+    ensure_mlflow_installed
+
+    if python - <<'PY' >/dev/null 2>&1
+import json
+with open("config/model.json", "r") as f:
+    data = json.load(f)
+enabled = data.get("model", {}).get("experiment_tracking", {}).get("ENABLED", False)
+raise SystemExit(0 if enabled else 1)
+PY
+    then
+        :
+    else
+        echo "Warning: MLflow UI is starting, but model.experiment_tracking.ENABLED is false in config/model.json."
     fi
 
-    if pgrep -f "mlflow ui.*--backend-store-uri[= ]$REPO_ROOT/mlruns.*--port[= ]$MLFLOW_PORT" >/dev/null 2>&1; then
+    if is_local_port_open "$MLFLOW_PORT"; then
         echo "MLflow UI is already running on port $MLFLOW_PORT"
         return
     fi
 
-    nohup mlflow ui --backend-store-uri "$REPO_ROOT/mlruns" --host 127.0.0.1 --port "$MLFLOW_PORT" >/tmp/research_02_mlflow.log 2>&1 &
+    nohup mlflow ui --backend-store-uri file:/app/mlruns --host 0.0.0.0 --port "$MLFLOW_PORT" >/tmp/research_02_mlflow_in_container.log 2>&1 &
     echo "MLflow UI started: http://127.0.0.1:$MLFLOW_PORT"
 }
 
-# Build command
-CMD="docker exec crnn_predictor python scripts/train.py --model-type $MODEL_TYPE --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+ensure_mlflow_installed() {
+    if command -v mlflow >/dev/null 2>&1; then
+        return
+    fi
 
-# Add device if specified
+    echo "MLflow CLI not found. Installing mlflow for the current container user..."
+    python -m pip install --user mlflow >/tmp/research_02_mlflow_install.log 2>&1
+
+    if ! command -v mlflow >/dev/null 2>&1; then
+        echo "MLflow installation failed. See /tmp/research_02_mlflow_install.log"
+        exit 1
+    fi
+}
+
+is_local_port_open() {
+    python - "$1" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(0.5)
+try:
+    sock.connect(("127.0.0.1", port))
+except OSError:
+    raise SystemExit(1)
+else:
+    raise SystemExit(0)
+finally:
+    sock.close()
+PY
+}
+
+CMD="python scripts/train.py --model-type $MODEL_TYPE --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+
 if [ -n "$DEVICE" ]; then
     CMD="$CMD --device $DEVICE"
 fi
@@ -186,7 +225,7 @@ if [ -n "$FREEZE_EMBEDDINGS" ]; then
 fi
 
 echo "=========================================="
-echo "TRAINING MODEL"
+echo "TRAINING MODEL (IN CONTAINER)"
 echo "=========================================="
 echo "Model type: $MODEL_TYPE"
 echo "Epochs: $EPOCHS"
@@ -226,7 +265,6 @@ if [ "$START_MLFLOW" -eq 1 ]; then
     start_mlflow_ui
 fi
 
-# Run the command
 eval $CMD
 
 echo ""

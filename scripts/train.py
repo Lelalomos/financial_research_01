@@ -228,6 +228,14 @@ def main():
     config.model.checkpointing.CHECKPOINT_DIR = args.checkpoint_dir
     backend = args.backend or config.model.training_backend.DEFAULT
 
+    logger.info(
+        "Effective training config: "
+        f"epochs={config.model.training.NUM_EPOCHS}, "
+        f"batch_size={config.model.training.BATCH_SIZE}, "
+        f"lr={config.model.training.LEARNING_RATE}, "
+        f"backend={backend}"
+    )
+
     # Load config override if provided
     if args.config:
         with open(args.config, 'r') as f:

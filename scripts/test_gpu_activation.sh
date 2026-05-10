@@ -6,7 +6,7 @@
 
 set -e
 
-CONTAINER_ID="d633c5977c4f"
+CONTAINER_ID="9987284b5cef"
 CONTAINER_NAME="crnn_predictor"
 
 echo "=========================================="

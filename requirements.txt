@@ -26,6 +26,7 @@ optuna>=3.0.0
 tqdm>=4.65.0
 tensorboard>=2.13.0
 lightning>=2.2.0
+mlflow>=2.14.0
 
 # Visualization (optional)
 matplotlib>=3.7.0

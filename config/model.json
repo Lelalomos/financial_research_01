@@ -69,13 +69,13 @@
       "WANDB_PROJECT": null
     },
     "experiment_tracking": {
-      "ENABLED": false,
+      "ENABLED": true,
       "BACKEND": "mlflow",
       "MLFLOW_TRACKING_URI": "file:./mlruns",
       "EXPERIMENT_NAME": "multi-model-financial-forecasting",
       "LOG_PARAMS": true,
       "LOG_METRICS": true,
-      "LOG_ARTIFACTS": false
+      "LOG_ARTIFACTS": true
     },
     "validation": {
       "VAL_FREQUENCY": 1,

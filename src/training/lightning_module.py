@@ -13,6 +13,7 @@ import torch
 
 from .common import create_loss_function
 from .early_stopping import make_weights_only_safe
+from .experiment_tracking import create_experiment_tracker, training_params
 
 
 class LightningDependencyError(ImportError):
@@ -216,6 +217,57 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         self.best_path = str(path)
 
 
+class ExperimentTrackingCallback(_LIGHTNING_CALLBACK_BASE):
+    """Log Lightning training metrics through the existing experiment tracker."""
+
+    def __init__(self, config, model_type: str):
+        if not _LIGHTNING_AVAILABLE:
+            _require_lightning()
+        self.config = config
+        self.model_type = model_type
+        self.tracker = create_experiment_tracker(config)
+        self.run_active = False
+
+    def on_fit_start(self, trainer, pl_module):
+        self.tracker.start_run(run_name=self.model_type)
+        self.tracker.log_params(training_params(self.config, self.model_type))
+        self.run_active = True
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        metrics = self._extract_metrics(trainer, prefix="train/")
+        if metrics:
+            self.tracker.log_metrics(metrics, step=trainer.current_epoch + 1)
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        if getattr(trainer, "sanity_checking", False):
+            return
+        metrics = self._extract_metrics(trainer, prefix="val/")
+        if metrics:
+            self.tracker.log_metrics(metrics, step=trainer.current_epoch + 1)
+
+    def on_fit_end(self, trainer, pl_module):
+        self._end_run(status="FINISHED")
+
+    def on_exception(self, trainer, pl_module, exception):
+        self._end_run(status="FAILED")
+
+    def _extract_metrics(self, trainer, prefix: str) -> Dict[str, float]:
+        metrics = {}
+        for key, value in trainer.callback_metrics.items():
+            if not str(key).startswith(prefix):
+                continue
+            metric_value = _metric_to_float(value)
+            if metric_value is not None:
+                metrics[str(key)] = metric_value
+        return metrics
+
+    def _end_run(self, status: str) -> None:
+        if not self.run_active:
+            return
+        self.tracker.end_run(status=status)
+        self.run_active = False
+
+
 def _metric_to_float(value):
     if value is None:
         return None
@@ -228,18 +280,43 @@ def _metric_to_float(value):
     return None
 
 
+def _create_tensorboard_logger(config):
+    """Create a TensorBoard logger when a log directory is configured."""
+    log_dir = getattr(config.model.logging, "TENSORBOARD_DIR", None)
+    if not log_dir:
+        return False
+
+    L = _require_lightning()
+    log_path = Path(log_dir)
+
+    if hasattr(L, "pytorch"):
+        logger_cls = L.pytorch.loggers.TensorBoardLogger
+    else:
+        logger_cls = L.loggers.TensorBoardLogger
+
+    return logger_cls(
+        save_dir=str(log_path.parent),
+        name=log_path.name,
+        default_hp_metric=False,
+    )
+
+
 def create_lightning_trainer(config, device: str, callbacks: Optional[list] = None):
     """Create a Lightning trainer from existing config."""
     L = _require_lightning()
     accelerator = "gpu" if str(device).startswith("cuda") and torch.cuda.is_available() else "cpu"
     precision = "16-mixed" if config.model.training.USE_MIXED_PRECISION and accelerator == "gpu" else "32-true"
+    gradient_clip_value = config.model.training.GRADIENT_CLIP_VALUE
     return L.Trainer(
         max_epochs=config.model.training.NUM_EPOCHS,
         accelerator=accelerator,
         devices=1,
         precision=precision,
+        gradient_clip_val=gradient_clip_value if gradient_clip_value > 0 else None,
+        num_sanity_val_steps=0,
+        log_every_n_steps=max(1, int(config.model.logging.LOG_FREQUENCY)),
         callbacks=callbacks or [],
-        logger=False,
+        logger=_create_tensorboard_logger(config),
         enable_checkpointing=False,
         enable_model_summary=False,
     )
@@ -263,11 +340,15 @@ def train_with_lightning(
         checkpoint_metadata=checkpoint_metadata,
         save_best_only=config.model.checkpointing.SAVE_BEST_ONLY,
     )
+    experiment_callback = ExperimentTrackingCallback(
+        config=config,
+        model_type=model_type,
+    )
     lightning_module = FinancialLightningModule(model=model, config=config, model_type=model_type)
     trainer = create_lightning_trainer(
         config=config,
         device=device,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, experiment_callback],
     )
     trainer.fit(lightning_module, train_loader, val_loader)
     return {

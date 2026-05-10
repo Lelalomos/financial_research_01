@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: financial-prediction-06:latest
+    image: research01-test:latest
     container_name: crnn_predictor
 
     # Volume mounts
@@ -21,6 +21,10 @@ services:
       - ./config:/app/config
       - ./reports:/app/reports
       - ./tests:/app/tests
+
+    ports:
+      - "6006:6006"
+      - "5000:5000"
 
     # Environment variables
     environment:

@@ -17,6 +17,14 @@ class Config:
     def __init__(self, data: Dict[str, Any]):
         self._data = data
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_data":
+            object.__setattr__(self, name, value)
+            return
+        if isinstance(value, Config):
+            value = value.to_dict()
+        self._data[name] = value
+
     def __getattr__(self, name: str) -> Any:
         if name in self._data:
             value = self._data[name]
