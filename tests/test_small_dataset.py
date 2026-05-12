@@ -616,7 +616,9 @@ def test_excel_report_backtest(small_dataset, tmp_path):
     # Verify Trades sheet has required columns
     trades_df = pd.read_excel(report_path, sheet_name='Trades')
     required_trade_columns = ['Ticker', 'Sector', 'Real Target', 'Predict Target',
-                              'Distance', 'Direction Score', 'Return (%)', 'Portfolio Value',
+                              'Distance', 'Direction Score', 'Turnover',
+                              'Transaction Cost (%)', 'Gross Return (%)',
+                              'Return (%)', 'Portfolio Value',
                               'Std Real', 'Std Predict']
     for col in required_trade_columns:
         assert col in trades_df.columns, f"Missing column in Trades: {col}"
@@ -626,6 +628,13 @@ def test_excel_report_backtest(small_dataset, tmp_path):
     assert 'sector_stats' in results, "No sector_stats in backtest results"
     assert len(results['sector_stats']) > 0, "Empty sector_stats in results"
     print(f"  Backtest has sector stats for {len(results['sector_stats'])} sectors")
+
+    # Verify new turnover / cost metrics exist
+    for key in ['average_turnover', 'total_turnover', 'commission_rate',
+                'total_transaction_cost_pct', 'total_transaction_cost_value',
+                'risk_adjusted_return', 'turnover', 'transaction_costs', 'gross_returns']:
+        assert key in results, f"Missing backtest metric: {key}"
+    print("  Backtest includes turnover, transaction cost, and risk-adjusted metrics")
 
     print("\nBacktest Excel report test PASSED")
 

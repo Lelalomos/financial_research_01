@@ -488,8 +488,8 @@ class CRNNAttentionModel(nn.Module):
 
         # Apply weight initialization to all layers
         self.apply(init_weights_xavier_uniform)
-        # Ensure final FC layer has smaller initialization for stable output
-        nn.init.xavier_uniform_(self.fc.weight, gain=0.01)
+        # Keep output variance large enough to avoid near-constant predictions.
+        nn.init.xavier_uniform_(self.fc.weight, gain=1.0)
         nn.init.zeros_(self.fc.bias)
 
     def forward(

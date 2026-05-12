@@ -30,9 +30,8 @@ def parse_args():
     parser.add_argument(
         '--model-type',
         type=str,
-        choices=['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention'],
-        default='crnn_attention',
-        help='Model type'
+        default=None,
+        help='Model type. Defaults to config.model.selection.DEFAULT_MODEL_TYPE.'
     )
 
     parser.add_argument(
@@ -216,6 +215,13 @@ def main():
 
     # Load config
     config = load_config('model')
+    model_type = args.model_type or config.get_default_model_type()
+    available_model_types = config.get_available_model_types()
+    if model_type not in available_model_types:
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Available models: {available_model_types}"
+        )
 
     # Override config from arguments
     if args.epochs:
@@ -230,6 +236,7 @@ def main():
 
     logger.info(
         "Effective training config: "
+        f"model_type={model_type}, "
         f"epochs={config.model.training.NUM_EPOCHS}, "
         f"batch_size={config.model.training.BATCH_SIZE}, "
         f"lr={config.model.training.LEARNING_RATE}, "
@@ -314,14 +321,14 @@ def main():
 
     num_features = train_dataset.num_features
 
-    logger.info(f"Creating {args.model_type} model...")
+    logger.info(f"Creating {model_type} model...")
     logger.info(f"  Num features: {num_features}")
     logger.info(f"  Num stocks: {embedding_sizes['num_stocks']}")
     logger.info(f"  Num groups: {embedding_sizes['num_groups']}")
 
     # Create model
     model = create_model(
-        model_type=args.model_type,
+        model_type=model_type,
         num_features=num_features,
         num_stocks=embedding_sizes['num_stocks'],
         num_groups=embedding_sizes['num_groups'],
@@ -332,6 +339,8 @@ def main():
     checkpoint_metadata = {
         'feature_cols': preprocessing_info.get('feature_cols'),
         'num_features': preprocessing_info.get('num_features'),
+        'num_stocks': embedding_sizes['num_stocks'],
+        'num_groups': embedding_sizes['num_groups'],
         'target_normalization': {
             'NORMALIZE_TARGET': preprocessing_info.get(
                 'normalize_target',
@@ -357,7 +366,7 @@ def main():
                 model,
                 config,
                 device=str(device),
-                model_type=args.model_type,
+                model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata
             )
             trainer.load_checkpoint(args.fine_tune)
@@ -381,7 +390,7 @@ def main():
                 model,
                 config,
                 device=str(device),
-                model_type=args.model_type,
+                model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata
             )
             trainer.load_checkpoint(args.resume)
@@ -407,7 +416,7 @@ def main():
                 train_loader=loaders['train'],
                 val_loader=loaders.get('val'),
                 device=str(device),
-                model_type=args.model_type,
+                model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata,
             )
         else:
@@ -415,7 +424,7 @@ def main():
                 model,
                 config,
                 device=str(device),
-                model_type=args.model_type,
+                model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata
             )
             trainer.train(
@@ -433,7 +442,7 @@ def main():
             model,
             config,
             device=str(device),
-            model_type=args.model_type,
+            model_type=model_type,
             checkpoint_metadata=checkpoint_metadata
         )
         trainer.train(
@@ -463,7 +472,7 @@ def main():
                 model,
                 config,
                 device=str(device),
-                model_type=args.model_type,
+                model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata
             )
         trainer.save_model(str(final_path))

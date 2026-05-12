@@ -12,7 +12,7 @@
       "LEARNING_RATE": 0.0001,
       "WEIGHT_DECAY": 0.00001,
       "BATCH_SIZE": 128,
-      "NUM_EPOCHS": 5,
+      "NUM_EPOCHS": 30,
       "EARLY_STOPPING_PATIENCE": 15,
       "GRADIENT_CLIP_VALUE": 1.0,
       "ACCUMULATION_STEPS": 1,
@@ -40,9 +40,13 @@
       "FALLBACK": "custom",
       "ALLOW_CUSTOM_FALLBACK": true
     },
+    "selection": {
+      "DEFAULT_MODEL_TYPE": "bilstm4_attention"
+    },
     "loss": {
-      "LOSS_TYPE": "huber",
-      "HUBER_DELTA": 1.0
+      "LOSS_TYPE": "directional_mse",
+      "HUBER_DELTA": 1.0,
+      "DIRECTIONAL_ALPHA": 0.1
     },
     "device": {
       "DEVICE": "cuda",

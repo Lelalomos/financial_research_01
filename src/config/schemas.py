@@ -52,6 +52,11 @@ class FeatureConfig(StrictBaseModel):
     FEATURE_FLAGS: Dict[str, bool]
 
 
+class CandlestickConfig(StrictBaseModel):
+    USE_CANDLESTICK_PATTERNS: bool = True
+    EXCLUDE_PATTERNS: List[str] = Field(default_factory=list)
+
+
 class RegimeConfig(StrictBaseModel):
     ENABLED: bool = False
     METHOD: Literal['quantile'] = 'quantile'
@@ -86,6 +91,7 @@ class MainDataConfig(StrictBaseModel):
     sources: SourceConfig
     splits: SplitConfig
     sequences: SequenceConfig
+    candlestick: CandlestickConfig = Field(default_factory=CandlestickConfig)
     features: FeatureConfig
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     normalization: NormalizationConfig
@@ -123,6 +129,10 @@ class TrainingBackendConfig(StrictBaseModel):
     DEFAULT: Literal['lightning', 'custom'] = 'lightning'
     FALLBACK: Literal['custom'] = 'custom'
     ALLOW_CUSTOM_FALLBACK: bool = True
+
+
+class ModelSelectionConfig(StrictBaseModel):
+    DEFAULT_MODEL_TYPE: str = 'crnn_attention'
 
 
 class LossConfig(StrictBaseModel):
@@ -198,6 +208,7 @@ class ModelConfigSection(StrictBaseModel):
     embeddings: EmbeddingConfig
     training: TrainingConfig
     training_backend: TrainingBackendConfig = Field(default_factory=TrainingBackendConfig)
+    selection: ModelSelectionConfig = Field(default_factory=ModelSelectionConfig)
     loss: LossConfig
     device: DeviceConfig
     checkpointing: CheckpointConfig

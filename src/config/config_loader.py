@@ -83,6 +83,34 @@ class Config:
         except AttributeError:
             return {}
 
+    def get_available_model_types(self) -> List[str]:
+        """Return available model types from model config."""
+        try:
+            return list(self.model.models.keys())
+        except AttributeError:
+            return []
+
+    def get_default_model_type(self) -> str:
+        """Return the configured default model type."""
+        available = self.get_available_model_types()
+        try:
+            model_type = self.model.selection.DEFAULT_MODEL_TYPE
+        except AttributeError:
+            model_type = None
+
+        if model_type:
+            if available and model_type not in available:
+                raise ValueError(
+                    f"Configured DEFAULT_MODEL_TYPE '{model_type}' is not in available models: {available}"
+                )
+            return model_type
+
+        if 'crnn_attention' in available:
+            return 'crnn_attention'
+        if available:
+            return available[0]
+        raise ValueError("No model types configured in model.models")
+
 
 _config_cache: Dict[str, Config] = {}
 

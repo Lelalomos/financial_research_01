@@ -104,6 +104,30 @@ def calculate_returns(
     return returns
 
 
+def calculate_turnover(
+    predictions: np.ndarray,
+    threshold: float = 0.0
+) -> np.ndarray:
+    """
+    Calculate per-period position turnover from predictions.
+
+    Args:
+        predictions: Model predictions (percent change)
+        threshold: Minimum prediction magnitude to take position
+
+    Returns:
+        Array of turnover units per period. Entry into a position counts as 1,
+        exit counts as 1, and reversing directly from long to short counts as 2.
+    """
+    predictions = np.array(predictions).flatten()
+    if len(predictions) == 0:
+        return np.array([], dtype=float)
+
+    positions = np.where(predictions > threshold, 1, np.where(predictions < -threshold, -1, 0))
+    turnover = np.abs(np.diff(positions, prepend=0)).astype(float)
+    return turnover
+
+
 def calculate_sharpe_ratio(
     returns: np.ndarray,
     risk_free_rate: float = 0.0,

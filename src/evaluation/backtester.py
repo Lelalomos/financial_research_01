@@ -21,6 +21,7 @@ from src.utils.logger import EvaluationLogger
 from .metrics import (
     evaluate_model,
     calculate_returns,
+    calculate_turnover,
     calculate_sharpe_ratio,
     calculate_max_drawdown,
     calculate_sortino_ratio,
@@ -116,8 +117,11 @@ class Backtester:
         stock_ids = np.array(all_stock_ids)
         group_ids = np.array(all_group_ids)
 
-        # Calculate returns based on strategy
-        strategy_returns = calculate_returns(predictions, targets, threshold=prediction_threshold)
+        # Calculate gross returns based on strategy and apply trading friction.
+        gross_returns = calculate_returns(predictions, targets, threshold=prediction_threshold)
+        turnover = calculate_turnover(predictions, threshold=prediction_threshold)
+        transaction_costs = turnover * commission * 100.0
+        strategy_returns = gross_returns - transaction_costs
 
         # Calculate portfolio value over time
         cumulative_returns = np.cumprod(1 + strategy_returns / 100)
@@ -128,6 +132,11 @@ class Backtester:
         sharpe_ratio = calculate_sharpe_ratio(strategy_returns)
         sortino_ratio = calculate_sortino_ratio(strategy_returns)
         max_drawdown = calculate_max_drawdown(strategy_returns) * 100  # Convert to percent
+        average_turnover = float(np.mean(turnover)) if len(turnover) > 0 else 0.0
+        total_turnover = float(np.sum(turnover)) if len(turnover) > 0 else 0.0
+        num_position_changes = int(np.count_nonzero(turnover))
+        total_transaction_cost_pct = float(np.sum(transaction_costs)) if len(transaction_costs) > 0 else 0.0
+        total_transaction_cost_value = initial_capital * (total_transaction_cost_pct / 100.0)
 
         # Win rate
         winning_trades = strategy_returns > 0
@@ -177,18 +186,28 @@ class Backtester:
             'sharpe_ratio': sharpe_ratio,
             'sortino_ratio': sortino_ratio,
             'max_drawdown_pct': max_drawdown,
+            'risk_adjusted_return': sharpe_ratio,
 
             # Trade statistics
             'num_trades': len(strategy_returns),
+            'num_position_changes': num_position_changes,
             'win_rate_pct': win_rate,
             'avg_win_pct': avg_win,
             'avg_loss_pct': avg_loss,
             'profit_factor': profit_factor,
+            'average_turnover': average_turnover,
+            'total_turnover': total_turnover,
+            'commission_rate': commission,
+            'total_transaction_cost_pct': total_transaction_cost_pct,
+            'total_transaction_cost_value': total_transaction_cost_value,
 
             # Prediction metrics
             'predictions': predictions,
             'targets': targets,
             'returns': strategy_returns,
+            'gross_returns': gross_returns,
+            'transaction_costs': transaction_costs,
+            'turnover': turnover,
             'portfolio_values': portfolio_values,
 
             # Sector analysis
@@ -222,13 +241,18 @@ class Backtester:
         print(f"  Sharpe Ratio:    {results['sharpe_ratio']:.4f}")
         print(f"  Sortino Ratio:   {results['sortino_ratio']:.4f}")
         print(f"  Max Drawdown:    {results['max_drawdown_pct']:.2f}%")
+        print(f"  Risk-Adj Return: {results['risk_adjusted_return']:.4f}")
 
         print("\nTRADE STATISTICS:")
-        print(f"  Number of Trades: {results['num_trades']}")
-        print(f"  Win Rate:         {results['win_rate_pct']:.2f}%")
-        print(f"  Avg Win:          {results['avg_win_pct']:.4f}%")
-        print(f"  Avg Loss:         {results['avg_loss_pct']:.4f}%")
-        print(f"  Profit Factor:    {results['profit_factor']:.4f}")
+        print(f"  Number of Trades:  {results['num_trades']}")
+        print(f"  Position Changes:  {results['num_position_changes']}")
+        print(f"  Win Rate:          {results['win_rate_pct']:.2f}%")
+        print(f"  Avg Win:           {results['avg_win_pct']:.4f}%")
+        print(f"  Avg Loss:          {results['avg_loss_pct']:.4f}%")
+        print(f"  Profit Factor:     {results['profit_factor']:.4f}")
+        print(f"  Avg Turnover:      {results['average_turnover']:.4f}")
+        print(f"  Total Turnover:    {results['total_turnover']:.2f}")
+        print(f"  Total Tx Cost:     {results['total_transaction_cost_pct']:.4f}%")
 
         print("\n" + "=" * 70)
 
@@ -287,11 +311,18 @@ class Backtester:
                     'Sharpe Ratio',
                     'Sortino Ratio',
                     'Max Drawdown (%)',
+                    'Risk-Adjusted Return',
                     'Number of Trades',
+                    'Position Changes',
                     'Win Rate (%)',
                     'Avg Win (%)',
                     'Avg Loss (%)',
                     'Profit Factor',
+                    'Average Turnover',
+                    'Total Turnover',
+                    'Commission Rate',
+                    'Transaction Cost (%)',
+                    'Transaction Cost ($)',
                 ],
                 'Value': [
                     results['initial_capital'],
@@ -301,11 +332,18 @@ class Backtester:
                     results['sharpe_ratio'],
                     results['sortino_ratio'],
                     results['max_drawdown_pct'],
+                    results['risk_adjusted_return'],
                     results['num_trades'],
+                    results['num_position_changes'],
                     results['win_rate_pct'],
                     results['avg_win_pct'],
                     results['avg_loss_pct'],
                     results['profit_factor'],
+                    results['average_turnover'],
+                    results['total_turnover'],
+                    results['commission_rate'],
+                    results['total_transaction_cost_pct'],
+                    results['total_transaction_cost_value'],
                 ]
             }
 
@@ -319,6 +357,9 @@ class Backtester:
                 'Predict Target': results['predictions'],
                 'Distance': results['predictions'] - results['targets'],
                 'Direction Score': results.get('direction_scores', [0] * len(results['predictions'])),
+                'Turnover': results.get('turnover', np.zeros(len(results['predictions']))),
+                'Transaction Cost (%)': results.get('transaction_costs', np.zeros(len(results['predictions']))),
+                'Gross Return (%)': results.get('gross_returns', results['returns']),
                 'Return (%)': results['returns'],
                 'Portfolio Value': results['portfolio_values'],
             }
@@ -358,9 +399,16 @@ class Backtester:
                 'Sharpe Ratio',
                 'Sortino Ratio',
                 'Max Drawdown (%)',
+                'Risk-Adjusted Return',
                 'Number of Trades',
+                'Position Changes',
                 'Win Rate (%)',
                 'Profit Factor',
+                'Average Turnover',
+                'Total Turnover',
+                'Commission Rate',
+                'Transaction Cost (%)',
+                'Transaction Cost ($)',
             ],
             'Value': [
                 results['initial_capital'],
@@ -369,9 +417,16 @@ class Backtester:
                 results['sharpe_ratio'],
                 results['sortino_ratio'],
                 results['max_drawdown_pct'],
+                results['risk_adjusted_return'],
                 results['num_trades'],
+                results['num_position_changes'],
                 results['win_rate_pct'],
                 results['profit_factor'],
+                results['average_turnover'],
+                results['total_turnover'],
+                results['commission_rate'],
+                results['total_transaction_cost_pct'],
+                results['total_transaction_cost_value'],
             ]
         }
 
@@ -381,6 +436,9 @@ class Backtester:
         trades_df = pd.DataFrame({
             'Prediction': results['predictions'],
             'Target': results['targets'],
+            'Turnover': results.get('turnover', np.zeros(len(results['predictions']))),
+            'Transaction Cost (%)': results.get('transaction_costs', np.zeros(len(results['predictions']))),
+            'Gross Return (%)': results.get('gross_returns', results['returns']),
             'Return (%)': results['returns'],
         })
 

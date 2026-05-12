@@ -34,6 +34,98 @@ def make_weights_only_safe(value):
     return value
 
 
+def _checkpoint_matches_requirements(
+    filepath: str,
+    model_type: Optional[str] = None,
+    num_features: Optional[int] = None,
+    num_stocks: Optional[int] = None,
+    num_groups: Optional[int] = None,
+) -> bool:
+    """
+    Check whether a checkpoint is compatible with the current dataset/model shape.
+
+    Compatibility rules:
+    - model_type matches when checkpoint metadata provides it
+    - num_features uses explicit metadata when available
+    - num_stocks / num_groups use explicit metadata when available, otherwise
+      fall back to embedding weight shapes
+    """
+    try:
+        checkpoint = torch.load(filepath, map_location='cpu', weights_only=True)
+    except Exception:
+        return False
+
+    checkpoint_model_type = checkpoint.get('model_type')
+    if model_type and checkpoint_model_type and checkpoint_model_type != model_type:
+        return False
+
+    checkpoint_num_features = checkpoint.get('num_features')
+    if num_features is not None and checkpoint_num_features is not None:
+        if checkpoint_num_features != num_features:
+            return False
+
+    checkpoint_num_stocks = checkpoint.get('num_stocks')
+    if num_stocks is not None and checkpoint_num_stocks is not None:
+        if checkpoint_num_stocks != num_stocks:
+            return False
+
+    checkpoint_num_groups = checkpoint.get('num_groups')
+    if num_groups is not None and checkpoint_num_groups is not None:
+        if checkpoint_num_groups != num_groups:
+            return False
+
+    state_dict = checkpoint.get('model_state_dict')
+    if not isinstance(state_dict, dict):
+        return True
+
+    stock_shape = state_dict.get('embeddings.stock_embedding.weight')
+    if num_stocks is not None and stock_shape is not None and stock_shape.shape[0] != num_stocks:
+        return False
+
+    group_shape = state_dict.get('embeddings.group_embedding.weight')
+    if num_groups is not None and group_shape is not None and group_shape.shape[0] != num_groups:
+        return False
+
+    return True
+
+
+def _choose_compatible_checkpoint(
+    files: list,
+    model_type: Optional[str] = None,
+    num_features: Optional[int] = None,
+    num_stocks: Optional[int] = None,
+    num_groups: Optional[int] = None,
+) -> str:
+    """
+    Choose the newest checkpoint compatible with the current dataset.
+
+    Falls back to the newest checkpoint overall when no compatibility filters
+    are provided or when no candidate matches.
+    """
+    if not files:
+        raise FileNotFoundError("No checkpoint candidates provided")
+
+    files = sorted(files, key=os.path.getmtime, reverse=True)
+
+    if num_features is None and num_stocks is None and num_groups is None and model_type is None:
+        return files[0]
+
+    compatible = [
+        path for path in files
+        if _checkpoint_matches_requirements(
+            path,
+            model_type=model_type,
+            num_features=num_features,
+            num_stocks=num_stocks,
+            num_groups=num_groups,
+        )
+    ]
+    if compatible:
+        return compatible[0]
+
+    return files[0]
+
+
 class EarlyStopping:
     """
     Early stopping to stop training when validation loss doesn't improve.
@@ -335,7 +427,10 @@ class ModelCheckpoint:
 def find_checkpoint_path(
     model_input: str,
     checkpoint_dir: str = 'models/checkpoints',
-    model_type: Optional[str] = None
+    model_type: Optional[str] = None,
+    num_features: Optional[int] = None,
+    num_stocks: Optional[int] = None,
+    num_groups: Optional[int] = None,
 ) -> str:
     """
     Find checkpoint path from various input formats.
@@ -369,15 +464,39 @@ def find_checkpoint_path(
 
     # Handle special keywords
     if model_input.lower() == 'best':
-        return _find_best_checkpoint(checkpoint_dir, model_type)
+        return _find_best_checkpoint(
+            checkpoint_dir,
+            model_type,
+            num_features=num_features,
+            num_stocks=num_stocks,
+            num_groups=num_groups,
+        )
     elif model_input.lower() == 'latest':
-        return _find_latest_checkpoint(checkpoint_dir, model_type)
+        return _find_latest_checkpoint(
+            checkpoint_dir,
+            model_type,
+            num_features=num_features,
+            num_stocks=num_stocks,
+            num_groups=num_groups,
+        )
     else:
         # Treat as pattern/model_type and find best match
-        return _find_best_checkpoint(checkpoint_dir, model_input)
+        return _find_best_checkpoint(
+            checkpoint_dir,
+            model_input,
+            num_features=num_features,
+            num_stocks=num_stocks,
+            num_groups=num_groups,
+        )
 
 
-def _find_best_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None) -> str:
+def _find_best_checkpoint(
+    checkpoint_dir: str,
+    model_type: Optional[str] = None,
+    num_features: Optional[int] = None,
+    num_stocks: Optional[int] = None,
+    num_groups: Optional[int] = None,
+) -> str:
     """
     Find best checkpoint for a model type.
 
@@ -397,8 +516,13 @@ def _find_best_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None)
         files = glob.glob(pattern)
 
         if files:
-            # Return most recent
-            return max(files, key=os.path.getmtime)
+            return _choose_compatible_checkpoint(
+                files,
+                model_type=model_type,
+                num_features=num_features,
+                num_stocks=num_stocks,
+                num_groups=num_groups,
+            )
 
         # Search for old pattern: best_model.pth
         old_path = os.path.join(checkpoint_dir, 'best_model.pth')
@@ -416,8 +540,13 @@ def _find_best_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None)
         files = glob.glob(pattern)
 
         if files:
-            # Return most recent
-            return max(files, key=os.path.getmtime)
+            return _choose_compatible_checkpoint(
+                files,
+                model_type=model_type,
+                num_features=num_features,
+                num_stocks=num_stocks,
+                num_groups=num_groups,
+            )
 
         # Fallback to old pattern
         old_path = os.path.join(checkpoint_dir, 'best_model.pth')
@@ -430,7 +559,13 @@ def _find_best_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None)
         )
 
 
-def _find_latest_checkpoint(checkpoint_dir: str, model_type: Optional[str] = None) -> str:
+def _find_latest_checkpoint(
+    checkpoint_dir: str,
+    model_type: Optional[str] = None,
+    num_features: Optional[int] = None,
+    num_stocks: Optional[int] = None,
+    num_groups: Optional[int] = None,
+) -> str:
     """
     Find most recent checkpoint (best or epoch checkpoint).
 
@@ -459,8 +594,13 @@ def _find_latest_checkpoint(checkpoint_dir: str, model_type: Optional[str] = Non
             f"(searched: {pattern})"
         )
 
-    # Return most recent file
-    return max(files, key=os.path.getmtime)
+    return _choose_compatible_checkpoint(
+        files,
+        model_type=model_type,
+        num_features=num_features,
+        num_stocks=num_stocks,
+        num_groups=num_groups,
+    )
 
 
 def list_checkpoints(checkpoint_dir: str = 'models/checkpoints', model_type: Optional[str] = None) -> list:

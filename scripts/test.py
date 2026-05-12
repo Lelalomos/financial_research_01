@@ -27,7 +27,12 @@ from src.data.preprocessing import DataPreprocessor
 from src.models import create_model
 from src.evaluation import evaluate_model, print_metrics, evaluate_model_with_report, print_sector_stats
 from src.utils.logger import get_logger
-from src.training import find_checkpoint_path
+from src.training import (
+    find_checkpoint_path,
+    get_eval_batch_size,
+    infer_model_type_from_checkpoint,
+    load_checkpoint_metadata,
+)
 
 
 def parse_args():
@@ -44,9 +49,8 @@ def parse_args():
     parser.add_argument(
         '--model-type',
         type=str,
-        choices=['crnn', 'rnn', 'rnn_attention', 'crnn_attention', 'transformer'],
-        default='crnn_attention',
-        help='Model type'
+        default=None,
+        help='Model type. Defaults to config.model.selection.DEFAULT_MODEL_TYPE.'
     )
 
     parser.add_argument(
@@ -235,6 +239,7 @@ def main():
     logger.info("=" * 60)
     logger.info("TESTING SCRIPT")
     logger.info("=" * 60)
+    logger.info(f"Using device: {args.device}")
 
     # Load config
     config = load_config('model')
@@ -266,6 +271,15 @@ def main():
     else:
         logger.warning("No sector mappings available, will use group IDs")
 
+    default_model_type = config.get_default_model_type()
+    model_type = args.model_type or default_model_type
+    available_model_types = config.get_available_model_types()
+    if model_type not in available_model_types:
+        raise ValueError(
+            f"Unknown model type: {model_type}. "
+            f"Available models: {available_model_types}"
+        )
+
     # Load info
     info_path = data_dir / 'info.json'
     with open(info_path, 'r') as f:
@@ -275,7 +289,7 @@ def main():
     dataset = FinancialDataset(sequences, config)
     loader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=config.model.training.BATCH_SIZE,
+        batch_size=get_eval_batch_size(config),
         shuffle=False,
         num_workers=config.model.device.NUM_WORKERS
     )
@@ -284,24 +298,28 @@ def main():
     embedding_sizes = dataset.get_embedding_sizes()
 
     # Auto-detect model type from checkpoint filename if not specified
-    model_type = args.model_type
     checkpoint_path = find_checkpoint_path(
         model_input=args.model,
         checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
-        model_type=model_type
+        model_type=model_type,
+        num_features=dataset.num_features,
+        num_stocks=embedding_sizes['num_stocks'],
+        num_groups=embedding_sizes['num_groups'],
     )
 
-    # If model_type is still default and checkpoint path contains a known model type
-    if model_type == 'crnn_attention' and checkpoint_path:
-        import os
-        basename = os.path.basename(checkpoint_path)
-        # Must check longer types first to avoid substring false matches
-        for known_type in ['bilstm4_attention', 'crnn_attention', 'rnn_attention',
-                           'lstm3_attention', 'transformer', 'crnn', 'rnn', 'lstm3']:
-            if known_type in basename.lower():
-                model_type = known_type
-                logger.info(f"Auto-detected model type: {model_type} from checkpoint filename")
-                break
+    # If model_type came from config, allow checkpoint filename to refine it.
+    if args.model_type is None and checkpoint_path:
+        model_type = infer_model_type_from_checkpoint(
+            checkpoint_path,
+            available_model_types,
+            fallback_model_type=default_model_type,
+        )
+        logger.info(f"Auto-detected model type: {model_type}")
+
+    resolved_checkpoint = Path(checkpoint_path)
+    logger.info(f"Resolved model type: {model_type}")
+    logger.info(f"Selected checkpoint file: {resolved_checkpoint.name}")
+    logger.info(f"Selected checkpoint path: {resolved_checkpoint}")
 
     # Create model
     logger.info(f"Creating {model_type} model...")
@@ -317,7 +335,7 @@ def main():
     # Load checkpoint
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location=args.device, weights_only=True)
+    checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=args.device)
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(args.device)
 

@@ -68,6 +68,7 @@ def test_model_config_accepts_lightning_default_backend():
     validate_config_data("model", data)
     assert data["model"]["training_backend"]["DEFAULT"] == "lightning"
     assert data["model"]["training_backend"]["FALLBACK"] == "custom"
+    assert data["model"]["selection"]["DEFAULT_MODEL_TYPE"] in data["model"]["models"]
 
 
 def test_model_config_rejects_unknown_training_backend():

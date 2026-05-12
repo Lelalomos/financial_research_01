@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
 from src.models import create_model
-from src.training import Trainer, EarlyStopping, ModelCheckpoint
+from src.training import Trainer, EarlyStopping, ModelCheckpoint, find_checkpoint_path
 from src.data.dataset import FinancialDataset
 
 
@@ -129,7 +129,6 @@ class TestTraining(unittest.TestCase):
     def test_model_checkpoint(self):
         """Test model checkpointing."""
         import tempfile
-        import os
 
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint = ModelCheckpoint(save_dir=tmpdir, mode='min')
@@ -154,6 +153,48 @@ class TestTraining(unittest.TestCase):
             loaded = checkpoint.load_best(model, device='cpu')
             self.assertIn('epoch', loaded)
             self.assertEqual(loaded['epoch'], 1)
+
+    def test_find_checkpoint_path_prefers_compatible_checkpoint(self):
+        """Newest incompatible checkpoints should not block a compatible one."""
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            incompatible = Path(tmpdir) / 'bilstm4_attention_best_20260511_161034.pth'
+            compatible = Path(tmpdir) / 'bilstm4_attention_best_lightning.pth'
+
+            torch.save({
+                'model_type': 'bilstm4_attention',
+                'model_state_dict': {
+                    'embeddings.stock_embedding.weight': torch.zeros(3, 64),
+                    'embeddings.group_embedding.weight': torch.zeros(2, 32),
+                },
+            }, incompatible)
+
+            torch.save({
+                'model_type': 'bilstm4_attention',
+                'num_features': 90,
+                'num_stocks': 150,
+                'num_groups': 11,
+                'model_state_dict': {
+                    'embeddings.stock_embedding.weight': torch.zeros(150, 64),
+                    'embeddings.group_embedding.weight': torch.zeros(11, 32),
+                },
+            }, compatible)
+
+            os.utime(compatible, (1, 1))
+            os.utime(incompatible, (2, 2))
+
+            path = find_checkpoint_path(
+                'best',
+                checkpoint_dir=tmpdir,
+                model_type='bilstm4_attention',
+                num_features=90,
+                num_stocks=150,
+                num_groups=11,
+            )
+
+            self.assertEqual(path, str(compatible))
 
 
 if __name__ == '__main__':

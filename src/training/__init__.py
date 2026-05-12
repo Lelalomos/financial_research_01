@@ -28,6 +28,11 @@ from .lightning_module import (
     LightningDependencyError,
     train_with_lightning,
 )
+from .runtime_config import (
+    get_eval_batch_size,
+    infer_model_type_from_checkpoint,
+    load_checkpoint_metadata,
+)
 
 __all__ = [
     'Trainer',
@@ -48,4 +53,7 @@ __all__ = [
     'FinancialLightningModule',
     'LightningDependencyError',
     'train_with_lightning',
+    'get_eval_batch_size',
+    'infer_model_type_from_checkpoint',
+    'load_checkpoint_metadata',
 ]

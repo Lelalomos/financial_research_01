@@ -271,21 +271,42 @@ class FeatureEngineer:
         Returns:
             DataFrame with added candlestick pattern columns
         """
-        if not self.config.data.features.FEATURE_FLAGS.get('candlestick_patterns', True):
+        candlestick_cfg = self.config.data.candlestick if 'candlestick' in self.config.data else None
+        use_candlestick = self.config.data.features.FEATURE_FLAGS.get('candlestick_patterns', True)
+        if candlestick_cfg is not None:
+            use_candlestick = use_candlestick and candlestick_cfg.get('USE_CANDLESTICK_PATTERNS', True)
+
+        if not use_candlestick:
             self.logger.info("Skipping candlestick patterns (disabled in config)")
             return df
 
         self.logger.info("Adding candlestick patterns...")
 
         result = df.copy()
+        excluded_patterns = set()
+        if candlestick_cfg is not None:
+            excluded_patterns = set(candlestick_cfg.get('EXCLUDE_PATTERNS', []))
 
         # Get all candlestick pattern functions from TA-Lib
         pattern_functions = [
             name for name in dir(talib)
             if name.startswith('CDL') and callable(getattr(talib, name))
         ]
+        if excluded_patterns:
+            unknown_patterns = sorted(excluded_patterns - set(pattern_functions))
+            if unknown_patterns:
+                self.logger.warning(
+                    f"Ignoring unknown excluded candlestick patterns: {unknown_patterns}"
+                )
+            pattern_functions = [
+                name for name in pattern_functions
+                if name not in excluded_patterns
+            ]
 
-        self.logger.info(f"Found {len(pattern_functions)} candlestick patterns")
+        self.logger.info(
+            f"Using {len(pattern_functions)} candlestick patterns"
+            + (f" after excluding {len(excluded_patterns)}" if excluded_patterns else "")
+        )
 
         # Calculate patterns for each ticker
         for ticker in result['tic'].unique():

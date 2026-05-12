@@ -31,7 +31,7 @@
       "STRIDE": 1
     },
     "technical_indicators": {
-      "EMA_PERIODS": [50, 100, 200],
+      "EMA_PERIODS": [50, 200],
       "RSI_PERIOD": 14,
       "STOCHRSI_PERIOD": 14,
       "MACD_PARAMS": [12, 26, 9]
@@ -40,7 +40,38 @@
       "FIBONACCI_WINDOW": 30
     },
     "candlestick": {
-      "USE_CANDLESTICK_PATTERNS": true
+      "USE_CANDLESTICK_PATTERNS": true,
+      "EXCLUDE_PATTERNS": [
+        "CDL3STARSINSOUTH",
+        "CDLKICKING",
+        "CDLKICKINGBYLENGTH",
+        "CDLCONCEALBABYSWALL",
+        "CDLMATHOLD",
+        "CDLABANDONEDBABY",
+        "CDLIDENTICAL3CROWS",
+        "CDLBREAKAWAY",
+        "CDL3BLACKCROWS",
+        "CDLRISEFALL3METHODS",
+        "CDLUPSIDEGAP2CROWS",
+        "CDL2CROWS",
+        "CDL3WHITESOLDIERS",
+        "CDLCOUNTERATTACK",
+        "CDL3LINESTRIKE",
+        "CDLINNECK",
+        "CDLTRISTAR",
+        "CDLLADDERBOTTOM",
+        "CDLSTICKSANDWICH",
+        "CDLHIKKAKEMOD",
+        "CDLUNIQUE3RIVER",
+        "CDLMORNINGDOJISTAR",
+        "CDLEVENINGDOJISTAR",
+        "CDLONNECK",
+        "CDLSTALLEDPATTERN",
+        "CDLGAPSIDESIDEWHITE",
+        "CDLPIERCING",
+        "CDLDARKCLOUDCOVER",
+        "CDLSEPARATINGLINES"
+      ]
     },
     "sector": {
       "SECTOR_MAPPING_SOURCE": "default",
