@@ -1,0 +1,507 @@
+# Project Run Guide
+
+## Overview
+
+This guide explains how to run the project end to end:
+
+1. Start the Docker environment
+2. Configure data and model settings
+3. Preprocess real market data
+4. Train a model
+5. Run prediction
+6. Run backtesting
+
+This guide is operational. It is meant to be used together with:
+
+- `docs/configuration.md`
+- `docs/data_pipeline.md`
+- `docs/model_architecture.md`
+- `docs/lightning_backend.md`
+
+The main CLI entrypoints are:
+
+- `scripts/preprocess_data.py`
+- `scripts/train.py`
+- `scripts/predict.py`
+- `scripts/backtest.py`
+
+
+## Environment Setup
+
+The project is designed to run inside Docker.
+
+Start the container:
+
+```bash
+docker compose up -d
+```
+
+Open a shell inside the main container:
+
+```bash
+docker exec -it crnn_predictor bash
+```
+
+You can also run commands directly from the host without entering the shell:
+
+```bash
+docker exec crnn_predictor python scripts/train.py --model-type crnn_attention
+```
+
+The main runtime container name is `crnn_predictor`.
+
+
+## Important Config Files
+
+Two config files control almost everything:
+
+### `config/main.json`
+
+This file controls:
+
+- data sources
+- download date range
+- feature flags
+- train/val/test split ratios
+- sequence length
+- prediction horizon
+- target normalization
+- optional regime features
+
+Important defaults:
+
+- `data.sources.START_DATE = "2000-01-01"`
+- `data.splits.TRAIN_RATIO = 0.7`
+- `data.splits.VAL_RATIO = 0.1`
+- `data.splits.TEST_RATIO = 0.2`
+- `data.sequences.SEQUENCE_LENGTH = 30`
+- `data.sequences.PREDICTION_HORIZON = 5`
+- `data.sequences.NORMALIZE_TARGET = true`
+
+### `config/model.json`
+
+This file controls:
+
+- training hyperparameters
+- optimizer and scheduler
+- training backend
+- checkpoint behavior
+- experiment tracking
+- model-specific architecture parameters
+
+Important defaults:
+
+- `model.training.LEARNING_RATE = 0.0001`
+- `model.training.BATCH_SIZE = 128`
+- `model.training.NUM_EPOCHS = 30`
+- `model.training.OPTIMIZER = "adam"`
+- `model.training.SCHEDULER = "reduce_on_plateau"`
+- `model.loss.LOSS_TYPE = "directional_mse"`
+- `model.training_backend.DEFAULT = "lightning"`
+
+
+## Available Model Types
+
+The current model registry supports these model types:
+
+- `crnn`
+- `rnn`
+- `rnn_attention`
+- `crnn_attention`
+- `transformer`
+- `lstm3`
+- `lstm3_attention`
+- `bilstm4_attention`
+
+Practical guidance:
+
+- `rnn`: smallest baseline
+- `crnn_attention`: strong default starting point
+- `lstm3_attention`: deeper recurrent model
+- `bilstm4_attention`: larger recurrent-attention model
+- `transformer`: heavier model, usually worth testing after a baseline
+
+If you want one sensible first model, use `crnn_attention` or `lstm3_attention`.
+
+
+## How Model Selection Works
+
+There are two separate concepts:
+
+1. Model family selection at runtime
+2. Model architecture settings in `config/model.json`
+
+### Runtime selection
+
+You choose the model family with:
+
+```bash
+--model-type crnn_attention
+```
+
+### Architecture selection
+
+Once the model type is chosen, the script reads that model's parameter block
+from `config/model.json`.
+
+Examples:
+
+- `model.models.crnn_attention`
+- `model.models.lstm3_attention`
+- `model.models.bilstm4_attention`
+
+This means:
+
+- `--model-type crnn_attention` activates the CRNN attention model
+- its hidden sizes, dropout, and attention settings come from the matching JSON block
+
+
+## Recommended First Configuration
+
+For a first real-data run, keep the setup conservative.
+
+Recommended data settings in `config/main.json`:
+
+- keep `USE_YFINANCE_LIVE = true`
+- keep external features enabled only if your downloads are stable
+- keep `market_regime = false` at first
+- keep Polars flags disabled at first
+- keep Fibonacci disabled at first unless you are explicitly testing it
+
+Recommended training settings in `config/model.json`:
+
+- `NUM_EPOCHS = 30`
+- `BATCH_SIZE = 64` or `128`
+- `LEARNING_RATE = 0.0001`
+- `LOSS_TYPE = "directional_mse"`
+- keep backend as `lightning`
+
+
+## Real Data Preprocessing
+
+Preprocessing does all of the following:
+
+1. Downloads or loads market data
+2. Engineers features
+3. Splits data by time
+4. Fits normalization on the training split only
+5. Creates train/val/test sequences
+6. Saves processed arrays and metadata
+
+### Basic real-data preprocessing
+
+```bash
+docker exec crnn_predictor python scripts/preprocess_data.py --start-date 2015-01-01
+```
+
+### Use a limited number of stocks
+
+```bash
+docker exec crnn_predictor python scripts/preprocess_data.py --start-date 2015-01-01 --stock-limit 100
+```
+
+### Use balanced sampling across groups
+
+```bash
+docker exec crnn_predictor python scripts/preprocess_data.py --start-date 2015-01-01 --stocks 150
+```
+
+### Use specific tickers only
+
+```bash
+docker exec crnn_predictor python scripts/preprocess_data.py --start-date 2015-01-01 --tickers AAPL MSFT GOOGL
+```
+
+### Reuse existing downloaded data
+
+```bash
+docker exec crnn_predictor python scripts/preprocess_data.py --skip-download
+```
+
+### Output generated by preprocessing
+
+The default output directory is `data/processed`.
+
+Important files created:
+
+- `data/processed/train/*.npy`
+- `data/processed/val/*.npy`
+- `data/processed/test/*.npy`
+- `data/processed/info.json`
+- `data/processed/feature_columns.txt`
+- `data/pre_normalized.parquet`
+- `data/normalized_data.parquet`
+
+`info.json` is especially important because training uses it to recover:
+
+- number of features
+- feature column names
+- preprocessing metadata
+- optional regime metadata
+
+
+## Train a Model
+
+Once preprocessing is complete, train from the processed directory.
+
+### Basic training
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --data-dir data/processed \
+  --epochs 30 \
+  --batch-size 128 \
+  --lr 0.0001
+```
+
+### Force Lightning backend explicitly
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --backend lightning
+```
+
+### Use the custom trainer instead
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --backend custom
+```
+
+### Force CPU
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --force-cpu
+```
+
+### Resume or fine-tune
+
+Resume from checkpoint:
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --resume models/checkpoints/your_checkpoint.pth
+```
+
+Fine-tune from checkpoint:
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --fine-tune models/checkpoints/your_checkpoint.pth
+```
+
+Fine-tune only on selected stocks:
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type crnn_attention \
+  --fine-tune models/checkpoints/your_checkpoint.pth \
+  --stocks AAPL MSFT \
+  --freeze-embeddings
+```
+
+### Where checkpoints go
+
+By default:
+
+```text
+models/checkpoints/
+```
+
+Lightning remains the default training backend. It writes custom-compatible
+`.pth` checkpoints so prediction and backtesting still use the existing
+checkpoint contract.
+
+
+## Prediction
+
+Use prediction mainly for inference or model inspection.
+
+### Show model info
+
+```bash
+docker exec crnn_predictor python scripts/predict.py info \
+  --model models/checkpoints/your_checkpoint.pth
+```
+
+### Predict one row
+
+```bash
+docker exec crnn_predictor python scripts/predict.py single \
+  --model models/checkpoints/your_checkpoint.pth \
+  --ticker AAPL \
+  --date 2024-01-15 \
+  --input "open=150,high=152,low=149,close=151.5,volume=50000000"
+```
+
+### Batch prediction from file
+
+```bash
+docker exec crnn_predictor python scripts/predict.py batch \
+  --model models/checkpoints/your_checkpoint.pth \
+  --input data/prediction_input.csv \
+  --output outputs/predictions.csv \
+  --format csv
+```
+
+
+## Backtesting
+
+Backtesting in this project runs the trained model over one processed split and
+simulates a simple threshold-based trading strategy.
+
+It reports:
+
+- total return
+- final capital
+- Sharpe ratio
+- Sortino ratio
+- max drawdown
+- risk-adjusted return
+- win rate
+- profit factor
+- average turnover
+- total turnover
+- transaction cost
+- direction accuracy by sector
+
+### Basic backtest on test split
+
+```bash
+docker exec crnn_predictor python scripts/backtest.py \
+  --model best \
+  --model-type crnn_attention \
+  --data-dir data/processed \
+  --split test \
+  --output outputs/backtest_report.xlsx
+```
+
+### Backtest with a prediction threshold
+
+```bash
+docker exec crnn_predictor python scripts/backtest.py \
+  --model best \
+  --model-type crnn_attention \
+  --data-dir data/processed \
+  --split test \
+  --threshold 0.5 \
+  --initial-capital 100000 \
+  --output outputs/backtest_report.xlsx
+```
+
+### Output formats
+
+Supported output formats:
+
+- `excel`
+- `csv`
+- `json`
+
+Example:
+
+```bash
+docker exec crnn_predictor python scripts/backtest.py \
+  --model best \
+  --model-type crnn_attention \
+  --data-dir data/processed \
+  --split test \
+  --output outputs/backtest_report.json \
+  --output-format json
+```
+
+
+## Important Limitation
+
+`scripts/train.py` supports 8 model types, but `scripts/backtest.py` currently
+exposes only these model types:
+
+- `crnn`
+- `rnn`
+- `rnn_attention`
+- `crnn_attention`
+- `transformer`
+
+That means:
+
+- `lstm3`
+- `lstm3_attention`
+- `bilstm4_attention`
+
+can be trained, but the current backtest CLI does not expose them unless the
+script is extended.
+
+
+## Recommended End-to-End Workflow
+
+If you want one clean baseline workflow, use this:
+
+```bash
+docker compose up -d
+docker exec crnn_predictor python scripts/preprocess_data.py --start-date 2015-01-01 --stocks 150
+docker exec crnn_predictor python scripts/train.py --model-type crnn_attention --backend lightning --epochs 30 --batch-size 128 --lr 0.0001
+docker exec crnn_predictor python scripts/backtest.py --model best --model-type crnn_attention --data-dir data/processed --split test --threshold 0.5 --output outputs/backtest_report.xlsx
+```
+
+
+## Common Problems
+
+### No training data found
+
+Cause:
+
+- preprocessing was not run
+- wrong `--data-dir`
+
+Fix:
+
+- run `scripts/preprocess_data.py` first
+- confirm `data/processed/train/` contains `.npy` files
+
+### Permission denied in processed directories
+
+Cause:
+
+- previous Docker run created root-owned files
+
+Fix:
+
+- remove or repair ownership of the affected output directory
+- or use a different output directory
+
+### Download failure
+
+Cause:
+
+- live source unavailable
+- network issue
+
+Fix:
+
+- retry preprocessing
+- use `--skip-download` if cached data already exists
+
+### Backtest model type rejected
+
+Cause:
+
+- `scripts/backtest.py` CLI supports fewer models than training
+
+Fix:
+
+- use one of the currently exposed backtest model types
+- or extend the CLI choices in `scripts/backtest.py`
+
+
+## Notes on Interpretation
+
+This project predicts future percentage change over the configured prediction
+horizon. The backtest uses a simplified strategy based on the sign and
+magnitude of model predictions. Treat it as research evaluation, not as a
+production trading system.

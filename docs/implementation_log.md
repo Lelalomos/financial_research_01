@@ -219,6 +219,35 @@ Approved scope:
 - Attention summaries are diagnostic only and should not be interpreted as
   causal explanations.
 
+## Post-Phase Maintenance Updates
+
+Status: complete
+
+These changes were made after the main roadmap phases to keep runtime behavior,
+evaluation, and docs aligned with current experiments.
+
+### Implemented Updates
+
+- Selective candlestick pruning via `data.candlestick.EXCLUDE_PATTERNS` in
+  `config/main.json`.
+- Geometric feature group enabled by default:
+  normalized ATR, ROC, Bollinger Band width, and support/resistance slopes.
+- Evaluation/runtime config alignment:
+  validation, test, and backtest now share checkpoint model-type inference and
+  use `model.validation.VAL_BATCH_SIZE` when configured.
+- Backtester improvements:
+  turnover, transaction-cost deduction, and additional report fields.
+- Lightning checkpoint-selection hardening:
+  validation prediction-health diagnostics and collapse-aware best-checkpoint
+  scoring to avoid promoting one-sided positive-only checkpoints.
+
+### Validation Progress
+
+- Targeted container test for backtest Excel reporting with turnover/cost
+  metrics: `1 passed`.
+- Lightning backend container tests after collapse-aware selection update:
+  `9 passed`.
+
 ### Task 3.1 Implemented Files
 
 - `src/models/rnn_attention.py`: added `forward_with_attention()`.
@@ -325,7 +354,7 @@ Approved scope:
 
 ## Phase 4: MLOps and Performance
 
-Status: in progress
+Status: complete
 
 Approved scope:
 - Implement Task 4.1 as local MLflow experiment tracking only.
@@ -423,7 +452,7 @@ Approved scope:
 
 ## Phase 5: PyTorch Lightning Migration
 
-Status: in progress
+Status: complete
 
 Approved scope:
 - Make Lightning the default training backend.
@@ -437,7 +466,7 @@ Approved scope:
 ### Tasks
 
 - [x] Task 5.1: Lightning default path with custom trainer backup
-- [ ] Task 5.2: Lightning parity and migration decision
+- [x] Task 5.2: Lightning parity and migration decision
 
 ### Task 5.1 Notes
 
@@ -483,3 +512,45 @@ Approved scope:
 - Full container pytest:
   `docker exec d633c5977c4f pytest -q` passed with `270 passed`,
   `3679 warnings`.
+
+### Task 5.2 Notes
+
+- Lightning remains the default backend.
+- The custom `Trainer` remains the supported backup and should not be removed.
+- Lightning now passes the configured `GRADIENT_CLIP_VALUE` to the Lightning
+  trainer so clipping behavior matches the custom trainer setting.
+- A same-seed single-batch parity test compares Lightning and custom trainer
+  model weights after one update.
+- Lightning custom-format checkpoints are verified through the existing
+  `Predictor` load and sequence prediction path.
+- Full optimizer-state resume from existing custom checkpoints remains
+  unsupported for Lightning; use `--backend custom` when that exact workflow is
+  required. Lightning `--resume` and `--fine-tune` load model weights.
+
+### Task 5.2 Implemented Files
+
+- `src/training/lightning_module.py`: passes configured gradient clipping into
+  the Lightning trainer factory.
+- `tests/test_lightning_backend.py`: adds gradient clipping config coverage,
+  same-seed single-batch parity, and Predictor checkpoint compatibility tests.
+- `docs/lightning_backend.md`: documents the parity decision, fallback scope,
+  and optimizer-resume limitation.
+- `docs/configuration.md`: notes Lightning reuse of gradient clipping settings.
+- `docs/implementation_log.md`: marks Phase 5 complete.
+
+### Task 5.2 Validation Progress
+
+- Targeted container tests:
+  `pytest tests/test_lightning_backend.py -q` passed with `8 passed`,
+  `12 warnings`.
+- Related regression container tests:
+  `pytest tests/test_lightning_backend.py tests/test_config_schemas.py tests/test_training.py tests/test_prediction.py -q`
+  passed with `35 passed`, `12 warnings`.
+- Full-flow container test:
+  `pytest tests/test_full_flow.py -q` passed with `1 passed`,
+  `747 warnings`.
+- Full container pytest:
+  `pytest -q` passed with `273 passed`, `3627 warnings`.
+- Full small data container test:
+  `pytest tests/test_small_dataset.py -q` passed with `12 passed`,
+  `2580 warnings`.

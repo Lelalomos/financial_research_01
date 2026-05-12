@@ -4,7 +4,7 @@
 set -e
 
 MODEL_PATH="best"
-MODEL_TYPE="crnn_attention"
+MODEL_TYPE=""
 DATA_DIR="data/processed"
 SPLIT="val"
 
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
         --help)
             echo "Usage: $0 [options]"
             echo "  --model PATH_OR_ALIAS"
-            echo "  --model-type TYPE"
+            echo "  --model-type TYPE      Override model type from config/model.json"
             echo "  --data-dir PATH"
             echo "  --data-split NAME"
             exit 0
@@ -41,7 +41,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CMD="python scripts/validate.py --model $MODEL_PATH --model-type $MODEL_TYPE --data-dir $DATA_DIR --split $SPLIT"
+CMD="python scripts/validate.py --model $MODEL_PATH --data-dir $DATA_DIR --split $SPLIT"
+
+if [ -n "$MODEL_TYPE" ]; then
+    CMD="$CMD --model-type $MODEL_TYPE"
+fi
 
 echo "=========================================="
 echo "VALIDATING MODEL (IN CONTAINER)"
@@ -51,4 +55,3 @@ echo "=========================================="
 echo ""
 
 eval $CMD
-

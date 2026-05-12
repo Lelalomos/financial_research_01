@@ -14,6 +14,7 @@ set -e
 MODEL_PATH="models/bilstm4_attention_best_20260105_113045.pth"
 REPORTS_DIR="reports"
 CLEANUP_OLD_FILES=true
+MODEL_TYPE=""
 
 # Create reports directory if it doesn't exist
 mkdir -p "$REPORTS_DIR"
@@ -41,6 +42,10 @@ while [[ $# -gt 0 ]]; do
             EXCEL_REPORT="$2"
             shift 2
             ;;
+        --model-type)
+            MODEL_TYPE="$2"
+            shift 2
+            ;;
         --no-cleanup)
             CLEANUP_OLD_FILES=false
             shift
@@ -51,6 +56,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --model PATH       Model checkpoint path (default: models/bilstm4_attention_best_20260105_113045.pth)"
             echo "  --excel-report PATH Custom Excel report path (default: auto-generated with timestamp)"
+            echo "  --model-type TYPE  Override model type from config/model.json"
             echo "  --no-cleanup       Skip cleanup of old test files before running"
             echo "  --help             Show this help message"
             exit 0
@@ -66,6 +72,10 @@ done
 # Build command - ALWAYS include Excel report
 CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT"
 
+if [ -n "$MODEL_TYPE" ]; then
+    CMD="$CMD --model-type $MODEL_TYPE"
+fi
+
 # Run cleanup before testing if enabled
 if [ "$CLEANUP_OLD_FILES" = true ]; then
     cleanup_old_test_files
@@ -75,6 +85,11 @@ echo "=========================================="
 echo "TESTING MODEL"
 echo "=========================================="
 echo "Model path: $MODEL_PATH"
+if [ -n "$MODEL_TYPE" ]; then
+    echo "Model type override: $MODEL_TYPE"
+else
+    echo "Model type: from config/model.json"
+fi
 echo "Excel report: $EXCEL_REPORT"
 echo "Command: $CMD"
 echo "=========================================="

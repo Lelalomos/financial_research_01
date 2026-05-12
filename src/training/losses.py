@@ -31,8 +31,14 @@ def directional_loss(
         base_loss = nn.MSELoss()
 
     regression = base_loss(pred, target)
-    wrong_direction = (torch.sign(pred) != torch.sign(target)).to(pred.dtype)
-    return regression + alpha * wrong_direction.mean()
+    
+    # Differentiable directional penalty:
+    # If target > 0, we want pred > 0. Penalty = relu(-pred)
+    # If target < 0, we want pred < 0. Penalty = relu(pred)
+    # Combined: relu(-pred * sign(target))
+    penalty = F.relu(-pred * torch.sign(target))
+    
+    return regression + alpha * penalty.mean()
 
 
 def sharpe_ratio_loss(

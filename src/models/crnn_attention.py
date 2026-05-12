@@ -42,17 +42,15 @@ def init_weights_xavier_uniform(module):
             nn.init.zeros_(module.bias)
 
 
-def init_embeddings_uniform(module, low: float = -0.1, high: float = 0.1):
+def init_embeddings_xavier(module):
     """
-    Initialize embeddings with small uniform values.
+    Initialize embeddings using Xavier uniform initialization.
 
     Args:
         module: PyTorch module to initialize
-        low: Lower bound for uniform distribution
-        high: Upper bound for uniform distribution
     """
     if isinstance(module, nn.Embedding):
-        nn.init.uniform_(module.weight, low, high)
+        nn.init.xavier_uniform_(module.weight)
 
 
 class EmbeddingLayer(nn.Module):
@@ -101,9 +99,9 @@ class EmbeddingLayer(nn.Module):
 
         self.dropout = nn.Dropout(config.model.embeddings.DROPOUT_EMBEDDING)
 
-        # Initialize embeddings with small uniform values to prevent unstable outputs
+        # Initialize embeddings with Xavier to prevent vanishing variance
         for module in self.modules():
-            init_embeddings_uniform(module, low=-0.1, high=0.1)
+            init_embeddings_xavier(module)
 
     @staticmethod
     def _prepare_embedding_input(
@@ -319,6 +317,11 @@ class BiLSTM4Block(nn.Module):
             bidirectional=True
         )
 
+        self.norm1 = nn.LayerNorm(hidden_sizes[0] * 2)
+        self.norm2 = nn.LayerNorm(hidden_sizes[1] * 2)
+        self.norm3 = nn.LayerNorm(hidden_sizes[2] * 2)
+        self.norm4 = nn.LayerNorm(hidden_sizes[3] * 2)
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -333,18 +336,22 @@ class BiLSTM4Block(nn.Module):
         """
         # Layer 1
         x, _ = self.lstm1(x)
+        x = self.norm1(x)
         x = self.dropout(x)
 
         # Layer 2
         x, _ = self.lstm2(x)
+        x = self.norm2(x)
         x = self.dropout(x)
 
         # Layer 3
         x, _ = self.lstm3(x)
+        x = self.norm3(x)
         x = self.dropout(x)
 
         # Layer 4
         x, _ = self.lstm4(x)
+        x = self.norm4(x)
         x = self.dropout(x)
 
         return x

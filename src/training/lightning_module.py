@@ -11,7 +11,11 @@ from typing import Dict, Optional
 import numpy as np
 import torch
 
-from .common import create_loss_function
+from .common import (
+    calculate_prediction_health,
+    collapse_penalty_from_health,
+    create_loss_function,
+)
 from .early_stopping import make_weights_only_safe
 from .experiment_tracking import create_experiment_tracker, training_params
 
@@ -70,6 +74,8 @@ class FinancialLightningModule(_LIGHTNING_MODULE_BASE):
         self.config_obj = config
         self.model_type = model_type
         self.criterion = create_loss_function(config)
+        self._val_epoch_predictions = []
+        self._val_epoch_targets = []
 
     def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         return _batch_forward(self.model, batch)
@@ -97,8 +103,33 @@ class FinancialLightningModule(_LIGHTNING_MODULE_BASE):
             "val/rmse": rmse,
             "val/directional_accuracy": directional_accuracy,
         }
+        self._val_epoch_predictions.extend(output.detach().cpu().numpy().flatten().tolist())
+        self._val_epoch_targets.extend(target.detach().cpu().numpy().flatten().tolist())
         self.log_dict(metrics, prog_bar=False, on_epoch=True, on_step=False)
         return metrics
+
+    def on_validation_epoch_start(self) -> None:
+        self._val_epoch_predictions = []
+        self._val_epoch_targets = []
+
+    def on_validation_epoch_end(self) -> None:
+        if getattr(self.trainer, "sanity_checking", False):
+            return
+        health = calculate_prediction_health(self._val_epoch_predictions, self._val_epoch_targets)
+        collapse_penalty, is_collapsed = collapse_penalty_from_health(health)
+        metrics = {
+            "val/pred_positive_rate": health["pred_positive_rate"],
+            "val/pred_negative_rate": health["pred_negative_rate"],
+            "val/pred_std": health["pred_std"],
+            "val/pred_mean": health["pred_mean"],
+            "val/collapse_penalty": collapse_penalty,
+            "val/is_collapsed": float(is_collapsed),
+        }
+        if health["target_positive_rate"] is not None:
+            metrics["val/target_positive_rate"] = health["target_positive_rate"]
+        if health["pred_target_corr"] is not None:
+            metrics["val/pred_target_corr"] = health["pred_target_corr"]
+        self.log_dict(metrics, prog_bar=False, on_epoch=True, on_step=False)
 
     def configure_optimizers(self):
         optimizer = self._create_optimizer()
@@ -180,6 +211,7 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         self.checkpoint_metadata = checkpoint_metadata or {}
         self.save_best_only = save_best_only
         self.best_score = None
+        self.best_selection_score = None
         self.best_path = None
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -188,10 +220,14 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         if score is None:
             return
         score_value = float(score.detach().cpu().item() if isinstance(score, torch.Tensor) else score)
-        improved = self.best_score is None or score_value < self.best_score
+        collapse_penalty = _metric_to_float(trainer.callback_metrics.get("val/collapse_penalty")) or 0.0
+        is_collapsed = bool(_metric_to_float(trainer.callback_metrics.get("val/is_collapsed")) or 0.0)
+        selection_score = score_value + collapse_penalty
+        improved = self.best_selection_score is None or selection_score < self.best_selection_score
         if self.save_best_only and not improved:
             return
         if improved:
+            self.best_selection_score = selection_score
             self.best_score = score_value
 
         optimizer = trainer.optimizers[0] if trainer.optimizers else None
@@ -204,12 +240,33 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
             "model_state_dict": pl_module.model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
             "score": score_value,
+            "selection_score": selection_score,
             "loss": train_loss_value,
             "best_val_loss": score_value,
+            "val_metrics": {
+                key.replace("val/", ""): value
+                for key, value in {
+                    "val/loss": score_value,
+                    "val/mse": _metric_to_float(trainer.callback_metrics.get("val/mse")),
+                    "val/mae": _metric_to_float(trainer.callback_metrics.get("val/mae")),
+                    "val/rmse": _metric_to_float(trainer.callback_metrics.get("val/rmse")),
+                    "val/directional_accuracy": _metric_to_float(trainer.callback_metrics.get("val/directional_accuracy")),
+                    "val/pred_positive_rate": _metric_to_float(trainer.callback_metrics.get("val/pred_positive_rate")),
+                    "val/pred_negative_rate": _metric_to_float(trainer.callback_metrics.get("val/pred_negative_rate")),
+                    "val/pred_std": _metric_to_float(trainer.callback_metrics.get("val/pred_std")),
+                    "val/pred_mean": _metric_to_float(trainer.callback_metrics.get("val/pred_mean")),
+                    "val/target_positive_rate": _metric_to_float(trainer.callback_metrics.get("val/target_positive_rate")),
+                    "val/pred_target_corr": _metric_to_float(trainer.callback_metrics.get("val/pred_target_corr")),
+                    "val/collapse_penalty": collapse_penalty,
+                    "val/is_collapsed": float(is_collapsed),
+                }.items()
+                if value is not None
+            },
             **self.checkpoint_metadata,
             "metadata": {
                 "model_type": self.model_type,
                 "training_backend": "lightning",
+                "is_collapsed": is_collapsed,
                 **self.checkpoint_metadata,
             },
         }

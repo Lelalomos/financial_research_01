@@ -26,7 +26,7 @@
     "sequences": {
       "SEQUENCE_LENGTH": 30,
       "PREDICTION_HORIZON": 5,
-      "TARGET_THRESHOLD": 10.0,
+      "TARGET_THRESHOLD": 2.0,
       "NORMALIZE_TARGET": true,
       "STRIDE": 1
     },
@@ -85,6 +85,7 @@
         "rsi_features": true,
         "stochrsi_features": true,
         "macd_features": true,
+        "geometric_features": true,
         "fibonacci_features": false,
         "candlestick_patterns": true,
         "vix": true,
@@ -108,7 +109,7 @@
       "DEFAULT_REGIME": 1
     },
     "normalization": {
-      "NORMALIZATION_METHOD": "log_transform",
+      "NORMALIZATION_METHOD": "robust",
       "LOG_TRANSFORM_OFFSET": 1.0
     },
     "filtering": {

@@ -136,6 +136,62 @@ def test_lightning_training_smoke_saves_custom_checkpoint(tmp_path):
     assert checkpoint["metadata"]["training_backend"] == "lightning"
     assert checkpoint["feature_cols"] == ["a", "b", "c"]
     assert "model_state_dict" in checkpoint
+    assert "val_metrics" in checkpoint
+
+
+def test_lightning_checkpoint_penalizes_one_sided_validation_predictions(tmp_path):
+    _require_lightning()
+    callback = CustomFormatCheckpointCallback(
+        save_dir=str(tmp_path),
+        model_type="tiny",
+        checkpoint_metadata={},
+        save_best_only=True,
+    )
+
+    class DummyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(2, 1)
+
+    class DummyModule:
+        def __init__(self):
+            self.model = DummyModel()
+
+    class DummyTrainer:
+        def __init__(self, metrics, epoch):
+            self.callback_metrics = metrics
+            self.current_epoch = epoch
+            self.optimizers = [torch.optim.SGD(DummyModel().parameters(), lr=0.1)]
+
+    pl_module = DummyModule()
+
+    collapsed_metrics = {
+        "val/loss": torch.tensor(0.10),
+        "val/collapse_penalty": torch.tensor(1050.0),
+        "val/is_collapsed": torch.tensor(1.0),
+        "val/directional_accuracy": torch.tensor(0.54),
+        "val/pred_positive_rate": torch.tensor(1.0),
+        "val/pred_negative_rate": torch.tensor(0.0),
+        "val/pred_std": torch.tensor(1e-6),
+    }
+    healthy_metrics = {
+        "val/loss": torch.tensor(0.20),
+        "val/collapse_penalty": torch.tensor(0.0),
+        "val/is_collapsed": torch.tensor(0.0),
+        "val/directional_accuracy": torch.tensor(0.56),
+        "val/pred_positive_rate": torch.tensor(0.62),
+        "val/pred_negative_rate": torch.tensor(0.38),
+        "val/pred_std": torch.tensor(0.02),
+    }
+
+    callback.on_validation_epoch_end(DummyTrainer(collapsed_metrics, epoch=0), pl_module)
+    first_score = callback.best_selection_score
+    callback.on_validation_epoch_end(DummyTrainer(healthy_metrics, epoch=1), pl_module)
+
+    assert callback.best_selection_score < first_score
+    checkpoint = torch.load(Path(callback.best_path), map_location="cpu", weights_only=True)
+    assert checkpoint["metadata"]["is_collapsed"] is False
+    assert checkpoint["selection_score"] < first_score
 
 
 def test_lightning_trainer_uses_custom_trainer_gradient_clip_config():

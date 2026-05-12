@@ -1,7 +1,7 @@
 # Lightning Training Backend
 
-Phase 5 Task 5.1 makes PyTorch Lightning the default training backend while
-keeping the existing custom `Trainer` as the backup path.
+Phase 5 makes PyTorch Lightning the default training backend while keeping the
+existing custom `Trainer` as the backup path.
 
 ## Backend Selection
 
@@ -57,6 +57,7 @@ The Lightning backend wraps the existing PyTorch model and reuses:
 - configured loss function
 - optimizer settings
 - scheduler settings
+- gradient clipping settings
 
 Lightning checkpoints are not used as the production prediction artifact.
 Instead, the Lightning path writes a custom-compatible `.pth` checkpoint with:
@@ -67,21 +68,64 @@ Instead, the Lightning path writes a custom-compatible `.pth` checkpoint with:
 - feature metadata
 - target normalization metadata
 - `metadata.training_backend = "lightning"`
+- validation metrics for the selected checkpoint
 
 This keeps the current prediction/checkpoint loading contract intact.
+
+## Validation Health and Best-Checkpoint Selection
+
+Lightning now tracks validation prediction-health diagnostics at the end of
+each validation epoch:
+
+- `val/pred_positive_rate`
+- `val/pred_negative_rate`
+- `val/pred_std`
+- `val/pred_mean`
+- `val/target_positive_rate`
+- `val/pred_target_corr`
+- `val/collapse_penalty`
+- `val/is_collapsed`
+
+Best-checkpoint selection is no longer based on raw `val/loss` alone. The
+saved `*_best_lightning.pth` path uses:
+
+```text
+selection_score = val_loss + collapse_penalty
+```
+
+This is intended to avoid promoting obviously collapsed checkpoints, such as
+near-constant or one-sided positive-only validation predictions, as the
+production `best_lightning` artifact.
+
+The custom-compatible checkpoint now includes:
+
+- `selection_score`
+- `val_metrics`
+- `metadata.is_collapsed`
+
+## Parity Decision
+
+Task 5.2 keeps Lightning as the default backend. The parity scope verified:
+
+- the same configured loss factory is used by both backends
+- optimizer and scheduler settings are created from the same config values
+- Lightning now passes `GRADIENT_CLIP_VALUE` into its trainer
+- a same-seed single-batch training comparison produces matching model weights
+- Lightning custom-format checkpoints load through the existing `Predictor`
 
 ## Backup Trainer
 
 The existing custom `Trainer` remains available through `--backend custom`.
-Use it when debugging low-level training behavior or if Lightning dependency
-issues occur.
+Use it when debugging low-level training behavior, if Lightning dependency
+issues occur, or when a workflow needs full optimizer-state resume from an
+existing custom checkpoint.
 
 ## Current Limitations
 
 - Full optimizer resume for Lightning from existing custom checkpoints is not
-  implemented in Task 5.1; Lightning loads model weights for `--resume` and
-  `--fine-tune`.
-- Lightning remains subject to Task 5.2 parity analysis before removing the
-  custom trainer backup.
-- The custom `Trainer` should not be deleted until parity and checkpoint
-  behavior are proven on realistic runs.
+  implemented; Lightning loads model weights for `--resume` and `--fine-tune`.
+- The custom `Trainer` should not be deleted because it remains the fallback
+  and the explicit path for optimizer-resume workflows.
+- Collapse-aware selection improves checkpoint choice, but it does not solve a
+  weak underlying dataset or feature set by itself. Retraining is still
+  required for existing bad checkpoints.

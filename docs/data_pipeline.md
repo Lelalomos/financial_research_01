@@ -40,10 +40,21 @@ data = downloader.load_saved_data()
 
 ### Technical Indicators
 
-- **EMA**: Exponential Moving Average (50, 100, 200)
+- **EMA**: Exponential Moving Average (current default periods: 50, 200)
 - **RSI**: Relative Strength Index (14)
 - **StochRSI**: Stochastic RSI (14)
 - **MACD**: Moving Average Convergence Divergence
+
+### Geometric / Structural Features
+
+Geometric features are enabled by default through
+`data.features.FEATURE_FLAGS.geometric_features`.
+
+- **ATR_14_NORM**: ATR normalized by price
+- **ROC_10**: 10-period rate of change
+- **BB_WIDTH_20**: Bollinger Band width
+- **SLOPE_SUP_20**: Linear-regression slope of a 20-day rolling support proxy
+- **SLOPE_RES_20**: Linear-regression slope of a 20-day rolling resistance proxy
 
 ### Fibonacci Retracement Features
 
@@ -69,6 +80,13 @@ All 100+ TA-Lib patterns are included:
 - Hammer/Hanging Man
 - Morning/Evening Star
 - And many more...
+
+You can also exclude specific candlestick patterns through
+`data.candlestick.EXCLUDE_PATTERNS` in `config/main.json` while keeping the
+rest of the candlestick feature set enabled.
+
+The current default config excludes 29 ultra-sparse `CDL*` patterns so the
+generated feature set avoids the noisiest rare-event candlestick columns.
 
 ### Time Features
 
@@ -198,7 +216,7 @@ sequence_length = config.data.sequences.SEQUENCE_LENGTH  # 30
 prediction_horizon = config.data.sequences.PREDICTION_HORIZON  # 5
 
 # Access technical indicators
-ema_periods = config.data.technical_indicators.EMA_PERIODS  # [50, 100, 200]
+ema_periods = config.data.technical_indicators.EMA_PERIODS  # [50, 200]
 
 # Access Fibonacci configuration
 fib_window = config.data.fibonacci.FIBONACCI_WINDOW  # 30

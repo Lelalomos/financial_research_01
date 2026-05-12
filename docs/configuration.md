@@ -89,7 +89,7 @@ config.data.technical_indicators.EMA_PERIODS.append(20)
 {
   "data": {
     "technical_indicators": {
-      "EMA_PERIODS": [50, 100, 200],
+      "EMA_PERIODS": [50, 200],
       "RSI_PERIOD": 14,
       "STOCHRSI_PERIOD": 14,
       "MACD_PARAMS": [12, 26, 9]
@@ -133,6 +133,7 @@ The Fibonacci retracement features include:
         "rsi_features": true,
         "stochrsi_features": true,
         "macd_features": true,
+        "geometric_features": true,
         "fibonacci_features": false,
         "candlestick_patterns": true,
         "vix": true,
@@ -152,9 +153,33 @@ The Fibonacci retracement features include:
 `fibonacci_features` is disabled by default. Enable it when you want the
 additional retracement columns included in training features.
 
+`geometric_features` is enabled by default. It adds normalized ATR, rate of
+change, Bollinger Band width, and support/resistance slope features.
+
 The `polars_*` flags are disabled by default. They enable opt-in Polars
 implementations for time features, Fibonacci features, and external data merges
 while preserving pandas DataFrame outputs. See `docs/polars_migration.md`.
+
+### Candlestick Configuration
+
+Candlestick generation can be enabled globally and selectively pruned:
+
+```json
+{
+  "data": {
+    "candlestick": {
+      "USE_CANDLESTICK_PATTERNS": true,
+      "EXCLUDE_PATTERNS": ["CDL3STARSINSOUTH", "CDLKICKING"]
+    }
+  }
+}
+```
+
+`EXCLUDE_PATTERNS` removes specific TA-Lib `CDL*` features during feature
+engineering while keeping the rest of the candlestick set enabled.
+
+The current default config excludes 29 ultra-sparse candlestick patterns based
+on prior feature-sparsity analysis.
 
 ### Market Regime Detection
 
@@ -208,14 +233,15 @@ The model config has separate sections for each model type:
       "LEARNING_RATE": 0.0001,
       "WEIGHT_DECAY": 0.00001,
       "BATCH_SIZE": 128,
-      "NUM_EPOCHS": 200,
+      "NUM_EPOCHS": 30,
       "EARLY_STOPPING_PATIENCE": 15,
       "OPTIMIZER": "adam",
       "SCHEDULER": "reduce_on_plateau"
     },
     "loss": {
-      "LOSS_TYPE": "huber",
-      "HUBER_DELTA": 0.1
+      "LOSS_TYPE": "directional_mse",
+      "HUBER_DELTA": 1.0,
+      "DIRECTIONAL_ALPHA": 0.1
     },
     "models": {
       "lstm3_attention": {
@@ -284,10 +310,22 @@ config.model.embeddings.EMBEDDING_DIM_DIVIDEND_FLAG = 8
 ```python
 config.model.training.LEARNING_RATE = 1e-4
 config.model.training.WEIGHT_DECAY = 1e-5
-config.model.training.BATCH_SIZE = 256
-config.model.training.NUM_EPOCHS = 200
+config.model.training.BATCH_SIZE = 128
+config.model.training.NUM_EPOCHS = 30
 config.model.training.EARLY_STOPPING_PATIENCE = 15
 ```
+
+### Validation Parameters
+
+Evaluation loaders can override the training batch size:
+
+```python
+config.model.validation.VAL_BATCH_SIZE = None  # fallback to training.BATCH_SIZE
+config.model.selection.DEFAULT_MODEL_TYPE = "bilstm4_attention"
+```
+
+When `VAL_BATCH_SIZE` is `null`, validation, test, and backtest scripts fall
+back to `model.training.BATCH_SIZE`.
 
 ### Training Backend
 
@@ -307,13 +345,16 @@ backup path:
 ```
 
 Use `python scripts/train.py --backend custom` to force the custom trainer.
-See `docs/lightning_backend.md` for compatibility and checkpoint details.
+Lightning reuses the configured loss, optimizer, scheduler, and gradient
+clipping settings. See `docs/lightning_backend.md` for compatibility,
+checkpoint details, and the custom trainer fallback scope.
 
 ### Loss Function
 
 ```python
-config.model.loss.LOSS_TYPE = "huber"  # 'huber', 'mse', 'mae', 'smooth_l1'
-config.model.loss.HUBER_DELTA = 0.1
+config.model.loss.LOSS_TYPE = "directional_mse"  # e.g. 'directional_mse', 'huber', 'mse', 'mae', 'smooth_l1'
+config.model.loss.DIRECTIONAL_ALPHA = 0.1
+config.model.loss.HUBER_DELTA = 1.0  # used only when LOSS_TYPE == "huber"
 ```
 
 ### Local MLflow Experiment Tracking

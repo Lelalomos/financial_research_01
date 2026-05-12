@@ -3,7 +3,7 @@
 # Usage: ./scripts/train.sh [options]
 #
 # Options:
-#   --model-type TYPE     Model type: crnn, rnn, rnn_attention, crnn_attention, transformer (default: crnn_attention)
+#   --model-type TYPE     Override model type from config/model.json
 #   --epochs N            Number of epochs (default: 100)
 #   --batch-size N        Batch size (default: 256)
 #   --learning-rate RATE  Learning rate (default: 1e-4)
@@ -23,10 +23,10 @@
 set -e
 
 # Default values
-MODEL_TYPE="bilstm4_attention"
+MODEL_TYPE=""
 EPOCHS=30
 BATCH_SIZE=32
-LEARNING_RATE=0.00001
+LEARNING_RATE=0.0001
 BACKEND="lightning"
 STOCKS=""
 FINE_TUNE=""
@@ -107,7 +107,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [options]"
             echo ""
             echo "Options:"
-            echo "  --model-type TYPE     Model type (default: crnn_attention)"
+            echo "  --model-type TYPE     Override model type from config/model.json"
             echo "  --epochs N            Number of epochs (default: 100)"
             echo "  --batch-size N        Batch size (default: 256)"
             echo "  --learning-rate RATE  Learning rate (default: 1e-4)"
@@ -166,7 +166,11 @@ start_mlflow_ui() {
 }
 
 # Build command
-CMD="docker exec crnn_predictor python scripts/train.py --model-type $MODEL_TYPE --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+CMD="docker exec crnn_predictor python scripts/train.py --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+
+if [ -n "$MODEL_TYPE" ]; then
+    CMD="$CMD --model-type $MODEL_TYPE"
+fi
 
 # Add device if specified
 if [ -n "$DEVICE" ]; then
@@ -188,7 +192,11 @@ fi
 echo "=========================================="
 echo "TRAINING MODEL"
 echo "=========================================="
-echo "Model type: $MODEL_TYPE"
+if [ -n "$MODEL_TYPE" ]; then
+    echo "Model type override: $MODEL_TYPE"
+else
+    echo "Model type: from config/model.json"
+fi
 echo "Epochs: $EPOCHS"
 echo "Batch size: $BATCH_SIZE"
 echo "Learning rate: $LEARNING_RATE"

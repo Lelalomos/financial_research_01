@@ -198,6 +198,52 @@ class FeatureEngineer:
         self.logger.info(f"Added technical indicators. Shape: {result.shape}")
         return result
 
+    def add_geometric_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add geometric and high-level structural features.
+        Inspired by QuantAgent's Trend and Indicator agents.
+        
+        Features:
+        - ATR_14_NORM: Volatility normalized by price
+        - ROC_10: Rate of change (momentum)
+        - BB_WIDTH_20: Bollinger Band width (volatility squeeze)
+        - SLOPE_SUP_20: Slope of support line (20-day low)
+        - SLOPE_RES_20: Slope of resistance line (20-day high)
+        """
+        if not self.config.data.features.FEATURE_FLAGS.get('geometric_features', True):
+            return df
+
+        self.logger.info("Adding geometric and structural features...")
+        result = df.copy()
+
+        for ticker in result['tic'].unique():
+            mask = result['tic'] == ticker
+            stock_df = result[mask].copy().sort_values('date')
+
+            # 1. Normalized ATR (Volatility)
+            atr = talib.ATR(stock_df['high'].values, stock_df['low'].values, stock_df['close'].values, timeperiod=14)
+            stock_df['atr_14_norm'] = atr / stock_df['close']
+
+            # 2. ROC (Momentum)
+            stock_df['roc_10'] = talib.ROC(stock_df['close'].values, timeperiod=10)
+
+            # 3. Bollinger Band Width (Squeeze)
+            upper, middle, lower = talib.BBANDS(stock_df['close'].values, timeperiod=20)
+            stock_df['bb_width_20'] = (upper - lower) / middle
+
+            # 4. Support/Resistance Slopes (Trend Geometry)
+            # We use rolling min/max as proxies for support/resistance levels
+            rolling_min = stock_df['low'].rolling(window=20).min()
+            rolling_max = stock_df['high'].rolling(window=20).max()
+            
+            # Fill initial NaNs to allow talib to work
+            stock_df['slope_sup_20'] = talib.LINEARREG_SLOPE(rolling_min.fillna(method='bfill').values, timeperiod=20)
+            stock_df['slope_res_20'] = talib.LINEARREG_SLOPE(rolling_max.fillna(method='bfill').values, timeperiod=20)
+
+            result.loc[mask, stock_df.columns] = stock_df
+
+        return result
+
     def add_fibonacci_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Add Fibonacci retracement features to DataFrame.
@@ -613,6 +659,9 @@ class FeatureEngineer:
         # 2. Add technical indicators
         result = self.add_technical_indicators(result)
 
+        # 2.1 Add geometric and volatility features (Inspired by QuantAgent)
+        result = self.add_geometric_features(result)
+
         # 2.5. Add Fibonacci retracement features
         result = self.add_fibonacci_features(result)
 
@@ -675,6 +724,7 @@ class FeatureEngineer:
         ema_features = [c for c in feature_cols if c.startswith('ema_')]
         rsi_features = [c for c in feature_cols if 'rsi' in c.lower()]
         macd_features = [c for c in feature_cols if 'macd' in c.lower()]
+        geometric_features = [c for c in feature_cols if any(x in c.lower() for x in ['atr_', 'roc_', 'slope_', 'bb_width'])]
         pattern_features = [c for c in feature_cols if c.startswith('CDL')]
         external_features = [c for c in feature_cols if c in ['vix', 'bondyield'] or c in self.config.data.sources.COMMODITIES.values()]
         time_features = ['day', 'month', 'dayofweek']
@@ -690,6 +740,7 @@ class FeatureEngineer:
             'ema_features': len(ema_features),
             'rsi_features': len(rsi_features),
             'macd_features': len(macd_features),
+            'geometric_features': len(geometric_features),
             'candlestick_patterns': len(pattern_features),
             'external_features': len(external_features),
             'time_features': len([f for f in time_features if f in feature_cols]),

@@ -1,6 +1,6 @@
 # Multi-Model Financial Forecasting
 
-An AI-assisted multi-model financial forecasting platform built with PyTorch. It learns patterns from S&P 500 stocks using deep learning models, technical indicators, candlestick patterns, and external market data.
+An AI-assisted multi-model financial forecasting platform built with PyTorch. It learns patterns from S&P 500 stocks using deep learning models, technical indicators, geometric price-structure features, candlestick patterns, and external market data.
 
 ## Development Approach
 
@@ -33,8 +33,9 @@ The development process follows a human-AI collaborative approach:
 - **Multiple Model Architectures**: CRNN, RNN, RNN+Attention, CRNN+Attention, Transformer, LSTM3, LSTM3+Attention, **BiLSTM4+Attention**
 - **Comprehensive Feature Engineering**:
   - Technical indicators (EMA, RSI, StochRSI, MACD)
+  - Geometric / structural features (normalized ATR, ROC, Bollinger Band width, support/resistance slopes)
   - **Fibonacci retracement levels** (38.2%, 50%, 61.8%) with normalized distance features
-  - 100+ candlestick patterns via TA-Lib
+  - 100+ candlestick patterns via TA-Lib, with optional sparse-pattern exclusion
   - External data (VIX, commodities, treasury yields)
   - Time-based features (day, month embeddings)
   - **Dividend flag feature** (1=has dividend, 2=no dividend) with embedding
@@ -54,7 +55,7 @@ The development process follows a human-AI collaborative approach:
 - **Configurable Prediction Horizon** (default: 5 days)
 - **Docker Deployment** with GPU support
 - **Comprehensive Logging** and TensorBoard integration
-- **Backtesting** with performance metrics
+- **Backtesting** with performance metrics, turnover, and transaction-cost reporting
 - **Prediction System** with support for single/batch/interactive prediction
 - **Hyperparameter Tuning** with Optuna (automated search for best parameters)
 
@@ -222,7 +223,8 @@ research_02/
 | Source | Description |
 |--------|-------------|
 | **S&P 500 Stocks** | yfinance (live download) |
-| **Technical Indicators** | EMA 50/100/200, RSI, StochRSI, MACD |
+| **Technical Indicators** | EMA 50/200, RSI, StochRSI, MACD |
+| **Geometric Features** | Normalized ATR, ROC, Bollinger Band width, support/resistance slopes |
 | **Candlestick Patterns** | 100+ patterns via TA-Lib |
 | **Financial Metrics** | PE ratio, PEG ratio, EPS, ROE, ROI, debt ratios, current ratio, dividend yield |
 | **VIX Index** | Volatility index (^VIX) |
@@ -553,7 +555,7 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
       "PREDICTION_HORIZON": 5
     },
     "technical_indicators": {
-      "EMA_PERIODS": [50, 100, 200],
+      "EMA_PERIODS": [50, 200],
       "RSI_PERIOD": 14
     },
     "fibonacci": {
@@ -619,6 +621,10 @@ The current default training profile favors directional learning:
 - `BATCH_SIZE = 128`
 - `NUM_EPOCHS = 30`
 - `LOSS_TYPE = "directional_mse"`
+
+Lightning is the default training backend. The saved `*_best_lightning.pth`
+checkpoint now includes validation prediction-health diagnostics, and best
+checkpoint selection penalizes obviously collapsed one-sided validation output.
 
 #### Hyperparameter Configuration (`config/hyperparameter.json`)
 
