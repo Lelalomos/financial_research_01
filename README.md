@@ -131,6 +131,37 @@ pytest tests/test_sampling.py -v
 pytest tests/test_optuna_tune.py -v
 ```
 
+### Training Monitoring
+
+Use the shell wrapper when you want TensorBoard and optional local MLflow
+during training:
+
+```bash
+./scripts/train.sh --model-type bilstm4_attention --monitor
+./scripts/train.sh --model-type bilstm4_attention --mlflow
+./scripts/train.sh --model-type bilstm4_attention --monitor-all
+```
+
+- `--monitor`: start TensorBoard
+- `--mlflow`: start the local MLflow UI
+- `--monitor-all`: start both
+
+Default local outputs:
+- TensorBoard logs: `logs/tensorboard`
+- MLflow runs: `mlruns/`
+
+Key validation health signals to watch during training:
+- `val/pred_positive_rate`
+- `val/pred_negative_rate`
+- `val/pred_std`
+- `val/pred_target_corr`
+- `val/collapse_penalty`
+- `val/is_collapsed`
+
+See [docs/run_guide.md](docs/run_guide.md) for wrapper usage and
+[docs/experiment_tracking.md](docs/experiment_tracking.md) for local MLflow
+setup details.
+
 ## Project Structure
 
 ```
