@@ -585,11 +585,12 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
     "training": {
       "LEARNING_RATE": 0.0001,
       "BATCH_SIZE": 128,
-      "NUM_EPOCHS": 200,
+      "NUM_EPOCHS": 30,
       "EARLY_STOPPING_PATIENCE": 15
     },
     "loss": {
-      "LOSS_TYPE": "huber"
+      "LOSS_TYPE": "directional_mse",
+      "DIRECTIONAL_ALPHA": 0.1
     },
     "ensemble": {
       "ENABLED": false,
@@ -611,6 +612,13 @@ main_config.data.technical_indicators.EMA_PERIODS.append(20)   # Add EMA period
   }
 }
 ```
+
+The current default training profile favors directional learning:
+
+- `LEARNING_RATE = 0.0001`
+- `BATCH_SIZE = 128`
+- `NUM_EPOCHS = 30`
+- `LOSS_TYPE = "directional_mse"`
 
 #### Hyperparameter Configuration (`config/hyperparameter.json`)
 
