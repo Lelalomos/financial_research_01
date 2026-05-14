@@ -3,6 +3,7 @@ Unit tests for data pipeline components.
 """
 
 import unittest
+import copy
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -13,6 +14,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
+from src.config.config_loader import Config
 from src.data.downloader import DataDownloader
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
@@ -24,8 +26,13 @@ class TestDataPipeline(unittest.TestCase):
 
     def setUp(self):
         """Set up test fixtures."""
-        self.config = load_config('main')
+        self.config = Config(copy.deepcopy(load_config('main').to_dict()))
         self.model_config = load_config('model')
+        # Synthetic pipeline fixtures in this file do not include external VIX
+        # inputs, so keep regime-dependent preprocessing disabled here unless a
+        # test explicitly opts into it.
+        self.config.data.features.FEATURE_FLAGS._data['market_regime'] = False
+        self.config.data.regime._data['ENABLED'] = False
 
         # Create sample data
         self.sample_data = self._create_sample_data()

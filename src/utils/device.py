@@ -120,6 +120,80 @@ def get_device(
     return device
 
 
+def resolve_device(
+    requested_device: Optional[str] = None,
+    force_cpu: bool = False,
+    verbose: bool = True
+) -> torch.device:
+    """
+    Resolve a runtime device robustly for inference/evaluation scripts.
+
+    Behavior:
+        - `force_cpu=True` always returns CPU.
+        - `requested_device=None` uses the existing auto-detect path.
+        - `cpu` returns CPU directly.
+        - `cuda` / `cuda:N` are validated by real tensor allocation before use.
+        - invalid or unusable CUDA requests fall back to CPU with a clear message.
+    """
+    if force_cpu:
+        return get_device(force_cpu=True, verbose=verbose)
+
+    if requested_device is None:
+        return get_device(force_cpu=False, verbose=verbose)
+
+    requested = str(requested_device).strip().lower()
+    if requested == "cpu":
+        if verbose:
+            print("Using manually specified device: cpu")
+        return torch.device("cpu")
+
+    if requested.startswith("cuda"):
+        if not torch.cuda.is_available():
+            if verbose:
+                print(f"Requested device {requested_device}, but CUDA is not available. Falling back to CPU.")
+            return torch.device("cpu")
+
+        try:
+            device = torch.device(requested_device)
+        except (TypeError, RuntimeError, ValueError) as exc:
+            if verbose:
+                print(f"Invalid CUDA device '{requested_device}': {exc}. Falling back to CPU.")
+            return torch.device("cpu")
+
+        device_index = 0 if device.index is None else device.index
+        if device_index >= torch.cuda.device_count():
+            if verbose:
+                print(
+                    f"Requested CUDA device index {device_index} is out of range "
+                    f"(available GPUs: {torch.cuda.device_count()}). Falling back to CPU."
+                )
+            return torch.device("cpu")
+
+        try:
+            test_tensor = torch.zeros(1, device=device)
+            del test_tensor
+            torch.cuda.empty_cache()
+        except RuntimeError as exc:
+            if verbose:
+                print(f"CUDA runtime error on {requested_device}: {exc}")
+                print("Falling back to CPU.")
+            return torch.device("cpu")
+
+        if verbose:
+            print(f"Using manually specified device: {device}")
+            print_gpu_info()
+        return device
+
+    try:
+        device = torch.device(requested_device)
+    except (TypeError, RuntimeError, ValueError) as exc:
+        raise ValueError(f"Unsupported device '{requested_device}': {exc}") from exc
+
+    if verbose:
+        print(f"Using manually specified device: {device}")
+    return device
+
+
 def print_gpu_info() -> None:
     """Print detailed GPU information.
 

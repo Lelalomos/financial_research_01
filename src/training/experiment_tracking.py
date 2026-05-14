@@ -93,11 +93,12 @@ class LocalMLflowTracker:
             self._active_run = None
 
 
-def create_experiment_tracker(config) -> NoOpTracker:
+def create_experiment_tracker(config):
     """
     Build an experiment tracker from model config.
 
     Tracking is disabled unless `model.experiment_tracking.ENABLED` is true.
+    Falls back to NoOpTracker with a warning when MLflow is not installed.
     """
     tracking_config = getattr(config.model, "experiment_tracking", None)
     if tracking_config is None or not tracking_config.ENABLED:
@@ -107,13 +108,23 @@ def create_experiment_tracker(config) -> NoOpTracker:
     if backend != "mlflow":
         raise ExperimentTrackingError(f"Unsupported experiment tracking backend: {backend}")
 
-    return LocalMLflowTracker(
-        tracking_uri=tracking_config.MLFLOW_TRACKING_URI,
-        experiment_name=tracking_config.EXPERIMENT_NAME,
-        log_params_enabled=tracking_config.LOG_PARAMS,
-        log_metrics_enabled=tracking_config.LOG_METRICS,
-        log_artifacts_enabled=tracking_config.LOG_ARTIFACTS,
-    )
+    try:
+        return LocalMLflowTracker(
+            tracking_uri=tracking_config.MLFLOW_TRACKING_URI,
+            experiment_name=tracking_config.EXPERIMENT_NAME,
+            log_params_enabled=tracking_config.LOG_PARAMS,
+            log_metrics_enabled=tracking_config.LOG_METRICS,
+            log_artifacts_enabled=tracking_config.LOG_ARTIFACTS,
+        )
+    except ExperimentTrackingError:
+        import warnings
+        warnings.warn(
+            "MLflow is not installed. Experiment tracking is disabled. "
+            "Install it with `pip install mlflow` or set "
+            "model.experiment_tracking.ENABLED=false.",
+            stacklevel=2,
+        )
+        return NoOpTracker()
 
 
 def training_params(config, model_type: str) -> Dict[str, Any]:

@@ -121,6 +121,103 @@ The Fibonacci retracement features include:
 - `dist_fib_38`, `dist_fib_50`, `dist_fib_61`: Normalized distance features
 - `break_fib_61`: Binary indicator (1 if close < fib_61)
 
+### Geometric Feature Window
+
+The geometric feature block supports a shared window plus per-feature flags:
+
+```json
+{
+  "data": {
+    "geometric": {
+      "CHANNEL_WINDOW": 20,
+      "SWING_WINDOW": 20,
+      "TRENDLINE_WINDOW": 30,
+      "TRENDLINE_TOLERANCE": 0.0001,
+      "TRENDLINE_MAX_ITERATIONS": 100,
+      "ENABLE_ATR_FEATURE": true,
+      "ENABLE_ROC_FEATURE": true,
+      "ENABLE_BB_WIDTH_FEATURE": true,
+      "ENABLE_SLOPE_FEATURES": true,
+      "ENABLE_CHANNEL_COMPRESSION": false,
+      "ENABLE_CHANNEL_POSITION": false,
+      "ENABLE_SWING_DISTANCE": false,
+      "ENABLE_SWING_TIME_DISTANCE": false,
+      "ENABLE_OPTIMIZED_TRENDLINES": false,
+      "ENABLE_OPTIMIZED_CHANNEL_WIDTH": false
+    }
+  }
+}
+```
+
+`CHANNEL_WINDOW` controls the rolling min/max window and the linear-regression
+slope period used for support and resistance slope features. The current output
+column names remain `slope_sup_20` and `slope_res_20` for backward
+compatibility even if the configured window changes.
+
+`SWING_WINDOW` controls the rolling lookback used for the structural swing
+features.
+
+`TRENDLINE_WINDOW`, `TRENDLINE_TOLERANCE`, and
+`TRENDLINE_MAX_ITERATIONS` control the optional pivot-anchored optimized
+trendline solver described in `docs/deep-dive-technical.md`.
+
+`ENABLE_ATR_FEATURE`, `ENABLE_ROC_FEATURE`, and `ENABLE_BB_WIDTH_FEATURE`
+control whether the existing ATR, ROC, and Bollinger-width geometric columns
+are generated.
+
+`ENABLE_SLOPE_FEATURES` controls whether support/resistance slope columns are
+generated when the master `data.features.FEATURE_FLAGS.geometric_features` flag
+is enabled.
+
+`ENABLE_CHANNEL_COMPRESSION` controls generation of `channel_compression_20`,
+which measures normalized channel width:
+
+```python
+(rolling_max - rolling_min) / abs(close)
+```
+
+`ENABLE_CHANNEL_POSITION` controls generation of `channel_position_20`, which
+measures where the close sits inside the channel:
+
+```python
+(close - rolling_min) / (rolling_max - rolling_min)
+```
+
+Both features use epsilon guards internally to avoid divide-by-zero when price
+or channel width is effectively zero.
+
+`ENABLE_SWING_DISTANCE` controls:
+
+- `dist_to_swing_high_20`
+- `dist_to_swing_low_20`
+
+These measure normalized distance from the close to the rolling swing high/low
+defined by `SWING_WINDOW`.
+
+`ENABLE_SWING_TIME_DISTANCE` controls:
+
+- `days_since_swing_high_20`
+- `days_since_swing_low_20`
+
+These count bars since the most recent occurrence of the rolling swing high/low
+inside the `SWING_WINDOW` lookback.
+
+`ENABLE_OPTIMIZED_TRENDLINES` controls:
+
+- `opt_slope_sup_30`
+- `opt_slope_res_30`
+
+These are pivot-anchored optimized support/resistance slopes fit over
+`TRENDLINE_WINDOW`. The current output names remain suffixed with `_30` for
+compatibility even if the configured window changes.
+
+`ENABLE_OPTIMIZED_CHANNEL_WIDTH` controls:
+
+- `opt_channel_width_30`
+
+This measures the end-of-window width between the optimized resistance and
+support lines over the configured trendline window.
+
 ### Feature Flags
 
 ```json
@@ -348,6 +445,24 @@ Use `python scripts/train.py --backend custom` to force the custom trainer.
 Lightning reuses the configured loss, optimizer, scheduler, and gradient
 clipping settings. See `docs/lightning_backend.md` for compatibility,
 checkpoint details, and the custom trainer fallback scope.
+
+Checkpoint settings are shared by both backends:
+
+```python
+config.model.checkpointing.CHECKPOINT_DIR = "models/checkpoints"
+config.model.checkpointing.SAVE_BEST_ONLY = True
+config.model.checkpointing.SAVE_LAST_N = 3
+config.model.checkpointing.CHECKPOINT_FREQUENCY = 1
+```
+
+Semantics:
+- `SAVE_BEST_ONLY = true`: save only best-improving checkpoints to a stable
+  best-file path
+- `SAVE_BEST_ONLY = false`: still save best-improving checkpoints, and also
+  overwrite a stable periodic checkpoint every `CHECKPOINT_FREQUENCY` epochs
+- `SAVE_LAST_N`: retained for backward compatibility with older timestamped
+  checkpoint workflows; stable overwrite paths do not create additional
+  periodic files
 
 ### Loss Function
 

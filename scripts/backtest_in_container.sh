@@ -3,6 +3,8 @@
 
 set -e
 
+CONTAINER_NAME="crnn_predictor"
+ORIGINAL_ARGS=("$@")
 MODEL_PATH="latest"
 MODEL_TYPE=""
 OUTPUT_PATH="outputs/backtest_report.xlsx"
@@ -10,6 +12,8 @@ DATA_DIR="data/processed"
 SPLIT="test"
 THRESHOLD=""
 INITIAL_CAPITAL=""
+DEVICE=""
+FORCE_CPU=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -41,6 +45,14 @@ while [[ $# -gt 0 ]]; do
             INITIAL_CAPITAL="$2"
             shift 2
             ;;
+        --device)
+            DEVICE="$2"
+            shift 2
+            ;;
+        --force-cpu)
+            FORCE_CPU=true
+            shift
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo "  --model PATH_OR_ALIAS   Checkpoint path or alias (default: best)"
@@ -50,6 +62,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --split NAME            train|val|test (default: test)"
             echo "  --threshold VALUE       Prediction threshold"
             echo "  --initial-capital NUM   Initial capital"
+            echo "  --device DEVICE         Device override (e.g. cuda, cuda:0, cpu)"
+            echo "  --force-cpu            Force CPU usage"
             exit 0
             ;;
         *)
@@ -59,18 +73,37 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CMD="python scripts/backtest.py --model $MODEL_PATH --data-dir $DATA_DIR --split $SPLIT --output $OUTPUT_PATH"
+if [ ! -f "/.dockerenv" ]; then
+    if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+        echo "Container '$CONTAINER_NAME' is not running."
+        echo "Start it with: docker compose up -d"
+        exit 1
+    fi
+
+    echo "Host environment detected. Re-running inside container '$CONTAINER_NAME'..."
+    exec docker exec -i "$CONTAINER_NAME" bash -lc 'cd /app && bash ./scripts/backtest_in_container.sh "$@"' -- "${ORIGINAL_ARGS[@]}"
+fi
+
+CMD=(python scripts/backtest.py --model "$MODEL_PATH" --data-dir "$DATA_DIR" --split "$SPLIT" --output "$OUTPUT_PATH")
 
 if [ -n "$MODEL_TYPE" ]; then
-    CMD="$CMD --model-type $MODEL_TYPE"
+    CMD+=(--model-type "$MODEL_TYPE")
 fi
 
 if [ -n "$THRESHOLD" ]; then
-    CMD="$CMD --threshold $THRESHOLD"
+    CMD+=(--threshold "$THRESHOLD")
 fi
 
 if [ -n "$INITIAL_CAPITAL" ]; then
-    CMD="$CMD --initial-capital $INITIAL_CAPITAL"
+    CMD+=(--initial-capital "$INITIAL_CAPITAL")
+fi
+
+if [ -n "$DEVICE" ]; then
+    CMD+=(--device "$DEVICE")
+fi
+
+if [ "$FORCE_CPU" = true ]; then
+    CMD+=(--force-cpu)
 fi
 
 echo "=========================================="
@@ -84,8 +117,10 @@ else
 fi
 echo "Split: $SPLIT"
 echo "Output: $OUTPUT_PATH"
-echo "Command: $CMD"
+printf 'Command:'
+printf ' %q' "${CMD[@]}"
+echo ""
 echo "=========================================="
 echo ""
 
-eval $CMD
+"${CMD[@]}"

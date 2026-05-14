@@ -140,30 +140,17 @@ class Predictor:
         self.logger.info(f"  Groups: {num_groups}")
 
     def _create_model(self, model_type: str, num_features: int, num_stocks: int, num_groups: int):
-        """Create model instance."""
-        if model_type == 'lstm3_attention':
-            from src.models.lstm3_attn_model import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        elif model_type == 'crnn_attention':
-            from src.models.crnn_attention import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        elif model_type == 'crnn':
-            from src.models.crnn_model import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        elif model_type == 'rnn':
-            from src.models.rnn_model import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        elif model_type == 'rnn_attention':
-            from src.models.rnn_attention import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        elif model_type == 'transformer':
-            from src.models.transformer_model import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        elif model_type == 'lstm3':
-            from src.models.lstm3_model import create_model
-            return create_model(num_features, num_stocks, num_groups, self.model_config)
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
+        """Create model instance using the centralized model registry."""
+        from src.models import create_model
+        feature_cols = self.model_metadata.get('feature_cols')
+        return create_model(
+            model_type=model_type,
+            num_features=num_features,
+            num_stocks=num_stocks,
+            num_groups=num_groups,
+            config=self.model_config,
+            feature_cols=feature_cols,
+        )
 
     def predict(
         self,

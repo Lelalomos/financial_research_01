@@ -18,7 +18,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import load_config
 from src.data.dataset import FinancialDataset, create_data_loaders
 from src.models import create_model
-from src.training import LightningDependencyError, Trainer, train_with_lightning
+from src.training import (
+    LightningDependencyError,
+    Trainer,
+    save_final_lightning_checkpoint,
+    train_with_lightning,
+)
 from src.utils.logger import get_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
 
@@ -315,6 +320,14 @@ def main():
         config=config
     )
 
+    if loaders.get('val') is None and backend == 'lightning':
+        if config.model.training.SCHEDULER == 'reduce_on_plateau':
+            logger.warning(
+                "No validation loader is available. Disabling reduce_on_plateau "
+                "scheduler for this run because it requires val/loss."
+            )
+            config.model.training.SCHEDULER = None
+
     # Get embedding sizes
     train_dataset = loaders['train'].dataset
     embedding_sizes = train_dataset.get_embedding_sizes()
@@ -332,7 +345,8 @@ def main():
         num_features=num_features,
         num_stocks=embedding_sizes['num_stocks'],
         num_groups=embedding_sizes['num_groups'],
-        config=config
+        config=config,
+        feature_cols=preprocessing_info.get('feature_cols'),
     )
 
     # Create trainer
@@ -452,14 +466,31 @@ def main():
         )
 
     logger.info("Training complete!")
+    final_checkpoint_path = None
     if backend == 'lightning' and lightning_result is not None:
         best_score = lightning_result.get('best_score')
         if best_score is not None:
             logger.info(f"Best validation loss: {best_score:.6f}")
         if lightning_result.get('best_model_path'):
             logger.info(f"Saved Lightning custom-compatible checkpoint to {lightning_result['best_model_path']}")
+        final_checkpoint_path = save_final_lightning_checkpoint(
+            trainer=lightning_result['trainer'],
+            lightning_module=lightning_result['module'],
+            checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
+            model_type=model_type,
+            checkpoint_metadata=checkpoint_metadata,
+        )
+        logger.info(f"Saved final trained Lightning checkpoint to {final_checkpoint_path}")
     elif trainer is not None:
-        logger.info(f"Best validation loss: {trainer.checkpoint.best_score:.6f}")
+        if trainer.checkpoint.best_score is not None:
+            logger.info(f"Best validation loss: {trainer.checkpoint.best_score:.6f}")
+        else:
+            logger.info("No validation-based best checkpoint was produced.")
+        final_checkpoint_path = str(
+            Path(config.model.checkpointing.CHECKPOINT_DIR) / f"{model_type}_final.pth"
+        )
+        trainer.save_model(final_checkpoint_path)
+        logger.info(f"Saved final trained checkpoint to {final_checkpoint_path}")
 
     # Save final model with suffix if fine-tuning
     if args.stocks:

@@ -97,6 +97,10 @@ This is intended to avoid promoting obviously collapsed checkpoints, such as
 near-constant or one-sided positive-only validation predictions, as the
 production `best_lightning` artifact.
 
+When `model.checkpointing.SAVE_BEST_ONLY = false`, Lightning also writes
+an overwritten periodic checkpoint every
+`model.checkpointing.CHECKPOINT_FREQUENCY` epochs.
+
 The custom-compatible checkpoint now includes:
 
 - `selection_score`

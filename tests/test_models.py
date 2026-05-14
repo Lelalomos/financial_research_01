@@ -1,7 +1,7 @@
 """
 Unit tests for all model components.
 
-Tests all 8 model variants:
+Tests all model variants:
 - CRNNModel
 - RNNModel
 - RNNAttentionModel
@@ -10,6 +10,7 @@ Tests all 8 model variants:
 - LSTM3Model
 - LSTM3AttentionModel
 - BiLSTM4AttentionModel
+- MultiBranchBiLSTMModel
 """
 
 import pytest
@@ -33,6 +34,7 @@ from src.models import (
     LSTM3Model,
     LSTM3AttentionModel,
     BiLSTM4AttentionModel,
+    MultiBranchBiLSTMModel,
 )
 
 
@@ -45,7 +47,8 @@ ALL_MODEL_TYPES = [
     'transformer',
     'lstm3',
     'lstm3_attention',
-    'bilstm4_attention'
+    'bilstm4_attention',
+    'multi_branch_bilstm',
 ]
 
 
@@ -72,6 +75,19 @@ def sample_inputs():
         'day': torch.randint(1, 32, (batch_size, seq_len)),
         'month': torch.randint(1, 13, (batch_size, seq_len)),
         'dividend_flag': torch.randint(1, 3, (batch_size, seq_len)),  # 1=has dividend, 2=no dividend
+        'feature_cols': [
+            'open', 'high', 'low', 'close', 'volume',
+            'ema_50', 'ema_200', 'rsi_14', 'stochrsi_14', 'macd',
+            'atr_14_norm', 'roc_10', 'bb_width_20', 'slope_sup_20', 'slope_res_20',
+            'channel_compression_20', 'channel_position_20', 'dist_to_swing_high_20',
+            'dist_to_swing_low_20', 'days_since_swing_high_20', 'days_since_swing_low_20',
+            'vix', 'bondyield', 'Gold', 'Copper', 'pe_ratio', 'eps', 'roe',
+            'dayofweek', 'regime_id', 'feature_30', 'feature_31', 'feature_32',
+            'feature_33', 'feature_34', 'feature_35', 'feature_36', 'feature_37',
+            'feature_38', 'feature_39', 'feature_40', 'feature_41', 'feature_42',
+            'feature_43', 'feature_44', 'feature_45', 'feature_46', 'feature_47',
+            'feature_48', 'feature_49'
+        ],
         'batch_size': batch_size,
         'num_features': num_features,
         'num_stocks': num_stocks,
@@ -392,11 +408,12 @@ class TestModelRegistry:
     """Test model registry functionality."""
 
     def test_list_available_models(self):
-        """Test that all 8 models are listed."""
+        """Test that all registered models are listed."""
         models = list_available_models()
-        assert len(models) == 8
+        assert len(models) == 9
         expected = {'crnn', 'rnn', 'rnn_attention', 'crnn_attention',
-                   'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention'}
+                   'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention',
+                   'multi_branch_bilstm'}
         assert set(models) == expected
 
     @pytest.mark.parametrize("model_type", ALL_MODEL_TYPES)
@@ -412,7 +429,8 @@ class TestModelRegistry:
             model_type=model_type,
             num_features=sample_inputs['num_features'],
             num_stocks=sample_inputs['num_stocks'],
-            num_groups=sample_inputs['num_groups']
+            num_groups=sample_inputs['num_groups'],
+            feature_cols=sample_inputs['feature_cols'],
         )
 
         # Test forward pass
@@ -435,6 +453,8 @@ class TestModelRegistry:
         ('transformer', TransformerModel),
         ('lstm3', LSTM3Model),
         ('lstm3_attention', LSTM3AttentionModel),
+        ('bilstm4_attention', BiLSTM4AttentionModel),
+        ('multi_branch_bilstm', MultiBranchBiLSTMModel),
     ])
     def test_create_model_returns_correct_class(self, model_type, expected_class, sample_inputs):
         """Test that create_model returns the correct class."""
@@ -442,7 +462,8 @@ class TestModelRegistry:
             model_type=model_type,
             num_features=sample_inputs['num_features'],
             num_stocks=sample_inputs['num_stocks'],
-            num_groups=sample_inputs['num_groups']
+            num_groups=sample_inputs['num_groups'],
+            feature_cols=sample_inputs['feature_cols'],
         )
 
         assert isinstance(model, expected_class)
@@ -473,7 +494,8 @@ class TestModelParameters:
             model_type=model_type,
             num_features=sample_inputs['num_features'],
             num_stocks=sample_inputs['num_stocks'],
-            num_groups=sample_inputs['num_groups']
+            num_groups=sample_inputs['num_groups'],
+            feature_cols=sample_inputs['feature_cols'],
         )
 
         total_params = sum(p.numel() for p in model.parameters())

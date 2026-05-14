@@ -194,6 +194,48 @@ def test_lightning_checkpoint_penalizes_one_sided_validation_predictions(tmp_pat
     assert checkpoint["selection_score"] < first_score
 
 
+def test_lightning_checkpoint_frequency_controls_periodic_saves(tmp_path):
+    _require_lightning()
+    callback = CustomFormatCheckpointCallback(
+        save_dir=str(tmp_path),
+        model_type="tiny",
+        checkpoint_metadata={},
+        save_best_only=False,
+        save_last_n=2,
+        checkpoint_frequency=2,
+    )
+
+    class DummyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(2, 1)
+
+    class DummyModule:
+        def __init__(self):
+            self.model = DummyModel()
+
+    class DummyTrainer:
+        def __init__(self, metrics, epoch):
+            self.callback_metrics = metrics
+            self.current_epoch = epoch
+            self.optimizers = [torch.optim.SGD(DummyModel().parameters(), lr=0.1)]
+
+    pl_module = DummyModule()
+
+    for epoch, loss in enumerate([0.5, 0.6, 0.7, 0.8]):
+        metrics = {
+            "val/loss": torch.tensor(loss),
+            "val/collapse_penalty": torch.tensor(0.0),
+            "val/is_collapsed": torch.tensor(0.0),
+        }
+        callback.on_validation_epoch_end(DummyTrainer(metrics, epoch=epoch), pl_module)
+
+    periodic_path = tmp_path / "tiny_latest_periodic_lightning.pth"
+    assert periodic_path.exists()
+    checkpoint = torch.load(periodic_path, map_location="cpu", weights_only=True)
+    assert checkpoint["epoch"] == 4
+
+
 def test_lightning_trainer_uses_custom_trainer_gradient_clip_config():
     _require_lightning()
     config = _config()

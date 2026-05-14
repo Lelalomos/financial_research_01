@@ -47,7 +47,7 @@ def calculate_metrics(
     # R² score
     try:
         metrics['r2'] = r2_score(targets, predictions)
-    except:
+    except ValueError:
         metrics['r2'] = 0.0
 
     # MAPE (Mean Absolute Percentage Error)

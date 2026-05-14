@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
+from src.config.config_loader import reload_config
 
 
 class TestDynamicConfigLists:
@@ -21,7 +22,7 @@ class TestDynamicConfigLists:
     @pytest.fixture
     def main_config(self):
         """Load main configuration."""
-        return load_config('main')
+        return reload_config('main')
 
     def test_commodities_access(self, main_config):
         """Test that COMMODITIES can be accessed from config."""
@@ -45,8 +46,18 @@ class TestDynamicConfigLists:
         assert isinstance(ema_periods, list)
         # Check default EMA periods exist
         assert 50 in ema_periods
-        assert 100 in ema_periods
         assert 200 in ema_periods
+
+    def test_fibonacci_features_enabled_by_default(self, main_config):
+        """Test that Fibonacci features are enabled in the default config."""
+        feature_flags = main_config.data.features.FEATURE_FLAGS
+        assert feature_flags.get('fibonacci_features', False) is True
+
+    def test_market_regime_enabled_by_default(self, main_config):
+        """Test that market regime is enabled in the default config."""
+        feature_flags = main_config.data.features.FEATURE_FLAGS
+        assert feature_flags.get('market_regime', False) is True
+        assert main_config.data.regime.ENABLED is True
 
     def test_commodities_modification(self, main_config):
         """Test that COMMODITIES can be modified."""

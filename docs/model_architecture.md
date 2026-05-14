@@ -147,6 +147,31 @@ model = TransformerModel(
 
 **Use case**: Deep architecture combining LSTM sequential modeling with Transformer attention
 
+### 6. Multi-Branch BiLSTM
+
+```python
+from src.models import create_model
+
+model = create_model(
+    model_type="multi_branch_bilstm",
+    num_features=50,
+    num_stocks=500,
+    num_groups=20,
+    config=config,
+    feature_cols=feature_cols,
+)
+```
+
+**Architecture**:
+- Technical branch: BiLSTM over raw price and indicator features
+- Geometric branch: BiLSTM over structural features such as slopes, channel,
+  swing-distance, and Fibonacci-derived columns
+- Macro/financial branch: BiLSTM over external and financial-metric features
+- Fusion head: concatenates pooled branch outputs and predicts the target
+
+**Use case**: Experimental QuantAgent-inspired architecture that separates noisy
+raw technical inputs from higher-level geometric context and slower macro data
+
 ## Configuration
 
 All model parameters are in `config/model.json` with separate sections for each model type:

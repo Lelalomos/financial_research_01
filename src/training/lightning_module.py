@@ -16,7 +16,7 @@ from .common import (
     collapse_penalty_from_health,
     create_loss_function,
 )
-from .early_stopping import make_weights_only_safe
+from .early_stopping import make_weights_only_safe, atomic_torch_save
 from .experiment_tracking import create_experiment_tracker, training_params
 
 
@@ -150,46 +150,12 @@ class FinancialLightningModule(_LIGHTNING_MODULE_BASE):
         }
 
     def _create_optimizer(self) -> torch.optim.Optimizer:
-        training = self.config_obj.model.training
-        if training.OPTIMIZER == "adam":
-            return torch.optim.Adam(
-                self.model.parameters(),
-                lr=training.LEARNING_RATE,
-                weight_decay=training.WEIGHT_DECAY,
-            )
-        if training.OPTIMIZER == "adamw":
-            return torch.optim.AdamW(
-                self.model.parameters(),
-                lr=training.LEARNING_RATE,
-                weight_decay=training.WEIGHT_DECAY,
-            )
-        if training.OPTIMIZER == "sgd":
-            return torch.optim.SGD(
-                self.model.parameters(),
-                lr=training.LEARNING_RATE,
-                momentum=0.9,
-                weight_decay=training.WEIGHT_DECAY,
-            )
-        if training.OPTIMIZER == "rmsprop":
-            return torch.optim.RMSprop(
-                self.model.parameters(),
-                lr=training.LEARNING_RATE,
-                weight_decay=training.WEIGHT_DECAY,
-            )
-        raise ValueError(f"Unknown optimizer: {training.OPTIMIZER}")
+        from .common import create_optimizer
+        return create_optimizer(self.model, self.config_obj)
 
     def _create_scheduler(self, optimizer):
-        scheduler_name = self.config_obj.model.training.SCHEDULER
-        if scheduler_name is None:
-            return None
-        params = self.config_obj.get_scheduler_params()
-        if scheduler_name == "reduce_on_plateau":
-            return torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, **params)
-        if scheduler_name == "cosine":
-            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
-        if scheduler_name == "step":
-            return torch.optim.lr_scheduler.StepLR(optimizer, **params)
-        raise ValueError(f"Unknown scheduler: {scheduler_name}")
+        from .common import create_scheduler
+        return create_scheduler(optimizer, self.config_obj)
 
 
 class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
@@ -203,6 +169,8 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         model_type: str,
         checkpoint_metadata: Optional[Dict] = None,
         save_best_only: bool = True,
+        save_last_n: int = 3,
+        checkpoint_frequency: int = 1,
     ):
         if not _LIGHTNING_AVAILABLE:
             _require_lightning()
@@ -210,6 +178,8 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         self.model_type = model_type
         self.checkpoint_metadata = checkpoint_metadata or {}
         self.save_best_only = save_best_only
+        self.save_last_n = save_last_n
+        self.checkpoint_frequency = max(1, int(checkpoint_frequency))
         self.best_score = None
         self.best_selection_score = None
         self.best_path = None
@@ -224,7 +194,11 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         is_collapsed = bool(_metric_to_float(trainer.callback_metrics.get("val/is_collapsed")) or 0.0)
         selection_score = score_value + collapse_penalty
         improved = self.best_selection_score is None or selection_score < self.best_selection_score
-        if self.save_best_only and not improved:
+        epoch_number = int(trainer.current_epoch + 1)
+        should_save_periodic = (epoch_number % self.checkpoint_frequency) == 0
+        should_save_periodic = should_save_periodic and not self.save_best_only
+        should_save = improved or should_save_periodic
+        if not should_save:
             return
         if improved:
             self.best_selection_score = selection_score
@@ -233,10 +207,9 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         optimizer = trainer.optimizers[0] if trainer.optimizers else None
         train_loss = trainer.callback_metrics.get("train/loss")
         train_loss_value = _metric_to_float(train_loss)
-        path = self.save_dir / f"{self.model_type}_best_lightning.pth"
         checkpoint = {
             "model_type": self.model_type,
-            "epoch": int(trainer.current_epoch + 1),
+            "epoch": epoch_number,
             "model_state_dict": pl_module.model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
             "score": score_value,
@@ -270,8 +243,16 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
                 **self.checkpoint_metadata,
             },
         }
-        torch.save(make_weights_only_safe(checkpoint), path)
-        self.best_path = str(path)
+        checkpoint = make_weights_only_safe(checkpoint)
+
+        if improved:
+            path = self.save_dir / f"{self.model_type}_best_lightning.pth"
+            atomic_torch_save(checkpoint, str(path))
+            self.best_path = str(path)
+
+        if should_save_periodic:
+            periodic_path = self.save_dir / f"{self.model_type}_latest_periodic_lightning.pth"
+            atomic_torch_save(checkpoint, str(periodic_path))
 
 
 class ExperimentTrackingCallback(_LIGHTNING_CALLBACK_BASE):
@@ -396,6 +377,8 @@ def train_with_lightning(
         model_type=model_type,
         checkpoint_metadata=checkpoint_metadata,
         save_best_only=config.model.checkpointing.SAVE_BEST_ONLY,
+        save_last_n=config.model.checkpointing.SAVE_LAST_N,
+        checkpoint_frequency=config.model.checkpointing.CHECKPOINT_FREQUENCY,
     )
     experiment_callback = ExperimentTrackingCallback(
         config=config,
@@ -415,3 +398,57 @@ def train_with_lightning(
         "best_model_path": checkpoint_callback.best_path,
         "best_score": checkpoint_callback.best_score,
     }
+
+
+def save_final_lightning_checkpoint(
+    trainer,
+    lightning_module,
+    checkpoint_dir: str,
+    model_type: str,
+    checkpoint_metadata: Optional[Dict] = None,
+) -> str:
+    """
+    Save the final trained Lightning model in the project's custom-compatible format.
+
+    This is used to guarantee at least one checkpoint exists even when no
+    validation loader is available, which means no best-checkpoint callback can
+    trigger from `val/loss`.
+    """
+    checkpoint_metadata = checkpoint_metadata or {}
+    save_dir = Path(checkpoint_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    optimizer = trainer.optimizers[0] if trainer.optimizers else None
+    epoch_number = int(trainer.current_epoch + 1)
+
+    callback_metrics = getattr(trainer, "callback_metrics", {}) or {}
+    checkpoint = {
+        "model_type": model_type,
+        "epoch": epoch_number,
+        "model_state_dict": lightning_module.model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+        "score": _metric_to_float(callback_metrics.get("val/loss")),
+        "selection_score": _metric_to_float(callback_metrics.get("val/loss")),
+        "loss": _metric_to_float(callback_metrics.get("train/loss")),
+        "best_val_loss": _metric_to_float(callback_metrics.get("val/loss")),
+        "val_metrics": {
+            str(key).replace("val/", ""): value
+            for key, value in (
+                (key, _metric_to_float(metric_value))
+                for key, metric_value in callback_metrics.items()
+                if str(key).startswith("val/")
+            )
+            if value is not None
+        },
+        **checkpoint_metadata,
+        "metadata": {
+            "model_type": model_type,
+            "training_backend": "lightning",
+            **checkpoint_metadata,
+        },
+    }
+    checkpoint = make_weights_only_safe(checkpoint)
+
+    final_path = save_dir / f"{model_type}_final_lightning.pth"
+    atomic_torch_save(checkpoint, str(final_path))
+    return str(final_path)

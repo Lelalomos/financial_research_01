@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from src.config import load_config
-from .crnn_attention import EmbeddingLayer, BiLSTM4Block
+from .crnn_attention import EmbeddingLayer, BiLSTM4Block, init_weights_xavier_uniform
 
 
 class BiLSTM4AttentionModel(nn.Module):
@@ -78,6 +78,12 @@ class BiLSTM4AttentionModel(nn.Module):
         # Single Linear FC layer
         self.fc = nn.Linear(self.lstm.output_dim, 1)
         self.fc_dropout = nn.Dropout(config.model.models.bilstm4_attention.LSTM4_DROPOUT)
+
+        # Apply weight initialization to all layers
+        self.apply(init_weights_xavier_uniform)
+        # Keep output variance large enough to avoid near-constant predictions
+        nn.init.xavier_uniform_(self.fc.weight, gain=1.0)
+        nn.init.zeros_(self.fc.bias)
 
     def forward(
         self,

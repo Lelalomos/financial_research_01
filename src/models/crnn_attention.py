@@ -36,6 +36,10 @@ def init_weights_xavier_uniform(module):
                 nn.init.orthogonal_(param)
             elif 'bias' in name:
                 nn.init.zeros_(param)
+                # Set forget gate bias to 1.0 (Jozefowicz et al., 2015)
+                # Prevents vanishing gradients for long financial sequences
+                n = param.size(0)
+                param.data[n // 4:n // 2].fill_(1.0)
     elif isinstance(module, nn.Conv1d):
         nn.init.xavier_uniform_(module.weight)
         if module.bias is not None:

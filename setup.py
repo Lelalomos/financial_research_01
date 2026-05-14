@@ -18,8 +18,7 @@ setup(
     author="Your Name",
     author_email="your.email@example.com",
     url="https://github.com/yourusername/multi-model-financial-forecasting",
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=find_packages(),
     python_requires=">=3.10",
     install_requires=[
         "torch>=2.0.0",

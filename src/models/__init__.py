@@ -25,6 +25,7 @@ from .transformer_model import TransformerModel, create_model as create_transfor
 from .lstm3_model import LSTM3Model, create_model as create_lstm3
 from .lstm3_attn_model import LSTM3AttentionModel, create_model as create_lstm3_attention
 from .bilstm4_attn_model import BiLSTM4AttentionModel, create_model as create_bilstm4_attention
+from .multi_branch_bilstm import MultiBranchBiLSTMModel, create_model as create_multi_branch_bilstm
 
 # Map model types to their create functions
 _MODEL_REGISTRY = {
@@ -36,6 +37,7 @@ _MODEL_REGISTRY = {
     'lstm3': (LSTM3Model, create_lstm3),
     'lstm3_attention': (LSTM3AttentionModel, create_lstm3_attention),
     'bilstm4_attention': (BiLSTM4AttentionModel, create_bilstm4_attention),
+    'multi_branch_bilstm': (MultiBranchBiLSTMModel, create_multi_branch_bilstm),
 }
 
 __all__ = [
@@ -47,6 +49,7 @@ __all__ = [
     'LSTM3Model',
     'LSTM3AttentionModel',
     'BiLSTM4AttentionModel',
+    'MultiBranchBiLSTMModel',
     'create_model',
     'get_model_class',
     'list_available_models',
@@ -58,7 +61,8 @@ def create_model(
     num_features: int,
     num_stocks: int,
     num_groups: int,
-    config: Optional[object] = None
+    config: Optional[object] = None,
+    feature_cols: Optional[list] = None,
 ) -> nn.Module:
     """
     Create a model by type.
@@ -84,12 +88,16 @@ def create_model(
     if config is None:
         config = load_config('model')
 
-    return create_fn(
-        num_features=num_features,
-        num_stocks=num_stocks,
-        num_groups=num_groups,
-        config=config
-    )
+    kwargs = {
+        'num_features': num_features,
+        'num_stocks': num_stocks,
+        'num_groups': num_groups,
+        'config': config,
+    }
+    if model_type == 'multi_branch_bilstm':
+        kwargs['feature_cols'] = feature_cols
+
+    return create_fn(**kwargs)
 
 
 def get_model_class(model_type: str) -> Type[nn.Module]:

@@ -11,6 +11,7 @@ from datetime import datetime
 import os
 import glob
 import re
+import tempfile
 
 
 def make_weights_only_safe(value):
@@ -32,6 +33,23 @@ def make_weights_only_safe(value):
     if isinstance(value, tuple):
         return tuple(make_weights_only_safe(item) for item in value)
     return value
+
+
+def atomic_torch_save(payload, filepath: str) -> None:
+    """Save a checkpoint atomically to avoid partial-file corruption."""
+    directory = os.path.dirname(filepath) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp_checkpoint_", suffix=".pth", dir=directory)
+    os.close(fd)
+    try:
+        torch.save(payload, tmp_path)
+        os.replace(tmp_path, filepath)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 def _checkpoint_matches_requirements(
@@ -223,6 +241,7 @@ class ModelCheckpoint:
         mode: str = 'min',
         save_best_only: bool = True,
         save_last_n: int = 3,
+        checkpoint_frequency: int = 1,
         verbose: bool = True,
         model_type: str = 'model'
     ):
@@ -234,6 +253,7 @@ class ModelCheckpoint:
             mode: 'min' or 'max' (minimize or maximize the monitored metric)
             save_best_only: Only save best model
             save_last_n: Save last N checkpoints
+            checkpoint_frequency: Save periodic epoch checkpoints every N epochs
             verbose: Print messages
             model_type: Model type name for filename (e.g., 'crnn_attention')
         """
@@ -241,11 +261,12 @@ class ModelCheckpoint:
         self.mode = mode
         self.save_best_only = save_best_only
         self.save_last_n = save_last_n
+        self.checkpoint_frequency = max(1, int(checkpoint_frequency))
         self.verbose = verbose
         self.model_type = model_type
 
         self.best_score = None
-        self.checkpoint_history = []
+        self.periodic_checkpoint_history = []
 
         os.makedirs(save_dir, exist_ok=True)
 
@@ -281,7 +302,11 @@ class ModelCheckpoint:
         elif self.mode == 'max' and score > self.best_score:
             improved = True
 
-        if improved or not self.save_best_only:
+        should_save_periodic = (epoch % self.checkpoint_frequency) == 0
+        should_save_periodic = should_save_periodic and not self.save_best_only
+        should_save = improved or should_save_periodic
+
+        if should_save:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             checkpoint = {
                 'model_type': self.model_type,
@@ -297,33 +322,24 @@ class ModelCheckpoint:
             checkpoint = make_weights_only_safe(checkpoint)
 
             # Generate filename with model name and timestamp
+            best_filepath = ""
+            periodic_filepath = ""
             if improved:
-                filename = f'{self.model_type}_best_{timestamp}.pth'
+                filename = f'{self.model_type}_best.pth'
                 self.best_score = score
                 if self.verbose:
                     print(f"  -> Saving best model (score: {score:.6f})")
-            else:
-                filename = f'{self.model_type}_epoch{epoch}_{timestamp}.pth'
+                best_filepath = os.path.join(self.save_dir, filename)
+                atomic_torch_save(checkpoint, best_filepath)
+
+            if should_save_periodic:
+                filename = f'{self.model_type}_latest_periodic.pth'
                 if self.verbose:
-                    print(f"  -> Saving checkpoint (score: {score:.6f})")
+                    print(f"  -> Saving periodic checkpoint (score: {score:.6f})")
+                periodic_filepath = os.path.join(self.save_dir, filename)
+                atomic_torch_save(checkpoint, periodic_filepath)
 
-            filepath = os.path.join(self.save_dir, filename)
-            torch.save(checkpoint, filepath)
-
-            # Manage checkpoint history
-            self.checkpoint_history.append(filepath)
-
-            # Keep only last N checkpoints
-            if not self.save_best_only:
-                while len(self.checkpoint_history) > self.save_last_n:
-                    old_checkpoint = self.checkpoint_history.pop(0)
-                    if old_checkpoint != filepath:
-                        try:
-                            os.remove(old_checkpoint)
-                        except:
-                            pass
-
-            return filepath
+            return best_filepath or periodic_filepath
 
         return ""
 
@@ -340,19 +356,23 @@ class ModelCheckpoint:
         """
         import glob
         # Find best model file by pattern (supports both new and old naming)
-        pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
-        files = glob.glob(pattern)
-
-        # Fallback to old naming convention for backward compatibility
-        if not files:
-            old_pattern = os.path.join(self.save_dir, 'best_model.pth')
-            if os.path.exists(old_pattern):
-                filepath = old_pattern
-            else:
-                raise FileNotFoundError(f"No checkpoint found matching pattern {pattern} or {old_pattern}")
+        exact_path = os.path.join(self.save_dir, f'{self.model_type}_best.pth')
+        if os.path.exists(exact_path):
+            filepath = exact_path
         else:
-            # Get the most recent best model
-            filepath = max(files, key=os.path.getmtime)
+            pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
+            files = glob.glob(pattern)
+
+            # Fallback to old naming convention for backward compatibility
+            if not files:
+                old_pattern = os.path.join(self.save_dir, 'best_model.pth')
+                if os.path.exists(old_pattern):
+                    filepath = old_pattern
+                else:
+                    raise FileNotFoundError(f"No checkpoint found matching pattern {pattern} or {old_pattern}")
+            else:
+                # Get the most recent best model
+                filepath = max(files, key=os.path.getmtime)
 
         checkpoint = torch.load(filepath, map_location=device, weights_only=True)
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -384,19 +404,23 @@ class ModelCheckpoint:
         """
         import glob
         if filepath is None:
-            # Try new pattern first
-            pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
-            files = glob.glob(pattern)
-
-            if files:
-                filepath = max(files, key=os.path.getmtime)
+            exact_path = os.path.join(self.save_dir, f'{self.model_type}_best.pth')
+            if os.path.exists(exact_path):
+                filepath = exact_path
             else:
-                # Fallback to old naming convention
-                old_path = os.path.join(self.save_dir, 'best_model.pth')
-                if os.path.exists(old_path):
-                    filepath = old_path
+                # Try legacy pattern next
+                pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
+                files = glob.glob(pattern)
+
+                if files:
+                    filepath = max(files, key=os.path.getmtime)
                 else:
-                    raise FileNotFoundError(f"No checkpoint found matching pattern {pattern} or {old_path}")
+                    # Fallback to old naming convention
+                    old_path = os.path.join(self.save_dir, 'best_model.pth')
+                    if os.path.exists(old_path):
+                        filepath = old_path
+                    else:
+                        raise FileNotFoundError(f"No checkpoint found matching {exact_path}, {pattern}, or {old_path}")
 
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"No checkpoint found at {filepath}")
@@ -416,7 +440,9 @@ class ModelCheckpoint:
     @property
     def has_checkpoint(self) -> bool:
         """Check if best checkpoint exists."""
-        # Check new pattern
+        exact_path = os.path.join(self.save_dir, f'{self.model_type}_best.pth')
+        if os.path.exists(exact_path):
+            return True
         pattern = os.path.join(self.save_dir, f'{self.model_type}_best_*.pth')
         if glob.glob(pattern):
             return True
@@ -511,9 +537,12 @@ def _find_best_checkpoint(
         FileNotFoundError: If no checkpoint found
     """
     if model_type:
-        # Search for new pattern: {model_type}_best_*.pth
+        files = []
+        stable_best = os.path.join(checkpoint_dir, f'{model_type}_best.pth')
+        if os.path.exists(stable_best):
+            files.append(stable_best)
         pattern = os.path.join(checkpoint_dir, f'{model_type}_best_*.pth')
-        files = glob.glob(pattern)
+        files.extend(glob.glob(pattern))
 
         if files:
             return _choose_compatible_checkpoint(
@@ -531,13 +560,11 @@ def _find_best_checkpoint(
 
         raise FileNotFoundError(
             f"No best checkpoint found for model_type '{model_type}' in {checkpoint_dir}. "
-            f"Searched for: {pattern} and {old_path}"
+            f"Searched for: {stable_best}, {pattern} and {old_path}"
         )
     else:
-        # No model_type specified, find any best model
-        # Try new pattern first
-        pattern = os.path.join(checkpoint_dir, '*_best_*.pth')
-        files = glob.glob(pattern)
+        files = glob.glob(os.path.join(checkpoint_dir, '*_best.pth'))
+        files.extend(glob.glob(os.path.join(checkpoint_dir, '*_best_*.pth')))
 
         if files:
             return _choose_compatible_checkpoint(
@@ -628,6 +655,12 @@ def list_checkpoints(checkpoint_dir: str = 'models/checkpoints', model_type: Opt
         if model_match:
             file_model_type = model_match.group(1)
             timestamp_str = model_match.group(2)
+        elif filename.endswith('_best.pth'):
+            file_model_type = filename[:-len('_best.pth')]
+            timestamp_str = None
+        elif filename.endswith('_latest_periodic.pth'):
+            file_model_type = filename[:-len('_latest_periodic.pth')]
+            timestamp_str = None
         elif filename == 'best_model.pth':
             file_model_type = 'unknown'
             timestamp_str = None

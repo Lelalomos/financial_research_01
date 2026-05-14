@@ -31,7 +31,7 @@ from src.utils.validation import (
 )
 from .early_stopping import EarlyStopping, ModelCheckpoint, make_weights_only_safe
 from .experiment_tracking import create_experiment_tracker, training_params
-from .common import create_loss_function
+from .common import create_loss_function, create_optimizer, create_scheduler
 
 
 class Trainer:
@@ -96,6 +96,7 @@ class Trainer:
             mode='min',
             save_best_only=config.model.checkpointing.SAVE_BEST_ONLY,
             save_last_n=config.model.checkpointing.SAVE_LAST_N,
+            checkpoint_frequency=config.model.checkpointing.CHECKPOINT_FREQUENCY,
             model_type=self.model_type
         )
 
@@ -110,6 +111,13 @@ class Trainer:
         self.current_epoch = 0
         self.best_val_loss = float('inf')
 
+        # Setup mixed precision scaler in __init__ to avoid AttributeError
+        # if train_epoch() is called before train()
+        self.scaler = torch.amp.GradScaler('cuda') if config.model.training.USE_MIXED_PRECISION else None
+
+        # Gradient accumulation steps
+        self.accumulation_steps = max(1, int(getattr(config.model.training, 'ACCUMULATION_STEPS', 1)))
+
     def _infer_model_type(self) -> str:
         """Infer model type from model class name."""
         class_name = self.model.__class__.__name__
@@ -123,38 +131,13 @@ class Trainer:
             'LSTM3Model': 'lstm3',
             'LSTM3AttentionModel': 'lstm3_attention',
             'BiLSTM4AttentionModel': 'bilstm4_attention',
+            'MultiBranchBiLSTMModel': 'multi_branch_bilstm',
         }
         return mapping.get(class_name, class_name.lower())
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Create optimizer based on config."""
-        if self.config.model.training.OPTIMIZER == 'adam':
-            return optim.Adam(
-                self.model.parameters(),
-                lr=self.config.model.training.LEARNING_RATE,
-                weight_decay=self.config.model.training.WEIGHT_DECAY
-            )
-        elif self.config.model.training.OPTIMIZER == 'adamw':
-            return optim.AdamW(
-                self.model.parameters(),
-                lr=self.config.model.training.LEARNING_RATE,
-                weight_decay=self.config.model.training.WEIGHT_DECAY
-            )
-        elif self.config.model.training.OPTIMIZER == 'sgd':
-            return optim.SGD(
-                self.model.parameters(),
-                lr=self.config.model.training.LEARNING_RATE,
-                momentum=0.9,
-                weight_decay=self.config.model.training.WEIGHT_DECAY
-            )
-        elif self.config.model.training.OPTIMIZER == 'rmsprop':
-            return optim.RMSprop(
-                self.model.parameters(),
-                lr=self.config.model.training.LEARNING_RATE,
-                weight_decay=self.config.model.training.WEIGHT_DECAY
-            )
-        else:
-            raise ValueError(f"Unknown optimizer: {self.config.model.training.OPTIMIZER}")
+        return create_optimizer(self.model, self.config)
 
     def _create_criterion(self) -> nn.Module:
         """Create loss function based on config."""
@@ -162,28 +145,7 @@ class Trainer:
 
     def _create_scheduler(self) -> Optional[object]:
         """Create learning rate scheduler based on config."""
-        if self.config.model.training.SCHEDULER is None:
-            return None
-        elif self.config.model.training.SCHEDULER == 'reduce_on_plateau':
-            params = self.config.get_scheduler_params()
-            return optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer,
-                **params
-            )
-        elif self.config.model.training.SCHEDULER == 'cosine':
-            params = self.config.get_scheduler_params()
-            return optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                **params
-            )
-        elif self.config.model.training.SCHEDULER == 'step':
-            params = self.config.get_scheduler_params()
-            return optim.lr_scheduler.StepLR(
-                self.optimizer,
-                **params
-            )
-        else:
-            raise ValueError(f"Unknown scheduler: {self.config.model.training.SCHEDULER}")
+        return create_scheduler(self.optimizer, self.config)
 
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """
@@ -236,32 +198,35 @@ class Trainer:
                         target
                     )
 
-            # Forward pass
-            self.optimizer.zero_grad()
+            # Forward pass — zero_grad only at accumulation boundaries
+            if batch_idx % self.accumulation_steps == 0:
+                self.optimizer.zero_grad()
 
             if self.config.model.training.USE_MIXED_PRECISION:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                     loss = self.criterion(output, target)
 
-                # Backward pass with gradient scaling
-                self.scaler.scale(loss).backward()
+                # Backward pass with gradient scaling (accumulation-aware)
+                self.scaler.scale(loss / self.accumulation_steps).backward()
 
-                if self.config.model.training.GRADIENT_CLIP_VALUE > 0:
-                    self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(),
-                        self.config.model.training.GRADIENT_CLIP_VALUE
-                    )
+                if (batch_idx + 1) % self.accumulation_steps == 0:
+                    if self.config.model.training.GRADIENT_CLIP_VALUE > 0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(),
+                            self.config.model.training.GRADIENT_CLIP_VALUE
+                        )
 
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
             else:
                 output = self.model(features, stock_id, group_id, day, month, dividend_flag)
                 loss = self.criterion(output, target)
 
-                # Backward pass
-                loss.backward()
+                # Backward pass (accumulation-aware)
+                (loss / self.accumulation_steps).backward()
 
                 # Gradient clipping
                 if self.config.model.training.GRADIENT_CLIP_VALUE > 0:
@@ -279,7 +244,10 @@ class Trainer:
                         if param.grad is not None:
                             param.grad.data.clamp_(-max_grad_val, max_grad_val)
 
-                self.optimizer.step()
+                # Step optimizer only at accumulation boundaries
+                if (batch_idx + 1) % self.accumulation_steps == 0:
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
 
                 # Check for NaN/Inf loss
                 if torch.isnan(loss) or torch.isinf(loss):
@@ -435,16 +403,14 @@ class Trainer:
         if num_epochs is None:
             num_epochs = self.config.model.training.NUM_EPOCHS
 
-        # Setup mixed precision scaler
-        if self.config.model.training.USE_MIXED_PRECISION:
-            self.scaler = torch.cuda.amp.GradScaler()
+        # Scaler is already initialized in __init__, no need to create here
 
         history = {
             'train_loss': [],
             'val_loss': []
         }
 
-        self.logger.log_config(self.config.__dict__)
+        self.logger.log_config(self.config.to_dict())
         self.logger.log_model_summary(self.model)
         self.experiment_tracker.start_run(run_name=self.model_type)
         self.experiment_tracker.log_params(training_params(self.config, self.model_type))

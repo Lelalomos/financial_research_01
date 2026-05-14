@@ -57,6 +57,24 @@ class CandlestickConfig(StrictBaseModel):
     EXCLUDE_PATTERNS: List[str] = Field(default_factory=list)
 
 
+class GeometricConfig(StrictBaseModel):
+    CHANNEL_WINDOW: int = Field(default=20, ge=2)
+    SWING_WINDOW: int = Field(default=20, ge=2)
+    TRENDLINE_WINDOW: int = Field(default=30, ge=2)
+    TRENDLINE_TOLERANCE: float = Field(default=1e-4, gt=0.0)
+    TRENDLINE_MAX_ITERATIONS: int = Field(default=100, ge=1)
+    ENABLE_ATR_FEATURE: bool = True
+    ENABLE_ROC_FEATURE: bool = True
+    ENABLE_BB_WIDTH_FEATURE: bool = True
+    ENABLE_SLOPE_FEATURES: bool = True
+    ENABLE_CHANNEL_COMPRESSION: bool = False
+    ENABLE_CHANNEL_POSITION: bool = False
+    ENABLE_SWING_DISTANCE: bool = False
+    ENABLE_SWING_TIME_DISTANCE: bool = False
+    ENABLE_OPTIMIZED_TRENDLINES: bool = False
+    ENABLE_OPTIMIZED_CHANNEL_WIDTH: bool = False
+
+
 class RegimeConfig(StrictBaseModel):
     ENABLED: bool = False
     METHOD: Literal['quantile'] = 'quantile'
@@ -92,6 +110,7 @@ class MainDataConfig(StrictBaseModel):
     splits: SplitConfig
     sequences: SequenceConfig
     candlestick: CandlestickConfig = Field(default_factory=CandlestickConfig)
+    geometric: GeometricConfig = Field(default_factory=GeometricConfig)
     features: FeatureConfig
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     normalization: NormalizationConfig

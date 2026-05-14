@@ -112,6 +112,7 @@ The current model registry supports these model types:
 - `lstm3`
 - `lstm3_attention`
 - `bilstm4_attention`
+- `multi_branch_bilstm`
 
 Practical guidance:
 
@@ -120,6 +121,8 @@ Practical guidance:
 - `lstm3_attention`: deeper recurrent model
 - `bilstm4_attention`: larger recurrent-attention model
 - `transformer`: heavier model, usually worth testing after a baseline
+- `multi_branch_bilstm`: experimental branch-based model that separates
+  technical, geometric, and macro/financial feature streams
 
 If you want one sensible first model, use `crnn_attention` or `lstm3_attention`.
 
@@ -318,6 +321,84 @@ models/checkpoints/
 Lightning remains the default training backend. It writes custom-compatible
 `.pth` checkpoints so prediction and backtesting still use the existing
 checkpoint contract.
+
+Checkpoint cadence is controlled by `config/model.json`:
+- `SAVE_BEST_ONLY = true`: overwrite the stable best checkpoint only
+- `SAVE_BEST_ONLY = false`: stable best checkpoint plus a stable periodic
+  checkpoint overwritten every `N` epochs
+- `CHECKPOINT_FREQUENCY = N`: periodic overwrite cadence in epochs
+- `SAVE_LAST_N`: legacy retention setting for older timestamped workflows
+
+### Training monitoring
+
+You can monitor training with TensorBoard and optional local MLflow.
+
+Host wrapper:
+
+```bash
+./scripts/train.sh --model-type crnn_attention --monitor
+./scripts/train.sh --model-type crnn_attention --mlflow
+./scripts/train.sh --model-type crnn_attention --monitor-all
+```
+
+Useful host-wrapper options:
+
+- `--monitor`: start TensorBoard on the host
+- `--mlflow`: start MLflow UI on the host
+- `--monitor-all`: start both
+- `--tensorboard-port N`: override the default TensorBoard port `6006`
+- `--mlflow-port N`: override the default MLflow port `5000`
+
+In-container wrapper:
+
+```bash
+./scripts/train_in_container.sh --model-type crnn_attention
+```
+
+The current in-container wrapper can start TensorBoard and MLflow UI inside the
+container using the same monitor flags. At the moment, its script defaults are
+set to start both monitors unless you modify the wrapper.
+
+Relevant paths:
+
+- TensorBoard logs: `logs/tensorboard`
+- MLflow runs: `mlruns/`
+
+For full local MLflow setup and UI usage, see
+`docs/experiment_tracking.md`.
+
+### What to watch during training
+
+Standard metrics:
+
+- `train/loss`
+- `val/loss`
+- `val/mse`
+- `val/mae`
+- `val/rmse`
+- `val/directional_accuracy`
+
+Validation prediction-health metrics are especially important for this project:
+
+- `val/pred_positive_rate`
+- `val/pred_negative_rate`
+- `val/pred_std`
+- `val/pred_mean`
+- `val/pred_target_corr`
+- `val/collapse_penalty`
+- `val/is_collapsed`
+
+These help detect the known failure mode where the model predicts positive
+returns for nearly all samples. Healthy validation output should not show:
+
+- `pred_positive_rate` near `1.0`
+- `pred_negative_rate` near `1.0`
+- `pred_std` near zero
+- `is_collapsed = 1`
+
+Lightning best-checkpoint selection now uses these diagnostics during
+selection, not raw `val/loss` alone. See `docs/lightning_backend.md` for the
+selection details.
 
 
 ## Prediction

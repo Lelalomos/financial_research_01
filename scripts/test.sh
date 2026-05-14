@@ -15,6 +15,8 @@ MODEL_PATH="models/bilstm4_attention_best_20260105_113045.pth"
 REPORTS_DIR="reports"
 CLEANUP_OLD_FILES=true
 MODEL_TYPE=""
+DEVICE=""
+FORCE_CPU=false
 
 # Create reports directory if it doesn't exist
 mkdir -p "$REPORTS_DIR"
@@ -46,6 +48,14 @@ while [[ $# -gt 0 ]]; do
             MODEL_TYPE="$2"
             shift 2
             ;;
+        --device)
+            DEVICE="$2"
+            shift 2
+            ;;
+        --force-cpu)
+            FORCE_CPU=true
+            shift
+            ;;
         --no-cleanup)
             CLEANUP_OLD_FILES=false
             shift
@@ -57,6 +67,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --model PATH       Model checkpoint path (default: models/bilstm4_attention_best_20260105_113045.pth)"
             echo "  --excel-report PATH Custom Excel report path (default: auto-generated with timestamp)"
             echo "  --model-type TYPE  Override model type from config/model.json"
+            echo "  --device DEVICE    Device override (e.g. cuda, cuda:0, cpu)"
+            echo "  --force-cpu        Force CPU usage"
             echo "  --no-cleanup       Skip cleanup of old test files before running"
             echo "  --help             Show this help message"
             exit 0
@@ -74,6 +86,14 @@ CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT"
 
 if [ -n "$MODEL_TYPE" ]; then
     CMD="$CMD --model-type $MODEL_TYPE"
+fi
+
+if [ -n "$DEVICE" ]; then
+    CMD="$CMD --device $DEVICE"
+fi
+
+if [ "$FORCE_CPU" = true ]; then
+    CMD="$CMD --force-cpu"
 fi
 
 # Run cleanup before testing if enabled

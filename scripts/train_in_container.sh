@@ -23,9 +23,9 @@
 set -e
 # bilstm4_attention_best_lightning.pth
 MODEL_TYPE=""
-EPOCHS=30
+EPOCHS=50
 BATCH_SIZE=32
-LEARNING_RATE=0.001
+LEARNING_RATE=0.0001
 BACKEND="lightning"
 STOCKS=""
 FINE_TUNE=""

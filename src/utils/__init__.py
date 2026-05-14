@@ -12,6 +12,7 @@ from .logger import (
 )
 from .device import (
     get_device,
+    resolve_device,
     get_device_info,
     print_gpu_info,
     get_gpu_memory_info,
@@ -29,6 +30,7 @@ __all__ = [
     'get_training_logger',
     'get_evaluation_logger',
     'get_device',
+    'resolve_device',
     'get_device_info',
     'print_gpu_info',
     'get_gpu_memory_info',

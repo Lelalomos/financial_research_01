@@ -25,6 +25,7 @@ from src.data.dataset import FinancialDataset
 from src.models import create_model
 from src.evaluation import Backtester
 from src.utils.logger import get_logger
+from src.utils.device import resolve_device, get_device_info
 from src.training import (
     find_checkpoint_path,
     get_eval_batch_size,
@@ -76,8 +77,14 @@ def parse_args():
     parser.add_argument(
         '--device',
         type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use'
+        default=None,
+        help='Device to use (e.g. cuda, cuda:0, cpu). Defaults to robust auto-detect.'
+    )
+
+    parser.add_argument(
+        '--force-cpu',
+        action='store_true',
+        help='Force CPU usage even if GPU is available'
     )
 
     parser.add_argument(
@@ -254,7 +261,13 @@ def main():
     logger.info("=" * 60)
     logger.info("BACKTESTING SCRIPT")
     logger.info("=" * 60)
-    logger.info(f"Using device: {args.device}")
+    device = resolve_device(requested_device=args.device, force_cpu=args.force_cpu, verbose=True)
+    device_info = get_device_info(verbose=False)
+    logger.info(f"Resolved device: {device}")
+    logger.info(f"CUDA available: {device_info['cuda_available']}")
+    logger.info(f"CUDA working: {device_info.get('cuda_working', False)}")
+    if device_info.get('cuda_working'):
+        logger.info(f"GPU: {device_info.get('gpu_name', 'Unknown')}")
 
     # Load config
     config = load_config('model')
@@ -343,21 +356,22 @@ def main():
         num_features=dataset.num_features,
         num_stocks=embedding_sizes['num_stocks'],
         num_groups=embedding_sizes['num_groups'],
-        config=config
+        config=config,
+        feature_cols=info.get('feature_cols'),
     )
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 
-    checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=args.device)
+    checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
-    model = model.to(args.device)
+    model = model.to(device)
 
     logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
 
     # Run backtest
     logger.info("Running backtest...")
 
-    backtester = Backtester(model, config, device=args.device)
+    backtester = Backtester(model, config, device=str(device))
 
     results = backtester.run_backtest(
         loader,

@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import load_config
 from src.data.dataset import FinancialDataset
 from src.models import create_model
-from src.evaluation import Validator
+from src.evaluation import Validator, evaluate_model_with_report, print_metrics, print_sector_stats
+from src.utils.device import resolve_device, get_device_info
 from src.utils.logger import get_logger
 from src.training import (
     find_checkpoint_path,
@@ -62,8 +63,14 @@ def parse_args():
     parser.add_argument(
         '--device',
         type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use'
+        default=None,
+        help='Device to use (e.g. cuda, cuda:0, cpu). Defaults to robust auto-detect.'
+    )
+
+    parser.add_argument(
+        '--force-cpu',
+        action='store_true',
+        help='Force CPU usage even if GPU is available'
     )
 
     parser.add_argument(
@@ -71,6 +78,13 @@ def parse_args():
         type=str,
         default=None,
         help='Output file for validation results (JSON)'
+    )
+
+    parser.add_argument(
+        '--excel-report',
+        type=str,
+        default=None,
+        help='Output path for Excel validation report (e.g., outputs/validate_report.xlsx)'
     )
 
     return parser.parse_args()
@@ -84,7 +98,7 @@ def load_sequences(data_dir: Path, split: str):
         return None
 
     sequences = {}
-    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'target']:
+    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'dividend_flag', 'target']:
         file_path = split_dir / f'{file}.npy'
         if file_path.exists():
             sequences[file] = np.load(file_path)
@@ -104,7 +118,13 @@ def main():
     logger.info("=" * 60)
     logger.info("VALIDATION SCRIPT")
     logger.info("=" * 60)
-    logger.info(f"Using device: {args.device}")
+    device = resolve_device(requested_device=args.device, force_cpu=args.force_cpu, verbose=True)
+    device_info = get_device_info(verbose=False)
+    logger.info(f"Resolved device: {device}")
+    logger.info(f"CUDA available: {device_info['cuda_available']}")
+    logger.info(f"CUDA working: {device_info.get('cuda_working', False)}")
+    if device_info.get('cuda_working'):
+        logger.info(f"GPU: {device_info.get('gpu_name', 'Unknown')}")
 
     # Load config
     config = load_config('model')
@@ -179,23 +199,42 @@ def main():
         num_features=dataset.num_features,
         num_stocks=embedding_sizes['num_stocks'],
         num_groups=embedding_sizes['num_groups'],
-        config=config
+        config=config,
+        feature_cols=info.get('feature_cols'),
     )
 
     logger.info(f"Loading checkpoint from {checkpoint_path}")
 
-    checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=args.device)
+    checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
-    model = model.to(args.device)
+    model = model.to(device)
 
     logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
 
     # Validate
     logger.info("Validating model...")
 
-    validator = Validator(model, config, device=args.device)
+    validator = Validator(model, config, device=str(device))
 
-    metrics = validator.validate(loader, log_file=args.output)
+    if args.excel_report:
+        logger.info("Evaluating model with detailed validation report...")
+        metrics, report_df, sector_stats = evaluate_model_with_report(
+            model,
+            loader,
+            device=str(device),
+            output_path=args.excel_report,
+        )
+        print_metrics(metrics, prefix=f"{args.split.upper()} - ")
+        print_sector_stats(sector_stats)
+
+        if args.output:
+            with open(args.output, 'w') as f:
+                json.dump(metrics, f, indent=2)
+            logger.info(f"Results saved to {args.output}")
+
+        logger.info(f"Excel report saved to {args.excel_report}")
+    else:
+        metrics = validator.validate(loader, log_file=args.output)
 
     return 0
 

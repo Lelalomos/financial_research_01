@@ -154,6 +154,40 @@ class TestTraining(unittest.TestCase):
             self.assertIn('epoch', loaded)
             self.assertEqual(loaded['epoch'], 1)
 
+    def test_model_checkpoint_frequency_controls_periodic_saves(self):
+        """Periodic checkpoints should honor CHECKPOINT_FREQUENCY semantics."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint = ModelCheckpoint(
+                save_dir=tmpdir,
+                mode='min',
+                save_best_only=False,
+                save_last_n=2,
+                checkpoint_frequency=2,
+                verbose=False,
+                model_type='tiny',
+            )
+
+            model = create_model(
+                model_type='crnn_attention',
+                num_features=20,
+                num_stocks=10,
+                num_groups=5,
+                config=self.config
+            )
+            optimizer = torch.optim.Adam(model.parameters())
+
+            checkpoint(model, optimizer, epoch=1, score=1.0, loss=1.5)
+            checkpoint(model, optimizer, epoch=2, score=1.1, loss=1.6)
+            checkpoint(model, optimizer, epoch=3, score=1.2, loss=1.7)
+            checkpoint(model, optimizer, epoch=4, score=1.3, loss=1.8)
+
+            periodic_path = Path(tmpdir) / 'tiny_latest_periodic.pth'
+            self.assertTrue(periodic_path.exists())
+            periodic = torch.load(periodic_path, map_location='cpu', weights_only=True)
+            self.assertEqual(periodic['epoch'], 4)
+
     def test_find_checkpoint_path_prefers_compatible_checkpoint(self):
         """Newest incompatible checkpoints should not block a compatible one."""
         import os

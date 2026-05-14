@@ -8,6 +8,7 @@ for all 7 model variants.
 import sys
 from pathlib import Path
 import time
+import copy
 import numpy as np
 import pandas as pd
 import torch
@@ -17,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
-from src.config import load_config
+from src.config.config_loader import Config
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
 from src.data.dataset import FinancialDataset, create_data_loaders
@@ -73,9 +74,13 @@ def _test_feature_engineering(df):
     """Test feature engineering."""
     print("\nTesting feature engineering...")
 
-    config = load_config('main')
+    config = Config(copy.deepcopy(load_config('main').to_dict()))
     config.data.sequences.SEQUENCE_LENGTH = 20
     config.data.sequences.PREDICTION_HORIZON = 1
+    # This synthetic fixture does not provide external VIX input, so keep
+    # regime-dependent preprocessing disabled unless a dedicated test opts in.
+    config.data.features.FEATURE_FLAGS._data['market_regime'] = False
+    config.data.regime._data['ENABLED'] = False
     engineer = FeatureEngineer(config)
 
     start_time = time.time()

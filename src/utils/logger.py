@@ -263,6 +263,10 @@ class EvaluationLogger(StructuredLogger):
     def __init__(self, log_dir: str = "logs"):
         super().__init__("evaluation", log_dir=log_dir)
 
+    def log_validation(self, metrics: Dict[str, float], step: Optional[int] = None):
+        """Log validation metrics."""
+        self.log_metrics(metrics, step=step, prefix="val_")
+
     def log_test_results(self, metrics: Dict[str, float]):
         """Log test results."""
         self.info("=" * 60)

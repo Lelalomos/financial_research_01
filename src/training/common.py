@@ -3,9 +3,50 @@ Shared training helpers used by both custom and Lightning backends.
 """
 
 import numpy as np
+import torch
 import torch.nn as nn
+import torch.optim as optim
+from typing import Optional
 
 from .losses import DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss
+
+
+def create_optimizer(model: nn.Module, config) -> optim.Optimizer:
+    """Create optimizer based on config. Shared by Trainer and Lightning backends."""
+    training = config.model.training
+    optimizer_name = training.OPTIMIZER
+    lr = training.LEARNING_RATE
+    wd = training.WEIGHT_DECAY
+
+    if optimizer_name == 'adam':
+        return optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+    if optimizer_name == 'adamw':
+        return optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    if optimizer_name == 'sgd':
+        return optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
+    if optimizer_name == 'rmsprop':
+        return optim.RMSprop(model.parameters(), lr=lr, weight_decay=wd)
+    raise ValueError(f"Unknown optimizer: {optimizer_name}")
+
+
+def create_scheduler(
+    optimizer: optim.Optimizer,
+    config,
+) -> Optional[optim.lr_scheduler.LRScheduler]:
+    """Create LR scheduler based on config. Shared by Trainer and Lightning backends."""
+    scheduler_name = config.model.training.SCHEDULER
+    if scheduler_name is None:
+        return None
+
+    params = config.get_scheduler_params()
+
+    if scheduler_name == 'reduce_on_plateau':
+        return optim.lr_scheduler.ReduceLROnPlateau(optimizer, **params)
+    if scheduler_name == 'cosine':
+        return optim.lr_scheduler.CosineAnnealingLR(optimizer, **params)
+    if scheduler_name == 'step':
+        return optim.lr_scheduler.StepLR(optimizer, **params)
+    raise ValueError(f"Unknown scheduler: {scheduler_name}")
 
 
 def create_loss_function(config) -> nn.Module:

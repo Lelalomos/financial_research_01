@@ -13,6 +13,8 @@ set -e
 MODEL_PATH="models/best_model.pth"
 OUTPUT_PATH="outputs/backtest_report.xlsx"
 MODEL_TYPE=""
+DEVICE=""
+FORCE_CPU=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -29,6 +31,14 @@ while [[ $# -gt 0 ]]; do
             MODEL_TYPE="$2"
             shift 2
             ;;
+        --device)
+            DEVICE="$2"
+            shift 2
+            ;;
+        --force-cpu)
+            FORCE_CPU=true
+            shift
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo ""
@@ -36,6 +46,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --model PATH       Model checkpoint path (default: models/best_model.pth)"
             echo "  --output PATH      Output Excel file path (default: outputs/backtest_report.xlsx)"
             echo "  --model-type TYPE  Override model type from config/model.json"
+            echo "  --device DEVICE    Device override (e.g. cuda, cuda:0, cpu)"
+            echo "  --force-cpu        Force CPU usage"
             echo "  --help             Show this help message"
             exit 0
             ;;
@@ -52,6 +64,14 @@ CMD="python scripts/backtest.py --model $MODEL_PATH --output $OUTPUT_PATH"
 
 if [ -n "$MODEL_TYPE" ]; then
     CMD="$CMD --model-type $MODEL_TYPE"
+fi
+
+if [ -n "$DEVICE" ]; then
+    CMD="$CMD --device $DEVICE"
+fi
+
+if [ "$FORCE_CPU" = true ]; then
+    CMD="$CMD --force-cpu"
 fi
 
 echo "=========================================="

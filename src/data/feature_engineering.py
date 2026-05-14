@@ -209,40 +209,259 @@ class FeatureEngineer:
         - BB_WIDTH_20: Bollinger Band width (volatility squeeze)
         - SLOPE_SUP_20: Slope of support line (20-day low)
         - SLOPE_RES_20: Slope of resistance line (20-day high)
+        - CHANNEL_COMPRESSION_20: Channel width normalized by price
+        - CHANNEL_POSITION_20: Relative close position inside the channel
+        - DIST_TO_SWING_HIGH_20: Normalized distance to rolling swing high
+        - DIST_TO_SWING_LOW_20: Normalized distance to rolling swing low
+        - DAYS_SINCE_SWING_HIGH_20: Bars since the most recent rolling swing high
+        - DAYS_SINCE_SWING_LOW_20: Bars since the most recent rolling swing low
+        - OPT_SLOPE_SUP_30: Pivot-anchored optimized support slope
+        - OPT_SLOPE_RES_30: Pivot-anchored optimized resistance slope
+        - OPT_CHANNEL_WIDTH_30: Width between optimized resistance/support
         """
         if not self.config.data.features.FEATURE_FLAGS.get('geometric_features', True):
             return df
 
         self.logger.info("Adding geometric and structural features...")
         result = df.copy()
+        geometric_config = self.config.data.geometric
+        channel_window = geometric_config.CHANNEL_WINDOW
+        swing_window = geometric_config.SWING_WINDOW
+        epsilon = 1e-8
 
         for ticker in result['tic'].unique():
             mask = result['tic'] == ticker
             stock_df = result[mask].copy().sort_values('date')
 
-            # 1. Normalized ATR (Volatility)
-            atr = talib.ATR(stock_df['high'].values, stock_df['low'].values, stock_df['close'].values, timeperiod=14)
-            stock_df['atr_14_norm'] = atr / stock_df['close']
+            if geometric_config.ENABLE_ATR_FEATURE:
+                # 1. Normalized ATR (Volatility)
+                atr = talib.ATR(stock_df['high'].values, stock_df['low'].values, stock_df['close'].values, timeperiod=14)
+                stock_df['atr_14_norm'] = atr / stock_df['close']
 
-            # 2. ROC (Momentum)
-            stock_df['roc_10'] = talib.ROC(stock_df['close'].values, timeperiod=10)
+            if geometric_config.ENABLE_ROC_FEATURE:
+                # 2. ROC (Momentum)
+                stock_df['roc_10'] = talib.ROC(stock_df['close'].values, timeperiod=10)
 
-            # 3. Bollinger Band Width (Squeeze)
-            upper, middle, lower = talib.BBANDS(stock_df['close'].values, timeperiod=20)
-            stock_df['bb_width_20'] = (upper - lower) / middle
+            if geometric_config.ENABLE_BB_WIDTH_FEATURE:
+                # 3. Bollinger Band Width (Squeeze)
+                upper, middle, lower = talib.BBANDS(stock_df['close'].values, timeperiod=20)
+                stock_df['bb_width_20'] = (upper - lower) / middle
 
-            # 4. Support/Resistance Slopes (Trend Geometry)
-            # We use rolling min/max as proxies for support/resistance levels
-            rolling_min = stock_df['low'].rolling(window=20).min()
-            rolling_max = stock_df['high'].rolling(window=20).max()
-            
-            # Fill initial NaNs to allow talib to work
-            stock_df['slope_sup_20'] = talib.LINEARREG_SLOPE(rolling_min.fillna(method='bfill').values, timeperiod=20)
-            stock_df['slope_res_20'] = talib.LINEARREG_SLOPE(rolling_max.fillna(method='bfill').values, timeperiod=20)
+            needs_channel_bounds = (
+                geometric_config.ENABLE_SLOPE_FEATURES
+                or geometric_config.ENABLE_CHANNEL_COMPRESSION
+                or geometric_config.ENABLE_CHANNEL_POSITION
+            )
+
+            if needs_channel_bounds:
+                rolling_min = stock_df['low'].rolling(window=channel_window).min()
+                rolling_max = stock_df['high'].rolling(window=channel_window).max()
+                channel_range = rolling_max - rolling_min
+
+            if geometric_config.ENABLE_SLOPE_FEATURES:
+                # 4. Support/Resistance Slopes (Trend Geometry)
+                # We use rolling min/max as proxies for support/resistance levels
+
+                # Fill initial NaNs to allow talib to work
+                stock_df['slope_sup_20'] = talib.LINEARREG_SLOPE(
+                    rolling_min.bfill().values,
+                    timeperiod=channel_window,
+                )
+                stock_df['slope_res_20'] = talib.LINEARREG_SLOPE(
+                    rolling_max.bfill().values,
+                    timeperiod=channel_window,
+                )
+
+            if geometric_config.ENABLE_CHANNEL_COMPRESSION:
+                close_scale = stock_df['close'].abs().clip(lower=epsilon)
+                stock_df['channel_compression_20'] = channel_range / close_scale
+
+            if geometric_config.ENABLE_CHANNEL_POSITION:
+                safe_range = channel_range.clip(lower=epsilon)
+                stock_df['channel_position_20'] = (stock_df['close'] - rolling_min) / safe_range
+
+            needs_swing_bounds = (
+                geometric_config.ENABLE_SWING_DISTANCE
+                or geometric_config.ENABLE_SWING_TIME_DISTANCE
+            )
+
+            if needs_swing_bounds:
+                swing_high = stock_df['high'].rolling(window=swing_window).max()
+                swing_low = stock_df['low'].rolling(window=swing_window).min()
+
+            if geometric_config.ENABLE_SWING_DISTANCE:
+                close_scale = stock_df['close'].abs().clip(lower=epsilon)
+                stock_df['dist_to_swing_high_20'] = (stock_df['close'] - swing_high) / close_scale
+                stock_df['dist_to_swing_low_20'] = (stock_df['close'] - swing_low) / close_scale
+
+            if geometric_config.ENABLE_SWING_TIME_DISTANCE:
+                highs = stock_df['high'].to_numpy()
+                lows = stock_df['low'].to_numpy()
+                days_since_swing_high = np.full(len(stock_df), np.nan, dtype=np.float64)
+                days_since_swing_low = np.full(len(stock_df), np.nan, dtype=np.float64)
+
+                for idx in range(swing_window - 1, len(stock_df)):
+                    start_idx = idx - swing_window + 1
+                    high_window = highs[start_idx:idx + 1]
+                    low_window = lows[start_idx:idx + 1]
+                    last_high_offset = np.where(high_window == np.max(high_window))[0][-1]
+                    last_low_offset = np.where(low_window == np.min(low_window))[0][-1]
+                    days_since_swing_high[idx] = idx - (start_idx + last_high_offset)
+                    days_since_swing_low[idx] = idx - (start_idx + last_low_offset)
+
+                stock_df['days_since_swing_high_20'] = days_since_swing_high
+                stock_df['days_since_swing_low_20'] = days_since_swing_low
+
+            if (
+                geometric_config.ENABLE_OPTIMIZED_TRENDLINES
+                or geometric_config.ENABLE_OPTIMIZED_CHANNEL_WIDTH
+            ):
+                opt_support, opt_resistance, opt_width = self._compute_optimized_trendlines(
+                    low_series=stock_df['low'],
+                    high_series=stock_df['high'],
+                    close_series=stock_df['close'],
+                    window=geometric_config.TRENDLINE_WINDOW,
+                    tolerance=geometric_config.TRENDLINE_TOLERANCE,
+                    max_iterations=geometric_config.TRENDLINE_MAX_ITERATIONS,
+                )
+
+                if geometric_config.ENABLE_OPTIMIZED_TRENDLINES:
+                    stock_df['opt_slope_sup_30'] = opt_support
+                    stock_df['opt_slope_res_30'] = opt_resistance
+
+                if geometric_config.ENABLE_OPTIMIZED_CHANNEL_WIDTH:
+                    stock_df['opt_channel_width_30'] = opt_width
 
             result.loc[mask, stock_df.columns] = stock_df
 
         return result
+
+    @staticmethod
+    def _trendline_error(
+        y: np.ndarray,
+        support: bool,
+        pivot: int,
+        slope: float,
+        tolerance: float,
+    ) -> float:
+        """Return constrained squared error for a candidate trendline."""
+        intercept = -slope * pivot + y[pivot]
+        line_vals = slope * np.arange(len(y), dtype=np.float64) + intercept
+        diffs = line_vals - y
+
+        if support and diffs.max() > tolerance:
+            return -1.0
+        if not support and diffs.min() < -tolerance:
+            return -1.0
+        return float(np.square(diffs).sum())
+
+    @classmethod
+    def _optimize_trendline_slope(
+        cls,
+        y: np.ndarray,
+        support: bool,
+        pivot: int,
+        initial_slope: float,
+        tolerance: float,
+        max_iterations: int,
+    ) -> tuple[float, float]:
+        """Iteratively rotate a pivot-anchored line without breaking constraints."""
+        y = np.asarray(y, dtype=np.float64)
+        if len(y) < 2:
+            intercept = y[0] if len(y) == 1 else 0.0
+            return initial_slope, intercept
+
+        price_span = max(float(y.max() - y.min()), tolerance)
+        slope_step = max(price_span / max(len(y) - 1, 1), tolerance)
+        best_slope = float(initial_slope)
+        best_err = cls._trendline_error(y, support, pivot, best_slope, tolerance)
+
+        if best_err < 0:
+            best_slope = 0.0
+            best_err = cls._trendline_error(y, support, pivot, best_slope, tolerance)
+
+        iterations = 0
+        while slope_step > tolerance and iterations < max_iterations:
+            candidates = []
+            for direction in (-1.0, 1.0):
+                trial_slope = best_slope + direction * slope_step
+                trial_err = cls._trendline_error(y, support, pivot, trial_slope, tolerance)
+                if trial_err >= 0:
+                    candidates.append((trial_err, trial_slope))
+
+            if candidates:
+                trial_err, trial_slope = min(candidates, key=lambda item: item[0])
+                if best_err < 0 or trial_err <= best_err:
+                    best_err = trial_err
+                    best_slope = trial_slope
+                else:
+                    slope_step *= 0.5
+            else:
+                slope_step *= 0.5
+
+            iterations += 1
+
+        intercept = -best_slope * pivot + y[pivot]
+        return best_slope, intercept
+
+    @classmethod
+    def _compute_optimized_trendlines(
+        cls,
+        low_series: pd.Series,
+        high_series: pd.Series,
+        close_series: pd.Series,
+        window: int,
+        tolerance: float,
+        max_iterations: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute optimized support/resistance slopes and channel width per row."""
+        length = len(close_series)
+        support_slopes = np.full(length, np.nan, dtype=np.float64)
+        resistance_slopes = np.full(length, np.nan, dtype=np.float64)
+        channel_widths = np.full(length, np.nan, dtype=np.float64)
+
+        lows = low_series.to_numpy(dtype=np.float64)
+        highs = high_series.to_numpy(dtype=np.float64)
+        closes = close_series.to_numpy(dtype=np.float64)
+
+        for idx in range(window - 1, length):
+            start_idx = idx - window + 1
+            low_window = lows[start_idx:idx + 1]
+            high_window = highs[start_idx:idx + 1]
+            close_window = closes[start_idx:idx + 1]
+            x = np.arange(window, dtype=np.float64)
+
+            seed_slope, seed_intercept = np.polyfit(x, close_window, 1)
+            seed_line = seed_slope * x + seed_intercept
+
+            support_pivot = int(np.argmin(low_window - seed_line))
+            resistance_pivot = int(np.argmax(high_window - seed_line))
+
+            support_slope, support_intercept = cls._optimize_trendline_slope(
+                y=low_window,
+                support=True,
+                pivot=support_pivot,
+                initial_slope=seed_slope,
+                tolerance=tolerance,
+                max_iterations=max_iterations,
+            )
+            resistance_slope, resistance_intercept = cls._optimize_trendline_slope(
+                y=high_window,
+                support=False,
+                pivot=resistance_pivot,
+                initial_slope=seed_slope,
+                tolerance=tolerance,
+                max_iterations=max_iterations,
+            )
+
+            support_line_end = support_slope * (window - 1) + support_intercept
+            resistance_line_end = resistance_slope * (window - 1) + resistance_intercept
+
+            support_slopes[idx] = support_slope
+            resistance_slopes[idx] = resistance_slope
+            channel_widths[idx] = resistance_line_end - support_line_end
+
+        return support_slopes, resistance_slopes, channel_widths
 
     def add_fibonacci_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -724,7 +943,19 @@ class FeatureEngineer:
         ema_features = [c for c in feature_cols if c.startswith('ema_')]
         rsi_features = [c for c in feature_cols if 'rsi' in c.lower()]
         macd_features = [c for c in feature_cols if 'macd' in c.lower()]
-        geometric_features = [c for c in feature_cols if any(x in c.lower() for x in ['atr_', 'roc_', 'slope_', 'bb_width'])]
+        geometric_features = [
+            c for c in feature_cols
+            if any(
+                x in c.lower()
+                for x in ['atr_', 'roc_', 'slope_', 'bb_width', 'channel_compression', 'channel_position']
+            )
+        ]
+        geometric_features.extend(
+            [
+                c for c in feature_cols
+                if any(x in c.lower() for x in ['dist_to_swing_', 'days_since_swing_', 'opt_slope_', 'opt_channel_'])
+            ]
+        )
         pattern_features = [c for c in feature_cols if c.startswith('CDL')]
         external_features = [c for c in feature_cols if c in ['vix', 'bondyield'] or c in self.config.data.sources.COMMODITIES.values()]
         time_features = ['day', 'month', 'dayofweek']

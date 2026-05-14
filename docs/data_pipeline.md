@@ -49,12 +49,31 @@ data = downloader.load_saved_data()
 
 Geometric features are enabled by default through
 `data.features.FEATURE_FLAGS.geometric_features`.
+Sub-feature toggles live under `data.geometric`.
 
 - **ATR_14_NORM**: ATR normalized by price
 - **ROC_10**: 10-period rate of change
 - **BB_WIDTH_20**: Bollinger Band width
-- **SLOPE_SUP_20**: Linear-regression slope of a 20-day rolling support proxy
-- **SLOPE_RES_20**: Linear-regression slope of a 20-day rolling resistance proxy
+- **SLOPE_SUP_20**: Linear-regression slope of a rolling support proxy using
+  `data.geometric.CHANNEL_WINDOW`
+- **SLOPE_RES_20**: Linear-regression slope of a rolling resistance proxy using
+  `data.geometric.CHANNEL_WINDOW`
+- **CHANNEL_COMPRESSION_20**: Rolling channel width normalized by price,
+  enabled by `data.geometric.ENABLE_CHANNEL_COMPRESSION`
+- **CHANNEL_POSITION_20**: Relative close position inside the rolling channel,
+  enabled by `data.geometric.ENABLE_CHANNEL_POSITION`
+- **DIST_TO_SWING_HIGH_20** / **DIST_TO_SWING_LOW_20**: Normalized distance to
+  rolling swing extremes using `data.geometric.SWING_WINDOW`, enabled by
+  `data.geometric.ENABLE_SWING_DISTANCE`
+- **DAYS_SINCE_SWING_HIGH_20** / **DAYS_SINCE_SWING_LOW_20**: Bars since the
+  most recent rolling swing extremes, enabled by
+  `data.geometric.ENABLE_SWING_TIME_DISTANCE`
+- **OPT_SLOPE_SUP_30** / **OPT_SLOPE_RES_30**: Pivot-anchored optimized
+  support/resistance slopes using `data.geometric.TRENDLINE_WINDOW`, enabled by
+  `data.geometric.ENABLE_OPTIMIZED_TRENDLINES`
+- **OPT_CHANNEL_WIDTH_30**: Width between the optimized resistance/support
+  lines at the end of the trendline window, enabled by
+  `data.geometric.ENABLE_OPTIMIZED_CHANNEL_WIDTH`
 
 ### Fibonacci Retracement Features
 

@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from src.config import load_config, Config
+from src.config import load_config, reload_config, Config
 from src.models import create_model
 from src.training.trainer import Trainer
 from src.utils.logger import get_logger
@@ -103,27 +103,32 @@ def create_objective_function(
         batch_size = trial.suggest_categorical('batch_size',
                                                hparam_config.hyperparameter.BATCH_SIZE_CHOICES)
 
-        # Create config with suggested hyperparameters
-        config = load_config('model')
-        config.model.architecture.MODEL_TYPE = model_type
+        # Create config with suggested hyperparameters using correct paths
+        config = reload_config('model')
+        config.model.selection.DEFAULT_MODEL_TYPE = model_type
         config.model.training.LEARNING_RATE = learning_rate
         config.model.training.WEIGHT_DECAY = weight_decay
         config.model.training.BATCH_SIZE = batch_size
         config.model.training.NUM_EPOCHS = hparam_config.hyperparameter.HPARAM_MAX_EPOCHS
         config.model.training.EARLY_STOPPING_PATIENCE = hparam_config.hyperparameter.HPARAM_ES_PATIENCE
 
-        # Set model-specific parameters
+        # Set model-specific parameters on the correct config path
         if model_type == 'bilstm4_attention':
-            config.model.architecture.LSTM4_HIDDEN_SIZES = tuple(lstm_hidden_sizes)
-            config.model.architecture.LSTM4_DROPOUT = dropout
+            config.model.models.bilstm4_attention.LSTM4_HIDDEN_SIZES = tuple(lstm_hidden_sizes)
+            config.model.models.bilstm4_attention.LSTM4_DROPOUT = dropout
+        elif model_type == 'crnn_attention':
+            config.model.models.crnn_attention.LSTM4_HIDDEN_SIZES = tuple(lstm_hidden_sizes)
+            config.model.models.crnn_attention.LSTM4_DROPOUT = dropout
         elif model_type in ['lstm3', 'lstm3_attention']:
-            config.model.architecture.LSTM3_HIDDEN_SIZE = lstm_hidden_sizes[0]
-            config.model.architecture.LSTM3_NUM_LAYERS = num_layers
-            config.model.architecture.LSTM3_DROPOUT = dropout
-        elif model_type in ['crnn', 'rnn', 'rnn_attention', 'crnn_attention']:
-            config.model.architecture.RNN_HIDDEN_SIZE = lstm_hidden_sizes[0]
-            config.model.architecture.RNN_NUM_LAYERS = num_layers
-            config.model.architecture.RNN_DROPOUT = dropout
+            model_section = getattr(config.model.models, model_type)
+            model_section.LSTM3_HIDDEN_SIZE = lstm_hidden_sizes[0]
+            model_section.LSTM3_NUM_LAYERS = num_layers
+            model_section.LSTM3_DROPOUT = dropout
+        elif model_type in ['crnn', 'rnn', 'rnn_attention']:
+            model_key = model_type
+            getattr(config.model.models, model_key).RNN_HIDDEN_SIZE = lstm_hidden_sizes[0]
+            getattr(config.model.models, model_key).RNN_NUM_LAYERS = num_layers
+            getattr(config.model.models, model_key).RNN_DROPOUT = dropout
 
         # Update data loaders with new batch size
         train_loader.dataset.batch_size = batch_size

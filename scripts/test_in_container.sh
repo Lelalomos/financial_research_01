@@ -3,9 +3,12 @@
 
 set -e
 
-MODEL_PATH="models/bilstm4_attention_best_20260105_113045.pth"
-REPORTS_DIR="reports"
+MODEL_PATH="latest"
+REPORTS_DIR="outputs"
 CLEANUP_OLD_FILES=true
+MODEL_TYPE=""
+DEVICE=""
+FORCE_CPU=false
 
 mkdir -p "$REPORTS_DIR"
 
@@ -26,14 +29,29 @@ while [[ $# -gt 0 ]]; do
             EXCEL_REPORT="$2"
             shift 2
             ;;
+        --model-type)
+            MODEL_TYPE="$2"
+            shift 2
+            ;;
+        --device)
+            DEVICE="$2"
+            shift 2
+            ;;
+        --force-cpu)
+            FORCE_CPU=true
+            shift
+            ;;
         --no-cleanup)
             CLEANUP_OLD_FILES=false
             shift
             ;;
         --help)
             echo "Usage: $0 [options]"
-            echo "  --model PATH"
+            echo "  --model PATH_OR_ALIAS"
             echo "  --excel-report PATH"
+            echo "  --model-type TYPE"
+            echo "  --device DEVICE"
+            echo "  --force-cpu"
             echo "  --no-cleanup"
             exit 0
             ;;
@@ -45,6 +63,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT"
+
+if [ -n "$MODEL_TYPE" ]; then
+    CMD="$CMD --model-type $MODEL_TYPE"
+fi
+
+if [ -n "$DEVICE" ]; then
+    CMD="$CMD --device $DEVICE"
+fi
+
+if [ "$FORCE_CPU" = true ]; then
+    CMD="$CMD --force-cpu"
+fi
 
 if [ "$CLEANUP_OLD_FILES" = true ]; then
     cleanup_old_test_files
@@ -58,4 +88,3 @@ echo "=========================================="
 echo ""
 
 eval $CMD
-

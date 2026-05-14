@@ -175,12 +175,38 @@
       },
       "bilstm4_attention": {
         "LSTM4_HIDDEN_SIZES": [128, 256, 512, 256],
-        "LSTM4_DROPOUT": 0.4,
+        "LSTM4_DROPOUT": 0.2,
         "LSTM4_ATTENTION_HEADS": 4,
-        "LSTM4_ATTENTION_DROPOUT": 0.4,
+        "LSTM4_ATTENTION_DROPOUT": 0.2,
         "FC_HIDDEN_SIZES": [256, 128],
         "FC_DROPOUT": 0.3,
         "FC_USE_BATCH_NORM": false
+      },
+      "multi_branch_bilstm": {
+        "USE_EMBEDDINGS": true,
+        "INCLUDE_UNASSIGNED_IN_TECHNICAL": true,
+        "BRANCH_POOLING": "mean",
+        "TECHNICAL_HIDDEN_SIZE": 128,
+        "TECHNICAL_NUM_LAYERS": 2,
+        "TECHNICAL_DROPOUT": 0.2,
+        "TECHNICAL_USE_LAYER_NORM": true,
+        "GEOMETRIC_HIDDEN_SIZE": 96,
+        "GEOMETRIC_NUM_LAYERS": 1,
+        "GEOMETRIC_DROPOUT": 0.2,
+        "GEOMETRIC_USE_LAYER_NORM": true,
+        "MACRO_HIDDEN_SIZE": 64,
+        "MACRO_NUM_LAYERS": 1,
+        "MACRO_DROPOUT": 0.2,
+        "MACRO_USE_LAYER_NORM": true,
+        "FUSION_HIDDEN_SIZES": [256, 128],
+        "FUSION_DROPOUT": 0.3,
+        "FUSION_USE_BATCH_NORM": false,
+        "TECHNICAL_EXACT_FEATURES": ["open", "high", "low", "close", "volume"],
+        "TECHNICAL_PREFIX_FEATURES": ["ema_", "rsi", "stochrsi", "macd", "CDL"],
+        "GEOMETRIC_EXACT_FEATURES": ["regime_id"],
+        "GEOMETRIC_PREFIX_FEATURES": ["atr_", "roc_", "bb_width", "slope_", "channel_", "dist_to_swing_", "days_since_swing_", "swing_", "fib_", "dist_fib_", "break_fib_61"],
+        "MACRO_FINANCIAL_EXACT_FEATURES": ["vix", "bondyield", "Gold", "Copper", "Corn", "Soybeans", "Cocoa", "Silver", "pe_ratio", "peg_ratio", "eps", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
+        "MACRO_FINANCIAL_PREFIX_FEATURES": []
       }
     }
   }

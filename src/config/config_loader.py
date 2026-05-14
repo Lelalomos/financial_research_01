@@ -28,23 +28,50 @@ class Config:
     def __getattr__(self, name: str) -> Any:
         if name in self._data:
             value = self._data[name]
-            # Always wrap dicts as Config objects for nested access
+            # Cache nested dicts as Config objects to avoid repeated allocation
             if isinstance(value, dict):
-                return Config(value)
+                wrapped = Config(value)
+                self._data[name] = wrapped
+                return wrapped
             return value
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
+    def __repr__(self) -> str:
+        return f"Config({self._data!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Config):
+            return self._data == other._data
+        return NotImplemented
+
     def __getitem__(self, key: str) -> Any:
-        return self._data[key]
+        value = self._data[key]
+        if isinstance(value, dict):
+            wrapped = Config(value)
+            self._data[key] = wrapped
+            return wrapped
+        return value
 
     def __contains__(self, key: str) -> bool:
         return key in self._data
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)
+        value = self._data.get(key, default)
+        if isinstance(value, dict):
+            wrapped = Config(value)
+            self._data[key] = wrapped
+            return wrapped
+        return value
 
     def to_dict(self) -> Dict[str, Any]:
-        return self._data
+        """Return the underlying dict, unwrapping any cached Config objects."""
+        result = {}
+        for key, value in self._data.items():
+            if isinstance(value, Config):
+                result[key] = value.to_dict()
+            else:
+                result[key] = value
+        return result
 
     def keys(self) -> KeysView:
         """Return dictionary keys."""
@@ -113,6 +140,11 @@ class Config:
 
 
 _config_cache: Dict[str, Config] = {}
+
+
+def clear_config_cache() -> None:
+    """Clear all cached configs. Useful for tests."""
+    _config_cache.clear()
 
 
 def load_config(
