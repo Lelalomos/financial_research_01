@@ -74,6 +74,12 @@ Controls data sources, feature engineering, preprocessing, and dataset layout.
 | `NORMALIZE_TARGET` | Whether target values are normalized for training/inference compatibility. | `true` or `false`. | Keep consistent across training and prediction; change only with care. |
 | `STRIDE` | Step size for sliding-window sequence generation. | Positive integer; `1` means every possible window. | Increase to reduce sample count and speed up preprocessing. |
 
+### `data.dataset`
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `MODE` | Controls which training-time sequence build strategy is used from normalized split caches. | `precomputed_sequences` or `on_the_fly_sequences`. | Use `precomputed_sequences` for lazy/streaming window generation during training when RAM is limited; use `on_the_fly_sequences` to eagerly build all split sequences at training startup before the first epoch. |
+
 ### `data.technical_indicators`
 
 | Field | Meaning | How to set | When to change |
@@ -282,9 +288,9 @@ experiment tracking.
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
-| `LOSS_TYPE` | Training loss function. | One of `mse`, `mae`, `smooth_l1`, `huber`, `directional`, `sharpe`, `directional_mse`. | Use `directional_mse` when sign accuracy matters. |
-| `HUBER_DELTA` | Delta threshold for Huber loss. | Positive float. | Relevant only when `LOSS_TYPE = "huber"`. |
-| `DIRECTIONAL_ALPHA` | Weight of wrong-direction penalty inside `directional_mse`. Actual formula is `MSE + alpha * mean(relu(-pred * sign(target)))`. | Non-negative float. `0.0` behaves like plain MSE; `0.1` to `0.5` is mild; `1.0` is strong. | Increase when direction matters more than exact return magnitude. |
+| `LOSS_TYPE` | Training loss function. | One of `mse`, `mae`, `smooth_l1`, `huber`, `directional`, `sharpe`, `directional_mse`, `directional_huber`. | Use `directional_mse` or `directional_huber` when sign accuracy matters. |
+| `HUBER_DELTA` | Delta threshold for Huber loss. | Positive float. | Relevant when `LOSS_TYPE = "huber"` or `LOSS_TYPE = "directional_huber"`. |
+| `DIRECTIONAL_ALPHA` | Weight of wrong-direction penalty inside directional hybrid losses. `directional_mse` uses `MSE + alpha * mean(relu(-pred * sign(target)))`; `directional_huber` uses `Huber + alpha * mean(relu(-pred * sign(target)))`. | Non-negative float. `0.0` behaves like plain base regression loss; `0.1` to `0.5` is mild; `1.0` is strong. | Increase when direction matters more than exact return magnitude. |
 | `SHARPE_EPSILON` | Stability epsilon in Sharpe-style loss denominator. | Positive float. | Change only if numerical stability requires it. |
 
 ### `model.device`
@@ -456,9 +462,9 @@ Same semantics as the `crnn` recurrent/head fields, but without CNN settings.
 | `LSTM4_DROPOUT` | BiLSTM dropout. | Float in `[0, 1)`. | Increase if overfitting. |
 | `LSTM4_ATTENTION_HEADS` | Attention head count. | Positive integer. | Tune carefully with dimension compatibility. |
 | `LSTM4_ATTENTION_DROPOUT` | Attention dropout. | Float in `[0, 1)`. | Adjust regularization. |
-| `FC_HIDDEN_SIZES` | Dense head sizes. | List of positive integers. | Tune prediction-head capacity. |
-| `FC_DROPOUT` | Dense head dropout. | Float in `[0, 1)`. | Increase for regularization. |
-| `FC_USE_BATCH_NORM` | Dense head batch norm toggle. | `true` or `false`. | Enable only if it helps. |
+| `FC_HIDDEN_SIZES` | Hidden sizes of the timestep-wise MLP applied after attention and before pooling. | List of positive integers. | Tune post-attention feature capacity. |
+| `FC_DROPOUT` | Dropout used inside the timestep-wise MLP head. | Float in `[0, 1)`. | Increase for regularization. |
+| `FC_USE_BATCH_NORM` | Whether the timestep-wise MLP uses batch norm on flattened `(batch * seq)` activations. | `true` or `false`. | Enable only if it helps. |
 
 ### `model.models.multi_branch_bilstm`
 

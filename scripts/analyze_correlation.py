@@ -22,6 +22,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import seaborn as sns
 
 
@@ -99,6 +100,10 @@ def classify_feature(name: str) -> str:
 def load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def load_parquet_columns(path: Path) -> list[str]:
+    return pq.read_schema(path).names
 
 
 def build_train_mask(pre_df: pd.DataFrame, train_ratio: float) -> pd.Series:
@@ -309,14 +314,32 @@ def main() -> int:
 
     info = load_json(Path(args.info))
     main_config = load_json(Path(args.main_config))
-    feature_cols = info["feature_cols"]
+    configured_feature_cols = info["feature_cols"]
     train_ratio = main_config["data"]["splits"]["TRAIN_RATIO"]
+
+    pre_data_path = Path(args.pre_data)
+    normalized_data_path = Path(args.normalized_data)
+    pre_columns = set(load_parquet_columns(pre_data_path))
+    normalized_columns = set(load_parquet_columns(normalized_data_path))
+    feature_cols = [
+        col for col in configured_feature_cols
+        if col in pre_columns and col in normalized_columns
+    ]
+    missing_feature_cols = [
+        col for col in configured_feature_cols
+        if col not in pre_columns or col not in normalized_columns
+    ]
+    if missing_feature_cols:
+        print(
+            "Skipping missing feature columns from correlation analysis: "
+            + ", ".join(missing_feature_cols)
+        )
 
     pre_cols = ["date", "tic", "target"] + feature_cols
     norm_cols = feature_cols + ["target"]
 
-    pre_df = pd.read_parquet(args.pre_data, columns=pre_cols)
-    norm_df = pd.read_parquet(args.normalized_data, columns=norm_cols)
+    pre_df = pd.read_parquet(pre_data_path, columns=pre_cols)
+    norm_df = pd.read_parquet(normalized_data_path, columns=norm_cols)
 
     if len(pre_df) != len(norm_df):
         raise ValueError("Pre-normalized and normalized datasets have different row counts")

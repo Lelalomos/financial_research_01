@@ -5,7 +5,7 @@ set -e
 
 CONTAINER_NAME="crnn_predictor"
 ORIGINAL_ARGS=("$@")
-MODEL_PATH="latest"
+MODEL_PATH="final"
 MODEL_TYPE=""
 OUTPUT_PATH="outputs/backtest_report.xlsx"
 DATA_DIR="data/processed"
@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help)
             echo "Usage: $0 [options]"
-            echo "  --model PATH_OR_ALIAS   Checkpoint path or alias (default: best)"
+            echo "  --model PATH_OR_ALIAS   Checkpoint path or alias: best|final (default: best)"
             echo "  --model-type TYPE       Override model type from config/model.json"
             echo "  --output PATH           Output report path"
             echo "  --data-dir PATH         Processed data directory"

@@ -89,6 +89,20 @@ class DataPreprocessor:
             self.logger.info(f"Filling {nan_count_before} NaN values with 0...")
             result[numeric_cols] = result[numeric_cols].fillna(0)
 
+        # Replace non-finite numeric values before scaler usage.
+        finite_mask = np.isfinite(result[numeric_cols].to_numpy(dtype=float, copy=False))
+        non_finite_count = int((~finite_mask).sum())
+        if non_finite_count > 0:
+            non_finite_cols = [
+                col for col in numeric_cols
+                if not np.isfinite(result[col].to_numpy(dtype=float, copy=False)).all()
+            ]
+            self.logger.warning(
+                f"Replacing {non_finite_count} non-finite numeric values with 0 before normalization. "
+                f"Columns: {non_finite_cols}"
+            )
+            result[numeric_cols] = result[numeric_cols].replace([np.inf, -np.inf], 0)
+
         # Handle each feature based on normalization method
         for col in feature_cols:
             if col in ['day', 'month', 'dayofweek', 'dividend_flag', 'regime_id']:
@@ -123,10 +137,13 @@ class DataPreprocessor:
         """
         method = self.config.data.normalization.NORMALIZATION_METHOD
 
-        # Handle NaN values
-        mask = ~np.isnan(data)
+        data = np.asarray(data, dtype=float)
+
+        # Handle only finite values during normalization. This excludes NaN and +/-inf.
+        mask = np.isfinite(data)
         if not np.any(mask):
-            return data  # All NaN, return as is
+            self.logger.warning(f"Column '{col_name}' has no finite values; filling with zeros")
+            return np.zeros_like(data, dtype=float)
 
         valid_data = data[mask]
 
@@ -621,11 +638,58 @@ class DataPreprocessor:
         Returns:
             Tuple of (preprocessed_df, splits_dict, sequences_dict, info_dict)
         """
+        result, splits, info = self.preprocess_tabular(
+            df=df,
+            fit=fit,
+            feature_cols=feature_cols,
+            export_pre_normalize=export_pre_normalize,
+            export_normalized=export_normalized,
+            validate_columns=validate_columns,
+        )
+
+        feature_cols = info['feature_cols']
+
+        sequences = {}
+        for split_name, split_df in splits.items():
+            if not split_df.empty:
+                self.logger.info(f"Creating sequences for {split_name} split...")
+                sequences[split_name] = self.create_sequences(
+                    split_df,
+                    feature_cols=feature_cols
+                )
+                # Free memory
+                del split_df
+                gc.collect()
+
+        self.logger.info("=" * 60)
+        self.logger.info("PREPROCESSING COMPLETE")
+        for split_name in ['train', 'val', 'test']:
+            if split_name in sequences and 'target' in sequences[split_name]:
+                count = len(sequences[split_name]['target'])
+                self.logger.info(f"  {split_name}: {count:,} sequences")
+        self.logger.info("=" * 60)
+
+        return result, splits, sequences, info
+
+    def preprocess_tabular(
+        self,
+        df: pd.DataFrame,
+        fit: bool = True,
+        feature_cols: Optional[List[str]] = None,
+        export_pre_normalize: Optional[str] = None,
+        export_normalized: Optional[str] = None,
+        validate_columns: bool = None,
+    ) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame], Dict]:
+        """
+        Run preprocessing through normalized tabular splits, without sequence creation.
+
+        This is used by the resumable preprocessing script so expensive stages can
+        be cached safely before building sequence arrays.
+        """
         self.logger.info("=" * 60)
         self.logger.info("PREPROCESSING PIPELINE")
         self.logger.info("=" * 60)
 
-        # Check if validation should be performed
         if validate_columns is None:
             validate_columns = getattr(
                 self.config.data.validation,
@@ -633,35 +697,28 @@ class DataPreprocessor:
                 True
             )
 
-        # Validate columns before processing
         if validate_columns:
             validate_dataset(df, "input_data", config=self.config, raise_on_missing=True)
 
         result = df.copy()
-
-        # 1. Encode categorical
         result = self.encode_categorical(result, fit=fit)
 
-        # 2. Export pre-normalization data if requested
         if export_pre_normalize is not None:
             self.logger.info(f"Exporting pre-normalization data to {export_pre_normalize}...")
             Path(export_pre_normalize).parent.mkdir(parents=True, exist_ok=True)
             result.to_parquet(export_pre_normalize, index=False)
-            self.logger.info(f"Pre-normalization data exported successfully")
+            self.logger.info("Pre-normalization data exported successfully")
 
         result['_row_order'] = np.arange(len(result))
 
-        # 3. Fill NaN values in target column with 0 (if any remain after feature engineering)
         if 'target' in result.columns:
             target_nan_count = result['target'].isna().sum()
             if target_nan_count > 0:
                 self.logger.info(f"Filling {target_nan_count} NaN values in target column with 0...")
                 result['target'] = result['target'].fillna(0)
 
-        # 4. Time-based split before normalization so scalers are fit on train only.
         splits = self.time_based_split(result)
 
-        # 4.5. Fit market regime thresholds on train only, then transform all splits.
         regime_enabled = (
             hasattr(self.config.data, 'regime')
             and self.config.data.regime.ENABLED
@@ -676,7 +733,6 @@ class DataPreprocessor:
         else:
             self.regime_params = None
 
-        # 5. Normalize each split. Fit on train, transform val/test with train parameters.
         normalized_splits = {}
         for split_name, split_df in splits.items():
             if split_df.empty:
@@ -701,16 +757,13 @@ class DataPreprocessor:
                 for name, split_df in splits.items()
             }
 
-        # 5.5. Export normalized data if requested
         if export_normalized is not None:
             self.logger.info(f"Exporting normalized data to {export_normalized}...")
             Path(export_normalized).parent.mkdir(parents=True, exist_ok=True)
 
-            # Drop unused columns before export (keep only numeric columns)
             columns_to_drop = ['date', 'tic', 'group', 'split', '_row_order']
             export_df = result.drop(columns=[col for col in columns_to_drop if col in result.columns])
 
-            # Verify all columns are numeric
             non_numeric = export_df.select_dtypes(exclude=['number']).columns
             if len(non_numeric) > 0:
                 self.logger.warning(f"Non-numeric columns found: {list(non_numeric)}")
@@ -718,31 +771,15 @@ class DataPreprocessor:
                 self.logger.info(f"All columns are numeric: {list(export_df.columns)}")
 
             export_df.to_parquet(export_normalized, index=False)
-            self.logger.info(f"Normalized data exported successfully")
+            self.logger.info("Normalized data exported successfully")
 
-        # 6. Create sequences for each split
         if feature_cols is None:
             exclude = {'date', 'tic', 'tic_id', 'group', 'group_id', 'target', 'split',
                       'day', 'month', 'dayofweek', 'dividend_flag', '_row_order'}
             feature_cols = [c for c in result.columns if c not in exclude]
 
-        sequences = {}
-        for split_name, split_df in splits.items():
-            if not split_df.empty:
-                self.logger.info(f"Creating sequences for {split_name} split...")
-                sequences[split_name] = self.create_sequences(
-                    split_df,
-                    feature_cols=feature_cols
-                )
-                # Free memory
-                del split_df
-                gc.collect()
-
-        # Info
         num_groups = len(self.group_encoder.classes_) if hasattr(self.group_encoder, 'classes_') else 0
-        # Ensure at least 1 group for embedding layer (group 0 is default)
         num_groups = max(num_groups, 1)
-
         info = {
             'num_stocks': len(self.stock_encoder.classes_) if fit else len(result['tic'].unique()),
             'num_groups': num_groups,
@@ -753,12 +790,4 @@ class DataPreprocessor:
             'regime_params': self.regime_params,
         }
 
-        self.logger.info("=" * 60)
-        self.logger.info("PREPROCESSING COMPLETE")
-        for split_name in ['train', 'val', 'test']:
-            if split_name in sequences and 'target' in sequences[split_name]:
-                count = len(sequences[split_name]['target'])
-                self.logger.info(f"  {split_name}: {count:,} sequences")
-        self.logger.info("=" * 60)
-
-        return result, splits, sequences, info
+        return result, splits, info

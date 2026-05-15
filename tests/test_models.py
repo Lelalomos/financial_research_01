@@ -404,6 +404,63 @@ class TestLSTM3AttentionModel:
         assert model.attention.num_heads == model_config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS
 
 
+class TestBiLSTM4AttentionModel:
+    """Test BiLSTM4 + Attention model."""
+
+    def test_initialization(self, sample_inputs, model_config):
+        """Test that BiLSTM4AttentionModel can be initialized."""
+        model = BiLSTM4AttentionModel(
+            num_features=sample_inputs['num_features'],
+            num_stocks=sample_inputs['num_stocks'],
+            num_groups=sample_inputs['num_groups'],
+            config=model_config
+        )
+        assert model is not None
+        assert isinstance(model, BiLSTM4AttentionModel)
+
+    def test_forward_pass(self, sample_inputs, model_config):
+        """Test forward pass produces correct output shape."""
+        model = BiLSTM4AttentionModel(
+            num_features=sample_inputs['num_features'],
+            num_stocks=sample_inputs['num_stocks'],
+            num_groups=sample_inputs['num_groups'],
+            config=model_config
+        )
+
+        output = model(
+            sample_inputs['features'],
+            sample_inputs['stock_id'],
+            sample_inputs['group_id'],
+            sample_inputs['day'],
+            sample_inputs['month'],
+            sample_inputs['dividend_flag']
+        )
+
+        assert output.shape == (sample_inputs['batch_size'], 1)
+
+    def test_timestep_mlp_matches_config(self, sample_inputs, model_config):
+        """Test that the timestep MLP depth follows configured FC_HIDDEN_SIZES."""
+        model = BiLSTM4AttentionModel(
+            num_features=sample_inputs['num_features'],
+            num_stocks=sample_inputs['num_stocks'],
+            num_groups=sample_inputs['num_groups'],
+            config=model_config
+        )
+
+        assert len(model.timestep_mlp) == len(model_config.model.models.bilstm4_attention.FC_HIDDEN_SIZES)
+
+        attention_output = torch.randn(
+            sample_inputs['batch_size'],
+            sample_inputs['features'].shape[1],
+            model.lstm.output_dim,
+        )
+        mlp_output = model._apply_timestep_mlp(attention_output)
+
+        assert mlp_output.shape[0] == sample_inputs['batch_size']
+        assert mlp_output.shape[1] == sample_inputs['features'].shape[1]
+        assert mlp_output.shape[2] == model_config.model.models.bilstm4_attention.FC_HIDDEN_SIZES[-1]
+
+
 class TestModelRegistry:
     """Test model registry functionality."""
 

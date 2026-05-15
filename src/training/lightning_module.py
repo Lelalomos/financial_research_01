@@ -18,6 +18,7 @@ from .common import (
 )
 from .early_stopping import make_weights_only_safe, atomic_torch_save
 from .experiment_tracking import create_experiment_tracker, training_params
+from src.utils.logger import get_training_logger
 
 
 class LightningDependencyError(ImportError):
@@ -183,6 +184,7 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
         self.best_score = None
         self.best_selection_score = None
         self.best_path = None
+        self.logger = get_training_logger(log_dir="logs")
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -249,10 +251,12 @@ class CustomFormatCheckpointCallback(_LIGHTNING_CALLBACK_BASE):
             path = self.save_dir / f"{self.model_type}_best_lightning.pth"
             atomic_torch_save(checkpoint, str(path))
             self.best_path = str(path)
+            self.logger.log_checkpoint(str(path), score_value, metric_name="val_loss")
 
         if should_save_periodic:
             periodic_path = self.save_dir / f"{self.model_type}_latest_periodic_lightning.pth"
             atomic_torch_save(checkpoint, str(periodic_path))
+            self.logger.log_checkpoint(str(periodic_path), score_value, metric_name="val_loss")
 
 
 class ExperimentTrackingCallback(_LIGHTNING_CALLBACK_BASE):

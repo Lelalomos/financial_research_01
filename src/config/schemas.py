@@ -52,6 +52,10 @@ class FeatureConfig(StrictBaseModel):
     FEATURE_FLAGS: Dict[str, bool]
 
 
+class DatasetModeConfig(StrictBaseModel):
+    MODE: Literal['precomputed_sequences', 'on_the_fly_sequences'] = 'precomputed_sequences'
+
+
 class CandlestickConfig(StrictBaseModel):
     USE_CANDLESTICK_PATTERNS: bool = True
     EXCLUDE_PATTERNS: List[str] = Field(default_factory=list)
@@ -109,6 +113,7 @@ class MainDataConfig(StrictBaseModel):
     sources: SourceConfig
     splits: SplitConfig
     sequences: SequenceConfig
+    dataset: DatasetModeConfig = Field(default_factory=DatasetModeConfig)
     candlestick: CandlestickConfig = Field(default_factory=CandlestickConfig)
     geometric: GeometricConfig = Field(default_factory=GeometricConfig)
     features: FeatureConfig
@@ -155,7 +160,7 @@ class ModelSelectionConfig(StrictBaseModel):
 
 
 class LossConfig(StrictBaseModel):
-    LOSS_TYPE: Literal['mse', 'mae', 'smooth_l1', 'huber', 'directional', 'sharpe', 'directional_mse']
+    LOSS_TYPE: Literal['mse', 'mae', 'smooth_l1', 'huber', 'directional', 'sharpe', 'directional_mse', 'directional_huber']
     HUBER_DELTA: float = Field(gt=0.0)
     DIRECTIONAL_ALPHA: float = Field(default=0.1, ge=0.0)
     SHARPE_EPSILON: float = Field(default=1e-6, gt=0.0)

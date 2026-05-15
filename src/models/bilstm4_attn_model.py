@@ -5,7 +5,8 @@ Model architecture:
 - Embeddings (stock, group, day, month, dividend_flag)
 - 4-layer BiLSTM with different hidden sizes (128, 256, 512, 256)
 - MultiheadAttention (4 heads)
-- Single Linear FC layer
+- Timestep-wise MLP after attention
+- Mean pooling and final output layer
 """
 
 import torch
@@ -24,9 +25,10 @@ class BiLSTM4AttentionModel(nn.Module):
     2. Concatenate embeddings + features
     3. 4-layer BiLSTM with variable hidden sizes (128, 256, 512, 256)
     4. MultiheadAttention (4 heads)
-    5. Mean pooling over sequence
-    6. Single Linear FC layer
-    7. Output (percent change prediction)
+    5. Feed-forward network applied to every timestep
+    6. Mean pooling over sequence
+    7. Final output layer
+    8. Output (percent change prediction)
     """
 
     def __init__(
@@ -75,15 +77,42 @@ class BiLSTM4AttentionModel(nn.Module):
             batch_first=True
         )
 
-        # Single Linear FC layer
-        self.fc = nn.Linear(self.lstm.output_dim, 1)
-        self.fc_dropout = nn.Dropout(config.model.models.bilstm4_attention.LSTM4_DROPOUT)
+        # Timestep-wise MLP applied to the attention output before pooling.
+        self.timestep_mlp = nn.ModuleList()
+        prev_dim = self.lstm.output_dim
+        use_batch_norm = config.model.models.bilstm4_attention.FC_USE_BATCH_NORM
+
+        for fc_size in config.model.models.bilstm4_attention.FC_HIDDEN_SIZES:
+            self.timestep_mlp.append(
+                nn.ModuleDict({
+                    "linear": nn.Linear(prev_dim, fc_size),
+                    "batch_norm": nn.BatchNorm1d(fc_size) if use_batch_norm else nn.Identity(),
+                    "activation": nn.LeakyReLU(0.1),
+                    "dropout": nn.Dropout(config.model.models.bilstm4_attention.FC_DROPOUT),
+                })
+            )
+            prev_dim = fc_size
+
+        self.output_layer = nn.Linear(prev_dim, 1)
 
         # Apply weight initialization to all layers
         self.apply(init_weights_xavier_uniform)
         # Keep output variance large enough to avoid near-constant predictions
-        nn.init.xavier_uniform_(self.fc.weight, gain=1.0)
-        nn.init.zeros_(self.fc.bias)
+        nn.init.xavier_uniform_(self.output_layer.weight, gain=1.0)
+        nn.init.zeros_(self.output_layer.bias)
+
+    def _apply_timestep_mlp(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the configured MLP independently to each timestep."""
+        for block in self.timestep_mlp:
+            x = block["linear"](x)
+            if not isinstance(block["batch_norm"], nn.Identity):
+                batch_size, seq_len, hidden_dim = x.shape
+                x = x.reshape(batch_size * seq_len, hidden_dim)
+                x = block["batch_norm"](x)
+                x = x.reshape(batch_size, seq_len, hidden_dim)
+            x = block["activation"](x)
+            x = block["dropout"](x)
+        return x
 
     def forward(
         self,
@@ -120,14 +149,14 @@ class BiLSTM4AttentionModel(nn.Module):
         # MultiheadAttention (self-attention)
         x, _ = self.attention(x, x, x)
 
+        # MLP on every timestep after attention
+        x = self._apply_timestep_mlp(x)
+
         # Mean pooling over sequence
         x = x.mean(dim=1)
 
-        # Apply dropout before FC
-        x = self.fc_dropout(x)
-
-        # Single Linear FC layer
-        output = self.fc(x)
+        # Final output layer
+        output = self.output_layer(x)
 
         return output
 
@@ -157,9 +186,9 @@ class BiLSTM4AttentionModel(nn.Module):
             need_weights=True,
             average_attn_weights=False
         )
+        x = self._apply_timestep_mlp(x)
         x = x.mean(dim=1)
-        x = self.fc_dropout(x)
-        output = self.fc(x)
+        output = self.output_layer(x)
         return output, attention_weights
 
 

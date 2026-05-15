@@ -44,8 +44,8 @@
       "DEFAULT_MODEL_TYPE": "bilstm4_attention"
     },
     "loss": {
-      "LOSS_TYPE": "directional_mse",
-      "HUBER_DELTA": 1.0,
+      "LOSS_TYPE": "directional_huber",
+      "HUBER_DELTA": 0.5,
       "DIRECTIONAL_ALPHA": 0.1
     },
     "device": {

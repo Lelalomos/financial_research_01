@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
 from src.models import create_model
-from src.training import DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss, Trainer
+from src.training import DirectionalHuberLoss, DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss, Trainer
 from src.training.losses import directional_loss, sharpe_ratio_loss
 
 
@@ -38,7 +38,7 @@ def test_loss_modules_return_scalar_values():
     pred = torch.tensor([[0.2], [-0.1]])
     target = torch.tensor([[0.1], [0.2]])
 
-    for loss_fn in [DirectionalLoss(), DirectionalMSELoss(alpha=0.5), SharpeRatioLoss()]:
+    for loss_fn in [DirectionalLoss(), DirectionalMSELoss(alpha=0.5), DirectionalHuberLoss(alpha=0.5, delta=1.0), SharpeRatioLoss()]:
         loss = loss_fn(pred, target)
         assert loss.dim() == 0
         assert torch.isfinite(loss)
@@ -63,3 +63,30 @@ def test_trainer_creates_directional_mse_loss():
         assert trainer.criterion.alpha == 0.25
     finally:
         config.model.loss._data["LOSS_TYPE"] = original_loss
+
+
+def test_trainer_creates_directional_huber_loss():
+    config = load_config("model")
+    original_loss = config.model.loss._data["LOSS_TYPE"]
+    original_alpha = config.model.loss._data["DIRECTIONAL_ALPHA"]
+    original_delta = config.model.loss._data["HUBER_DELTA"]
+    config.model.loss._data["LOSS_TYPE"] = "directional_huber"
+    config.model.loss._data["DIRECTIONAL_ALPHA"] = 0.4
+    config.model.loss._data["HUBER_DELTA"] = 1.5
+
+    try:
+        model = create_model(
+            model_type="rnn",
+            num_features=5,
+            num_stocks=3,
+            num_groups=2,
+            config=config,
+        )
+        trainer = Trainer(model, config, device="cpu")
+        assert isinstance(trainer.criterion, DirectionalHuberLoss)
+        assert trainer.criterion.alpha == 0.4
+        assert trainer.criterion.delta == 1.5
+    finally:
+        config.model.loss._data["LOSS_TYPE"] = original_loss
+        config.model.loss._data["DIRECTIONAL_ALPHA"] = original_alpha
+        config.model.loss._data["HUBER_DELTA"] = original_delta

@@ -41,6 +41,14 @@ def test_main_config_accepts_enabled_market_regime():
     validate_config_data("main", valid)
 
 
+def test_main_config_accepts_on_the_fly_sequence_mode():
+    data = _load_raw_config("main")
+    valid = copy.deepcopy(data)
+    valid["data"]["dataset"] = {"MODE": "on_the_fly_sequences"}
+
+    validate_config_data("main", valid)
+
+
 def test_main_config_rejects_invalid_regime_quantiles():
     data = _load_raw_config("main")
     invalid = copy.deepcopy(data)
@@ -61,6 +69,16 @@ def test_main_config_rejects_invalid_regime_quantiles():
 def test_model_config_schema_accepts_current_config():
     data = _load_raw_config("model")
     validate_config_data("model", data)
+
+
+def test_model_config_accepts_directional_huber_loss():
+    data = _load_raw_config("model")
+    valid = copy.deepcopy(data)
+    valid["model"]["loss"]["LOSS_TYPE"] = "directional_huber"
+    valid["model"]["loss"]["HUBER_DELTA"] = 1.5
+    valid["model"]["loss"]["DIRECTIONAL_ALPHA"] = 0.4
+
+    validate_config_data("model", valid)
 
 
 def test_model_config_accepts_enabled_ensemble():

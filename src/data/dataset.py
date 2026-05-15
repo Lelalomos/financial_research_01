@@ -10,7 +10,7 @@ This module provides:
 import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from pathlib import Path
 
 from src.config import load_config
@@ -152,6 +152,130 @@ class FinancialDataset(Dataset):
         return result
 
 
+class LazyFinancialDataset(Dataset):
+    """
+    Dataset that creates one sequence window at access time from normalized split rows.
+
+    This avoids materializing the full `(n_samples, seq_len, n_features)` tensor in
+    RAM before training starts.
+    """
+
+    def __init__(
+        self,
+        split_df,
+        feature_cols: List[str],
+        data_config=None,
+    ):
+        self.data_config = data_config or load_config('main')
+        self.logger = get_logger("lazy_dataset", log_dir="logs")
+        self.feature_cols = feature_cols
+        self.sequence_length = self.data_config.data.sequences.SEQUENCE_LENGTH
+        self.prediction_horizon = self.data_config.data.sequences.PREDICTION_HORIZON
+        self.stride = self.data_config.data.sequences.STRIDE
+
+        if split_df is None or split_df.empty:
+            raise ValueError("split_df must contain normalized rows for lazy dataset creation")
+        if not feature_cols:
+            raise ValueError("feature_cols cannot be empty for lazy dataset creation")
+
+        stock_col = 'tic_id' if 'tic_id' in split_df.columns else 'tic'
+        self.stock_groups = []
+        self.sample_index = []
+        self.max_stock_id = 0
+        self.max_group_id = 0
+
+        for _, stock_df in split_df.groupby(stock_col, sort=True):
+            ordered = stock_df.sort_values('date').reset_index(drop=True)
+            features = ordered[feature_cols].to_numpy(dtype=np.float32, copy=True)
+            stock_id = ordered['tic_id'].to_numpy(dtype=np.int64, copy=True)
+            group_id = (
+                ordered['group_id'].to_numpy(dtype=np.int64, copy=True)
+                if 'group_id' in ordered.columns
+                else np.zeros(len(ordered), dtype=np.int64)
+            )
+            day = ordered['day'].to_numpy(dtype=np.int32, copy=True)
+            month = ordered['month'].to_numpy(dtype=np.int32, copy=True)
+            dividend_flag = (
+                ordered['dividend_flag'].to_numpy(dtype=np.int32, copy=True)
+                if 'dividend_flag' in ordered.columns
+                else np.ones(len(ordered), dtype=np.int32)
+            )
+            target = ordered['target'].to_numpy(dtype=np.float32, copy=True)
+
+            group_idx = len(self.stock_groups)
+            self.stock_groups.append(
+                {
+                    'features': features,
+                    'stock_id': stock_id,
+                    'group_id': group_id,
+                    'day': day,
+                    'month': month,
+                    'dividend_flag': dividend_flag,
+                    'target': target,
+                }
+            )
+
+            self.max_stock_id = max(self.max_stock_id, int(stock_id.max()))
+            self.max_group_id = max(self.max_group_id, int(group_id.max()))
+
+            valid_window_count = len(ordered) - self.sequence_length - self.prediction_horizon + 1
+            if valid_window_count <= 0:
+                continue
+
+            nan_feature_rows = np.isnan(features).any(axis=1).astype(np.int32)
+            nan_feature_prefix = np.concatenate(([0], np.cumsum(nan_feature_rows)))
+
+            for start in range(0, valid_window_count, self.stride):
+                end = start + self.sequence_length
+                target_idx = end + self.prediction_horizon - 1
+                if np.isnan(target[target_idx]):
+                    continue
+                if nan_feature_prefix[end] - nan_feature_prefix[start] > 0:
+                    continue
+                self.sample_index.append((group_idx, start, target_idx))
+
+        if not self.sample_index:
+            raise ValueError("No valid lazy sequence windows could be created from split_df")
+
+        self.num_samples = len(self.sample_index)
+        self.num_features = len(self.feature_cols)
+
+        self.logger.info(f"Lazy dataset initialized with {self.num_samples} samples")
+        self.logger.info(f"  Sequence length: {self.sequence_length}")
+        self.logger.info(f"  Num features: {self.num_features}")
+
+    def __len__(self) -> int:
+        return self.num_samples
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        group_idx, start, target_idx = self.sample_index[idx]
+        group = self.stock_groups[group_idx]
+        end = start + self.sequence_length
+
+        return {
+            'features': torch.from_numpy(group['features'][start:end]),
+            'stock_id': torch.from_numpy(group['stock_id'][start:end]),
+            'group_id': torch.from_numpy(group['group_id'][start:end]),
+            'day': torch.from_numpy(group['day'][start:end]),
+            'month': torch.from_numpy(group['month'][start:end]),
+            'dividend_flag': torch.from_numpy(group['dividend_flag'][start:end]),
+            'target': torch.tensor([group['target'][target_idx]], dtype=torch.float32),
+        }
+
+    def get_embedding_sizes(self) -> Dict[str, int]:
+        return {
+            'num_stocks': self.max_stock_id + 1,
+            'num_groups': self.max_group_id + 1,
+            'num_days': 32,
+            'num_months': 13,
+            'num_dividend_flags': 3,
+        }
+
+    @staticmethod
+    def collate_fn(batch: list) -> Dict[str, torch.Tensor]:
+        return FinancialDataset.collate_fn(batch)
+
+
 def create_data_loaders(
     train_sequences: Dict[str, np.ndarray],
     val_sequences: Optional[Dict[str, np.ndarray]] = None,
@@ -206,6 +330,54 @@ def create_data_loaders(
         )
 
         loaders[split_name] = loader
+
+    return loaders
+
+
+def create_lazy_data_loaders(
+    train_df,
+    feature_cols: List[str],
+    data_config,
+    model_config=None,
+    val_df=None,
+    test_df=None,
+) -> Dict[str, DataLoader]:
+    """
+    Create DataLoaders backed by lazy sequence datasets from normalized split rows.
+    """
+    model_config = model_config or load_config('model')
+    datasets = {
+        'train': LazyFinancialDataset(train_df, feature_cols=feature_cols, data_config=data_config)
+    }
+
+    if val_df is not None and not val_df.empty:
+        datasets['val'] = LazyFinancialDataset(val_df, feature_cols=feature_cols, data_config=data_config)
+
+    if test_df is not None and not test_df.empty:
+        datasets['test'] = LazyFinancialDataset(test_df, feature_cols=feature_cols, data_config=data_config)
+
+    loaders = {}
+    for split_name, dataset in datasets.items():
+        batch_size = (
+            model_config.model.validation.VAL_BATCH_SIZE
+            if split_name != 'train'
+            else model_config.model.training.BATCH_SIZE
+        )
+        if batch_size is None:
+            batch_size = model_config.model.training.BATCH_SIZE
+        shuffle = split_name == 'train'
+        drop_last = shuffle and len(dataset) >= batch_size
+
+        loaders[split_name] = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=model_config.model.device.NUM_WORKERS,
+            pin_memory=model_config.model.device.PIN_MEMORY,
+            prefetch_factor=model_config.model.device.PREFETCH_FACTOR if model_config.model.device.NUM_WORKERS > 0 else None,
+            collate_fn=LazyFinancialDataset.collate_fn,
+            drop_last=drop_last,
+        )
 
     return loaders
 

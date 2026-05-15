@@ -16,7 +16,8 @@ from sklearn.preprocessing import LabelEncoder
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import load_config
-from src.data.dataset import FinancialDataset, create_data_loaders
+from src.data import DataPreprocessor
+from src.data.dataset import create_data_loaders, create_lazy_data_loaders
 from src.models import create_model
 from src.training import (
     LightningDependencyError,
@@ -24,6 +25,7 @@ from src.training import (
     save_final_lightning_checkpoint,
     train_with_lightning,
 )
+from src.utils.data_preview import load_ticker_mapping, log_sequence_preview
 from src.utils.logger import get_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
 
@@ -156,7 +158,7 @@ def load_sequences(data_dir: Path, split: str, stock_names: Optional[List[str]] 
         return None
 
     sequences = {}
-    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'target']:
+    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'dividend_flag', 'target']:
         file_path = split_dir / f'{file}.npy'
         if file_path.exists():
             sequences[file] = np.load(file_path)
@@ -187,6 +189,70 @@ def load_sequences(data_dir: Path, split: str, stock_names: Optional[List[str]] 
             print(f"Warning: Failed to filter by stocks: {e}")
 
     return sequences
+
+
+def load_normalized_split(data_dir: Path, split: str):
+    split_path = data_dir / '.cache' / 'normalized_splits' / f'{split}.parquet'
+    if not split_path.exists():
+        return None
+
+    import pandas as pd
+    return pd.read_parquet(split_path)
+
+
+def load_normalized_splits_for_training(
+    data_dir: Path,
+    logger,
+    stock_names: Optional[List[str]] = None,
+):
+    splits = {}
+    for split_name in ['train', 'val']:
+        split_df = load_normalized_split(data_dir, split_name)
+        if split_df is None or split_df.empty:
+            splits[split_name] = None
+            continue
+
+        if stock_names is not None and 'tic' in split_df.columns:
+            split_df = split_df[split_df['tic'].isin(stock_names)].copy()
+            if split_df.empty:
+                splits[split_name] = None
+                continue
+
+        logger.info(f"Loaded normalized {split_name} split with {len(split_df):,} rows")
+        splits[split_name] = split_df
+
+    return splits.get('train'), splits.get('val')
+
+
+def build_sequences_from_normalized_splits(
+    data_dir: Path,
+    feature_cols: List[str],
+    data_config,
+    logger,
+    stock_names: Optional[List[str]] = None,
+):
+    preprocessor = DataPreprocessor(data_config)
+    sequences_by_split = {}
+
+    for split_name in ['train', 'val']:
+        split_df = load_normalized_split(data_dir, split_name)
+        if split_df is None or split_df.empty:
+            sequences_by_split[split_name] = None
+            continue
+
+        if stock_names is not None and 'tic' in split_df.columns:
+            split_df = split_df[split_df['tic'].isin(stock_names)].copy()
+            if split_df.empty:
+                sequences_by_split[split_name] = None
+                continue
+
+        logger.info(f"Building {split_name} sequences from normalized split cache...")
+        sequences_by_split[split_name] = preprocessor.create_sequences(
+            split_df,
+            feature_cols=feature_cols,
+        )
+
+    return sequences_by_split.get('train'), sequences_by_split.get('val')
 
 
 def _load_model_weights(model, checkpoint_path: str, device) -> None:
@@ -220,6 +286,7 @@ def main():
 
     # Load config
     config = load_config('model')
+    data_config = load_config('main')
     model_type = args.model_type or config.get_default_model_type()
     available_model_types = config.get_available_model_types()
     if model_type not in available_model_types:
@@ -245,7 +312,8 @@ def main():
         f"epochs={config.model.training.NUM_EPOCHS}, "
         f"batch_size={config.model.training.BATCH_SIZE}, "
         f"lr={config.model.training.LEARNING_RATE}, "
-        f"backend={backend}"
+        f"backend={backend}, "
+        f"data_mode={getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')}"
     )
 
     # Load config override if provided
@@ -291,11 +359,45 @@ def main():
         except Exception as e:
             logger.warning(f"Could not load stock encoder: {e}")
 
-    # Load sequences
-    train_sequences = load_sequences(data_dir, 'train', stock_names=args.stocks, stock_encoder=stock_encoder)
-    val_sequences = load_sequences(data_dir, 'val', stock_names=args.stocks, stock_encoder=stock_encoder)
+    data_mode = getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')
+    if data_mode == 'precomputed_sequences':
+        feature_cols = preprocessing_info.get('feature_cols')
+        if not feature_cols:
+            logger.error("Missing feature_cols in preprocessing info; cannot stream sequences lazily.")
+            return 1
+        train_split_df, val_split_df = load_normalized_splits_for_training(
+            data_dir=data_dir,
+            logger=logger,
+            stock_names=args.stocks,
+        )
+        train_sequences = None
+        val_sequences = None
+    elif data_mode == 'on_the_fly_sequences':
+        feature_cols = preprocessing_info.get('feature_cols')
+        if not feature_cols:
+            logger.error("Missing feature_cols in preprocessing info; cannot build sequences on the fly.")
+            return 1
+        train_sequences, val_sequences = build_sequences_from_normalized_splits(
+            data_dir=data_dir,
+            feature_cols=feature_cols,
+            data_config=data_config,
+            logger=logger,
+            stock_names=args.stocks,
+        )
+        train_split_df = None
+        val_split_df = None
+    else:
+        train_sequences = load_sequences(data_dir, 'train', stock_names=args.stocks, stock_encoder=stock_encoder)
+        val_sequences = load_sequences(data_dir, 'val', stock_names=args.stocks, stock_encoder=stock_encoder)
+        train_split_df = None
+        val_split_df = None
 
-    if train_sequences is None:
+    if data_mode == 'precomputed_sequences':
+        if train_split_df is None:
+            logger.error(f"No normalized split cache found in {data_dir}/.cache/normalized_splits/")
+            logger.error("Run preprocess_data.py with normalized split output first")
+            return 1
+    elif train_sequences is None:
         logger.error(f"No training data found in {data_dir}/train/")
         logger.error("Run preprocess_data.py first")
         return 1
@@ -303,22 +405,52 @@ def main():
     # Log if filtering by stocks
     if args.stocks is not None:
         logger.info(f"Filtered training to stocks: {args.stocks}")
-        logger.info(f"Loaded {len(train_sequences['target'])} training samples (filtered)")
-        if val_sequences:
-            logger.info(f"Loaded {len(val_sequences['target'])} validation samples (filtered)")
+        if data_mode == 'precomputed_sequences':
+            logger.info(f"Loaded {len(train_split_df):,} normalized training rows (filtered)")
+            if val_split_df is not None:
+                logger.info(f"Loaded {len(val_split_df):,} normalized validation rows (filtered)")
+        else:
+            logger.info(f"Loaded {len(train_sequences['target'])} training samples (filtered)")
+            if val_sequences:
+                logger.info(f"Loaded {len(val_sequences['target'])} validation samples (filtered)")
     else:
-        logger.info(f"Loaded {len(train_sequences['target'])} training samples")
-        if val_sequences:
-            logger.info(f"Loaded {len(val_sequences['target'])} validation samples")
+        if data_mode == 'precomputed_sequences':
+            logger.info(f"Loaded {len(train_split_df):,} normalized training rows")
+            if val_split_df is not None:
+                logger.info(f"Loaded {len(val_split_df):,} normalized validation rows")
+        else:
+            logger.info(f"Loaded {len(train_sequences['target'])} training samples")
+            if val_sequences:
+                logger.info(f"Loaded {len(val_sequences['target'])} validation samples")
+
+    ticker_map = load_ticker_mapping(data_dir)
+    if train_sequences is not None:
+        log_sequence_preview(
+            logger=logger,
+            sequences=train_sequences,
+            feature_cols=preprocessing_info.get('feature_cols'),
+            ticker_map=ticker_map,
+            split_name='train',
+            max_rows=10,
+        )
 
     # Create data loaders
     logger.info("Creating data loaders...")
 
-    loaders = create_data_loaders(
-        train_sequences=train_sequences,
-        val_sequences=val_sequences,
-        config=config
-    )
+    if data_mode == 'precomputed_sequences':
+        loaders = create_lazy_data_loaders(
+            train_df=train_split_df,
+            val_df=val_split_df,
+            feature_cols=preprocessing_info.get('feature_cols'),
+            data_config=data_config,
+            model_config=config,
+        )
+    else:
+        loaders = create_data_loaders(
+            train_sequences=train_sequences,
+            val_sequences=val_sequences,
+            config=config
+        )
 
     if loaders.get('val') is None and backend == 'lightning':
         if config.model.training.SCHEDULER == 'reduce_on_plateau':
@@ -358,11 +490,11 @@ def main():
         'target_normalization': {
             'NORMALIZE_TARGET': preprocessing_info.get(
                 'normalize_target',
-                load_config('main').data.sequences.NORMALIZE_TARGET
+                data_config.data.sequences.NORMALIZE_TARGET
             ),
             'TARGET_THRESHOLD': preprocessing_info.get(
                 'target_threshold',
-                load_config('main').data.sequences.TARGET_THRESHOLD
+                data_config.data.sequences.TARGET_THRESHOLD
             ),
         },
         'regime_params': preprocessing_info.get('regime_params'),

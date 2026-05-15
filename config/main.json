@@ -30,6 +30,9 @@
       "NORMALIZE_TARGET": true,
       "STRIDE": 1
     },
+    "dataset": {
+      "MODE": "on_the_fly_sequences"
+    },
     "technical_indicators": {
       "EMA_PERIODS": [50, 200],
       "RSI_PERIOD": 14,
@@ -37,12 +40,12 @@
       "MACD_PARAMS": [12, 26, 9]
     },
     "fibonacci": {
-      "FIBONACCI_WINDOW": 30
+      "FIBONACCI_WINDOW": 3
     },
     "geometric": {
-      "CHANNEL_WINDOW": 20,
-      "SWING_WINDOW": 20,
-      "TRENDLINE_WINDOW": 30,
+      "CHANNEL_WINDOW": 7,
+      "SWING_WINDOW": 7,
+      "TRENDLINE_WINDOW": 15,
       "TRENDLINE_TOLERANCE": 0.0001,
       "TRENDLINE_MAX_ITERATIONS": 100,
       "ENABLE_ATR_FEATURE": true,

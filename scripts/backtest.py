@@ -42,7 +42,7 @@ def parse_args():
         '--model',
         type=str,
         required=True,
-        help='Path to model checkpoint or "best" for best model'
+        help='Path to model checkpoint or alias ("best" or "final")'
     )
 
     parser.add_argument(

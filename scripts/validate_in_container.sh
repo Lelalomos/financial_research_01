@@ -3,7 +3,7 @@
 
 set -e
 
-MODEL_PATH="latest"
+MODEL_PATH="best"
 MODEL_TYPE=""
 DATA_DIR="data/processed"
 SPLIT="val"
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help)
             echo "Usage: $0 [options]"
-            echo "  --model PATH_OR_ALIAS"
+            echo "  --model PATH_OR_ALIAS   Checkpoint path or alias: best|final"
             echo "  --model-type TYPE      Override model type from config/model.json"
             echo "  --data-dir PATH"
             echo "  --data-split NAME"

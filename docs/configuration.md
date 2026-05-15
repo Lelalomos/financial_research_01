@@ -467,9 +467,9 @@ Semantics:
 ### Loss Function
 
 ```python
-config.model.loss.LOSS_TYPE = "directional_mse"  # e.g. 'directional_mse', 'huber', 'mse', 'mae', 'smooth_l1'
+config.model.loss.LOSS_TYPE = "directional_mse"  # e.g. 'directional_mse', 'directional_huber', 'huber', 'mse', 'mae', 'smooth_l1'
 config.model.loss.DIRECTIONAL_ALPHA = 0.1
-config.model.loss.HUBER_DELTA = 1.0  # used only when LOSS_TYPE == "huber"
+config.model.loss.HUBER_DELTA = 1.0  # used when LOSS_TYPE == "huber" or "directional_huber"
 ```
 
 ### Local MLflow Experiment Tracking

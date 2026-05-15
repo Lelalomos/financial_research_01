@@ -10,6 +10,7 @@ from .early_stopping import (
     list_checkpoints
 )
 from .losses import (
+    DirectionalHuberLoss,
     DirectionalLoss,
     DirectionalMSELoss,
     SharpeRatioLoss,
@@ -41,6 +42,7 @@ __all__ = [
     'ModelCheckpoint',
     'find_checkpoint_path',
     'list_checkpoints',
+    'DirectionalHuberLoss',
     'DirectionalLoss',
     'DirectionalMSELoss',
     'SharpeRatioLoss',

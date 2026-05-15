@@ -189,6 +189,11 @@ Sliding window sequences are created:
 - **Stride**: 1 day
 - **Target**: Future return at horizon
 
+Sequence creation now supports two modes through `data.dataset.MODE`:
+
+- `precomputed_sequences`: preprocessing stops after normalized split parquet export, and training uses a lazy dataset that slices sliding windows from `data/processed/.cache/normalized_splits/*.parquet` as batches are requested
+- `on_the_fly_sequences`: preprocessing stops after normalized split parquet export, and training eagerly builds full in-memory sequence dictionaries from those normalized split caches before the first epoch
+
 ## Stage 4: Dataset
 
 ### PyTorch Dataset

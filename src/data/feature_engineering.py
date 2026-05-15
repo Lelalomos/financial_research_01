@@ -20,6 +20,7 @@ import json
 
 from src.config import load_config
 from src.data.feature_engineering_polars import (
+    PolarsFeatureEngineeringError,
     add_fibonacci_features_polars,
     add_time_features_polars,
     merge_external_data_polars,
@@ -487,9 +488,12 @@ class FeatureEngineer:
         window = self.config.data.fibonacci.FIBONACCI_WINDOW
         if self.config.data.features.FEATURE_FLAGS.get('polars_fibonacci_features', False):
             self.logger.info("Using opt-in Polars implementation for Fibonacci features")
-            result = add_fibonacci_features_polars(result, window=window)
-            self.logger.info(f"Added Fibonacci features. Shape: {result.shape}")
-            return result
+            try:
+                result = add_fibonacci_features_polars(result, window=window)
+                self.logger.info(f"Added Fibonacci features. Shape: {result.shape}")
+                return result
+            except PolarsFeatureEngineeringError as exc:
+                self.logger.warning(f"{exc} Falling back to pandas Fibonacci implementation.")
 
         # Group by ticker and calculate Fibonacci levels for each stock
         for ticker in result['tic'].unique():
@@ -621,9 +625,12 @@ class FeatureEngineer:
 
         if self.config.data.features.FEATURE_FLAGS.get('polars_time_features', False):
             self.logger.info("Using opt-in Polars implementation for time features")
-            result = add_time_features_polars(df)
-            self.logger.info(f"Added time features. Shape: {result.shape}")
-            return result
+            try:
+                result = add_time_features_polars(df)
+                self.logger.info(f"Added time features. Shape: {result.shape}")
+                return result
+            except PolarsFeatureEngineeringError as exc:
+                self.logger.warning(f"{exc} Falling back to pandas time feature implementation.")
 
         result = df.copy()
         result['date'] = pd.to_datetime(result['date'])
@@ -719,19 +726,22 @@ class FeatureEngineer:
         if self.config.data.features.FEATURE_FLAGS.get('polars_external_merges', False):
             self.logger.info("Using opt-in Polars implementation for external data merges")
             commodity_cols = list(self.config.data.sources.COMMODITIES.values())
-            result = merge_external_data_polars(
-                stock_df=stock_df,
-                vix_df=vix_df,
-                commodities_df=commodities_df,
-                treasury_df=treasury_df,
-                include_vix=self.config.data.features.FEATURE_FLAGS.get('vix', False),
-                commodity_columns=(
-                    commodity_cols if self.config.data.features.FEATURE_FLAGS.get('commodities', False) else None
-                ),
-                include_treasury=self.config.data.features.FEATURE_FLAGS.get('treasury_yields', False),
-            )
-            self.logger.info("Merged external data")
-            return result
+            try:
+                result = merge_external_data_polars(
+                    stock_df=stock_df,
+                    vix_df=vix_df,
+                    commodities_df=commodities_df,
+                    treasury_df=treasury_df,
+                    include_vix=self.config.data.features.FEATURE_FLAGS.get('vix', False),
+                    commodity_columns=(
+                        commodity_cols if self.config.data.features.FEATURE_FLAGS.get('commodities', False) else None
+                    ),
+                    include_treasury=self.config.data.features.FEATURE_FLAGS.get('treasury_yields', False),
+                )
+                self.logger.info("Merged external data")
+                return result
+            except PolarsFeatureEngineeringError as exc:
+                self.logger.warning(f"{exc} Falling back to pandas external-data merge implementation.")
 
         result = stock_df.copy()
 

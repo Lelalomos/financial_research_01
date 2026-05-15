@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Optional
 
-from .losses import DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss
+from .losses import DirectionalHuberLoss, DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss
 
 
 def create_optimizer(model: nn.Module, config) -> optim.Optimizer:
@@ -65,6 +65,10 @@ def create_loss_function(config) -> nn.Module:
     if loss_type == 'directional_mse':
         alpha = config.model.loss.get('DIRECTIONAL_ALPHA', 0.1)
         return DirectionalMSELoss(alpha=alpha)
+    if loss_type == 'directional_huber':
+        alpha = config.model.loss.get('DIRECTIONAL_ALPHA', 0.1)
+        delta = config.model.loss.get('HUBER_DELTA', 1.0)
+        return DirectionalHuberLoss(alpha=alpha, delta=delta)
     if loss_type == 'sharpe':
         epsilon = config.model.loss.get('SHARPE_EPSILON', 1e-6)
         return SharpeRatioLoss(epsilon=epsilon)

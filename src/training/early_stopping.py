@@ -13,6 +13,8 @@ import glob
 import re
 import tempfile
 
+from src.utils.logger import get_training_logger
+
 
 def make_weights_only_safe(value):
     """
@@ -267,6 +269,7 @@ class ModelCheckpoint:
 
         self.best_score = None
         self.periodic_checkpoint_history = []
+        self.logger = get_training_logger(log_dir="logs")
 
         os.makedirs(save_dir, exist_ok=True)
 
@@ -331,6 +334,7 @@ class ModelCheckpoint:
                     print(f"  -> Saving best model (score: {score:.6f})")
                 best_filepath = os.path.join(self.save_dir, filename)
                 atomic_torch_save(checkpoint, best_filepath)
+                self.logger.log_checkpoint(best_filepath, score, metric_name="score")
 
             if should_save_periodic:
                 filename = f'{self.model_type}_latest_periodic.pth'
@@ -338,6 +342,7 @@ class ModelCheckpoint:
                     print(f"  -> Saving periodic checkpoint (score: {score:.6f})")
                 periodic_filepath = os.path.join(self.save_dir, filename)
                 atomic_torch_save(checkpoint, periodic_filepath)
+                self.logger.log_checkpoint(periodic_filepath, score, metric_name="score")
 
             return best_filepath or periodic_filepath
 
@@ -463,13 +468,13 @@ def find_checkpoint_path(
 
     Supports:
     - Direct file path: /path/to/model.pth
-    - "best": Find best model for model_type (or any model if model_type not specified)
-    - "latest": Find most recent checkpoint (any model or specific model_type)
+    - "best": Find latest best model for model_type (or any model if model_type not specified)
+    - "final": Find latest final-trained checkpoint (any model or specific model_type)
     - "{model_type}": Find best model for specific model type
     - Pattern: "crnn_attention", "*transformer*", etc.
 
     Args:
-        model_input: Model identifier (path, "best", "latest", or pattern)
+        model_input: Model identifier (path, "best", "final", or pattern)
         checkpoint_dir: Directory to search for checkpoints
         model_type: Preferred model type for "best" or "latest" searches
 
@@ -497,13 +502,18 @@ def find_checkpoint_path(
             num_stocks=num_stocks,
             num_groups=num_groups,
         )
-    elif model_input.lower() == 'latest':
-        return _find_latest_checkpoint(
+    elif model_input.lower() == 'final':
+        return _find_final_checkpoint(
             checkpoint_dir,
             model_type,
             num_features=num_features,
             num_stocks=num_stocks,
             num_groups=num_groups,
+        )
+    elif model_input.lower() == 'latest':
+        raise FileNotFoundError(
+            "Checkpoint alias 'latest' is no longer supported. "
+            "Use 'best', 'final', or provide an exact checkpoint path."
         )
     else:
         # Treat as pattern/model_type and find best match
@@ -586,7 +596,7 @@ def _find_best_checkpoint(
         )
 
 
-def _find_latest_checkpoint(
+def _find_final_checkpoint(
     checkpoint_dir: str,
     model_type: Optional[str] = None,
     num_features: Optional[int] = None,
@@ -594,7 +604,7 @@ def _find_latest_checkpoint(
     num_groups: Optional[int] = None,
 ) -> str:
     """
-    Find most recent checkpoint (best or epoch checkpoint).
+    Find most recent final-trained checkpoint.
 
     Args:
         checkpoint_dir: Directory to search
@@ -607,17 +617,15 @@ def _find_latest_checkpoint(
         FileNotFoundError: If no checkpoint found
     """
     if model_type:
-        # Search for any checkpoint with this model_type
-        pattern = os.path.join(checkpoint_dir, f'{model_type}_*.pth')
+        pattern = os.path.join(checkpoint_dir, f'{model_type}_final*.pth')
         files = glob.glob(pattern)
     else:
-        # Search for any checkpoint
-        pattern = os.path.join(checkpoint_dir, '*.pth')
+        pattern = os.path.join(checkpoint_dir, '*_final*.pth')
         files = glob.glob(pattern)
 
     if not files:
         raise FileNotFoundError(
-            f"No checkpoint found in {checkpoint_dir} "
+            f"No final checkpoint found in {checkpoint_dir} "
             f"(searched: {pattern})"
         )
 

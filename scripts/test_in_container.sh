@@ -3,7 +3,7 @@
 
 set -e
 
-MODEL_PATH="latest"
+MODEL_PATH="best"
 REPORTS_DIR="outputs"
 CLEANUP_OLD_FILES=true
 MODEL_TYPE=""
@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --help)
             echo "Usage: $0 [options]"
-            echo "  --model PATH_OR_ALIAS"
+            echo "  --model PATH_OR_ALIAS   Checkpoint path or alias: best|final"
             echo "  --excel-report PATH"
             echo "  --model-type TYPE"
             echo "  --device DEVICE"

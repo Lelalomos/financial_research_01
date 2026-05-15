@@ -147,7 +147,19 @@ model = TransformerModel(
 
 **Use case**: Deep architecture combining LSTM sequential modeling with Transformer attention
 
-### 6. Multi-Branch BiLSTM
+### 6. BiLSTM4 + Attention
+
+**Architecture**:
+- 4-layer BiLSTM (128, 256, 512, 256)
+- Multihead attention over sequence outputs
+- Feed-forward MLP applied independently to each timestep after attention
+- Mean pooling across timesteps
+- Final linear output layer
+
+**Use case**: Larger recurrent-attention model with extra timestep-level
+nonlinearity before pooling
+
+### 7. Multi-Branch BiLSTM
 
 ```python
 from src.models import create_model

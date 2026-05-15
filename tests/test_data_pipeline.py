@@ -18,7 +18,7 @@ from src.config.config_loader import Config
 from src.data.downloader import DataDownloader
 from src.data.feature_engineering import FeatureEngineer
 from src.data.preprocessing import DataPreprocessor
-from src.data.dataset import FinancialDataset
+from src.data.dataset import FinancialDataset, LazyFinancialDataset
 
 
 class TestDataPipeline(unittest.TestCase):
@@ -170,6 +170,32 @@ class TestDataPipeline(unittest.TestCase):
         emb_sizes = dataset.get_embedding_sizes()
         self.assertIn('num_stocks', emb_sizes)
         self.assertIn('num_groups', emb_sizes)
+
+    def test_lazy_dataset(self):
+        """Test lazy sequence dataset creation from normalized split rows."""
+        feature_df = self.sample_data.copy()
+        feature_df['day'] = pd.to_datetime(feature_df['date']).dt.day.astype(int)
+        feature_df['month'] = pd.to_datetime(feature_df['date']).dt.month.astype(int)
+        feature_df['feat1'] = np.linspace(0.0, 1.0, len(feature_df))
+        feature_df['target'] = np.linspace(-0.5, 0.5, len(feature_df))
+        feature_df['tic_id'] = feature_df['tic'].map({'AAPL': 0, 'MSFT': 1, 'GOOGL': 2}).astype(int)
+        feature_df['group_id'] = 0
+        feature_df['dividend_flag'] = 1
+
+        lazy_dataset = LazyFinancialDataset(
+            feature_df,
+            feature_cols=['feat1'],
+            data_config=self.config,
+        )
+
+        self.assertGreater(len(lazy_dataset), 0)
+        sample = lazy_dataset[0]
+        self.assertEqual(sample['features'].shape[0], self.config.data.sequences.SEQUENCE_LENGTH)
+        self.assertEqual(sample['features'].shape[1], 1)
+        self.assertIn('target', sample)
+
+        emb_sizes = lazy_dataset.get_embedding_sizes()
+        self.assertGreaterEqual(emb_sizes['num_stocks'], 3)
 
     def test_local_index_loading(self):
         """Test loading stocks from local index file."""

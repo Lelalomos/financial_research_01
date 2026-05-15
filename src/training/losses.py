@@ -119,6 +119,19 @@ class DirectionalMSELoss(nn.Module):
         return directional_loss(pred, target, alpha=self.alpha, base_loss=self.base_loss)
 
 
+class DirectionalHuberLoss(nn.Module):
+    """Huber loss plus wrong-direction penalty."""
+
+    def __init__(self, alpha: float = 0.1, delta: float = 1.0):
+        super().__init__()
+        self.alpha = alpha
+        self.delta = delta
+        self.base_loss = nn.HuberLoss(delta=delta)
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return directional_loss(pred, target, alpha=self.alpha, base_loss=self.base_loss)
+
+
 class SharpeRatioLoss(nn.Module):
     """Negative differentiable Sharpe-style loss."""
 
