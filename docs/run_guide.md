@@ -22,6 +22,8 @@ The main CLI entrypoints are:
 
 - `scripts/preprocess_data.py`
 - `scripts/train.py`
+- `scripts/test.py`
+- `scripts/validate.py`
 - `scripts/predict.py`
 - `scripts/backtest.py`
 
@@ -113,6 +115,7 @@ The current model registry supports these model types:
 - `lstm3_attention`
 - `bilstm4_attention`
 - `multi_branch_bilstm`
+- `kronos`
 
 Practical guidance:
 
@@ -123,8 +126,26 @@ Practical guidance:
 - `transformer`: heavier model, usually worth testing after a baseline
 - `multi_branch_bilstm`: experimental branch-based model that separates
   technical, geometric, and macro/financial feature streams
+- `kronos`: experimental tokenized generative model; slower but useful when you
+  want autoregressive multi-feature forecasting
 
 If you want one sensible first model, use `crnn_attention` or `lstm3_attention`.
+
+Kronos credit:
+
+- Original project: `Kronos`
+- Original repository: `https://github.com/shiyu-coder/Kronos`
+- Original paper: `Kronos: A Foundation Model for the Language of Financial Markets`
+- Authors listed in the upstream citation:
+  - Yu Shi
+  - Zongliang Fu
+  - Shuo Chen
+  - Bohan Zhao
+  - Wei Xu
+  - Changshui Zhang
+  - Jian Li
+- Paper link: `https://arxiv.org/abs/2508.02739`
+- Upstream license: `MIT`
 
 
 ## How Model Selection Works
@@ -142,6 +163,12 @@ You choose the model family with:
 --model-type crnn_attention
 ```
 
+If you do not pass `--model-type`, the scripts fall back to:
+
+```json
+model.selection.DEFAULT_MODEL_TYPE
+```
+
 ### Architecture selection
 
 Once the model type is chosen, the script reads that model's parameter block
@@ -152,11 +179,15 @@ Examples:
 - `model.models.crnn_attention`
 - `model.models.lstm3_attention`
 - `model.models.bilstm4_attention`
+- `model.models.kronos`
 
 This means:
 
 - `--model-type crnn_attention` activates the CRNN attention model
 - its hidden sizes, dropout, and attention settings come from the matching JSON block
+- `--model-type kronos` activates the Kronos tokenizer + generator branch
+- if `DEFAULT_MODEL_TYPE` is set to `kronos`, the same train, test, validate,
+  and backtest scripts use Kronos without any extra wrapper
 
 
 ## Recommended First Configuration
@@ -270,8 +301,11 @@ docker exec crnn_predictor python scripts/train.py \
 
 Training data mode is controlled by `config/main.json`:
 
-- `data.dataset.MODE = "precomputed_sequences"`: training loads normalized split parquet caches and streams window slices lazily during training
-- `data.dataset.MODE = "on_the_fly_sequences"`: training loads normalized split parquet caches and eagerly builds full sequence dictionaries before the first epoch
+- `data.dataset.MODE = "precomputed_sequences"`: preprocessing creates and saves sequence arrays, and training loads those saved arrays first
+- `data.dataset.MODE = "on_the_fly_sequences"`: training loads normalized split parquet caches and streams window slices lazily during training
+
+For `precomputed_sequences`, training still has a fallback path that rebuilds
+sequences from normalized split caches if saved arrays are missing.
 
 ### Force Lightning backend explicitly
 
@@ -289,6 +323,9 @@ docker exec crnn_predictor python scripts/train.py \
   --backend custom
 ```
 
+Kronos uses a custom training branch inside the same `scripts/train.py` file.
+If you request Lightning with Kronos, the script falls back to the custom path.
+
 ### Force CPU
 
 ```bash
@@ -296,6 +333,26 @@ docker exec crnn_predictor python scripts/train.py \
   --model-type crnn_attention \
   --force-cpu
 ```
+
+### Small Kronos smoke training
+
+These extra flags are useful when testing Kronos quickly:
+
+```bash
+docker exec crnn_predictor python scripts/train.py \
+  --model-type kronos \
+  --backend custom \
+  --device cpu \
+  --epochs 1 \
+  --max-train-batches 1 \
+  --max-val-batches 1
+```
+
+These flags are available in `scripts/train.py` and
+`scripts/train_in_container.sh`:
+
+- `--max-train-batches`
+- `--max-val-batches`
 
 ### Resume or fine-tune
 
@@ -370,9 +427,11 @@ In-container wrapper:
 ./scripts/train_in_container.sh --model-type crnn_attention
 ```
 
-The current in-container wrapper can start TensorBoard and MLflow UI inside the
-container using the same monitor flags. At the moment, its script defaults are
-set to start both monitors unless you modify the wrapper.
+The same wrapper also works for Kronos:
+
+```bash
+./scripts/train_in_container.sh --model-type kronos --backend custom
+```
 
 Relevant paths:
 
@@ -448,6 +507,76 @@ docker exec crnn_predictor python scripts/predict.py batch \
 ```
 
 
+## Testing
+
+Use testing to evaluate a trained checkpoint on `train`, `val`, or `test`.
+
+### Basic test
+
+```bash
+docker exec crnn_predictor python scripts/test.py \
+  --model best \
+  --model-type crnn_attention \
+  --data-dir data/processed \
+  --split test
+```
+
+### In-container wrapper
+
+```bash
+./scripts/test_in_container.sh --model best --model-type crnn_attention
+```
+
+### Quick smoke test
+
+```bash
+./scripts/test_in_container.sh \
+  --model best \
+  --model-type kronos \
+  --force-cpu \
+  --max-samples 8
+```
+
+Useful wrapper option:
+
+- `--max-samples N`: limit the number of evaluated samples for a quick smoke run
+
+For direct models, test compares scalar predictions to the saved target.
+For Kronos, test generates future rows, converts generated close prices into the
+same horizon return target, and then reports the usual metrics.
+
+
+## Validation
+
+Validation uses the same idea as testing, but defaults to the validation split.
+
+### Basic validation
+
+```bash
+docker exec crnn_predictor python scripts/validate.py \
+  --model best \
+  --model-type crnn_attention \
+  --data-dir data/processed \
+  --split val
+```
+
+### In-container wrapper
+
+```bash
+./scripts/validate_in_container.sh --model best --model-type crnn_attention
+```
+
+### Quick Kronos validation smoke run
+
+```bash
+./scripts/validate_in_container.sh \
+  --model best \
+  --model-type kronos \
+  --force-cpu \
+  --max-samples 8
+```
+
+
 ## Backtesting
 
 Backtesting in this project runs the trained model over one processed split and
@@ -512,26 +641,32 @@ docker exec crnn_predictor python scripts/backtest.py \
   --output-format json
 ```
 
+### In-container wrapper
 
-## Important Limitation
+```bash
+./scripts/backtest_in_container.sh --model best --model-type crnn_attention
+```
 
-`scripts/train.py` supports 8 model types, but `scripts/backtest.py` currently
-exposes only these model types:
+### Quick Kronos backtest smoke run
 
-- `crnn`
-- `rnn`
-- `rnn_attention`
-- `crnn_attention`
-- `transformer`
+```bash
+./scripts/backtest_in_container.sh \
+  --model final \
+  --model-type kronos \
+  --force-cpu \
+  --max-samples 8 \
+  --output outputs/kronos_backtest.json \
+  --output-format json
+```
 
-That means:
+Useful wrapper options:
 
-- `lstm3`
-- `lstm3_attention`
-- `bilstm4_attention`
+- `--max-samples N`: limit evaluated samples
+- `--output-format excel|csv|json`: choose report format
 
-can be trained, but the current backtest CLI does not expose them unless the
-script is extended.
+For direct models, backtest uses the predicted scalar return directly.
+For Kronos, backtest derives the return signal from generated future close
+prices over the configured prediction horizon.
 
 
 ## Recommended End-to-End Workflow
@@ -542,6 +677,8 @@ If you want one clean baseline workflow, use this:
 docker compose up -d
 docker exec crnn_predictor python scripts/preprocess_data.py --start-date 2015-01-01 --stocks 150
 docker exec crnn_predictor python scripts/train.py --model-type crnn_attention --backend lightning --epochs 30 --batch-size 128 --lr 0.0001
+docker exec crnn_predictor python scripts/test.py --model best --model-type crnn_attention --data-dir data/processed --split test
+docker exec crnn_predictor python scripts/validate.py --model best --model-type crnn_attention --data-dir data/processed --split val
 docker exec crnn_predictor python scripts/backtest.py --model best --model-type crnn_attention --data-dir data/processed --split test --threshold 0.5 --output outputs/backtest_report.xlsx
 ```
 
@@ -584,16 +721,18 @@ Fix:
 - retry preprocessing
 - use `--skip-download` if cached data already exists
 
-### Backtest model type rejected
+### Kronos evaluation is slow
 
 Cause:
 
-- `scripts/backtest.py` CLI supports fewer models than training
+- Kronos generates future steps autoregressively
+- CPU runs can be much slower than direct scalar models
 
 Fix:
 
-- use one of the currently exposed backtest model types
-- or extend the CLI choices in `scripts/backtest.py`
+- use `--max-samples` for smoke runs
+- use GPU for larger evaluation runs
+- keep full-split backtests for final checks only
 
 
 ## Notes on Interpretation

@@ -31,7 +31,7 @@
       "STRIDE": 1
     },
     "dataset": {
-      "MODE": "on_the_fly_sequences"
+      "MODE": "precomputed_sequences"
     },
     "technical_indicators": {
       "EMA_PERIODS": [50, 200],

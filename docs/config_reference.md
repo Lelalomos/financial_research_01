@@ -78,7 +78,7 @@ Controls data sources, feature engineering, preprocessing, and dataset layout.
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
-| `MODE` | Controls which training-time sequence build strategy is used from normalized split caches. | `precomputed_sequences` or `on_the_fly_sequences`. | Use `precomputed_sequences` for lazy/streaming window generation during training when RAM is limited; use `on_the_fly_sequences` to eagerly build all split sequences at training startup before the first epoch. |
+| `MODE` | Controls how sequence windows are prepared for training. | `precomputed_sequences` or `on_the_fly_sequences`. | Use `precomputed_sequences` to create and save sequence arrays during preprocessing; use `on_the_fly_sequences` for lazy/streaming window generation during training when RAM is limited. |
 
 ### `data.technical_indicators`
 
@@ -282,7 +282,7 @@ experiment tracking.
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
-| `DEFAULT_MODEL_TYPE` | Default model family when CLI does not specify one. | Must match a key under `model.models`. | Set to your most trusted baseline. |
+| `DEFAULT_MODEL_TYPE` | Default model family when CLI does not specify one. This fallback is used by training, test, validation, and backtest scripts. | Must match a key under `model.models`. | Set to your most trusted baseline or to `kronos` when you want Kronos to be the default runtime model. |
 
 ### `model.loss`
 
@@ -497,6 +497,103 @@ macro/financial branches before fusion.
 | `GEOMETRIC_PREFIX_FEATURES` | Prefix rules assigning geometric/structural features. | List of prefixes. | Keep aligned with generated geometric feature names. |
 | `MACRO_FINANCIAL_EXACT_FEATURES` | Exact macro/fundamental feature names assigned to macro branch. | List of strings. | Update when external/fundamental columns change. |
 | `MACRO_FINANCIAL_PREFIX_FEATURES` | Prefix rules for macro/fundamental branch. | List of prefixes. | Use if new macro feature families share naming prefixes. |
+
+### `model.models.kronos`
+
+This block configures the Kronos tokenizer, Kronos generator network, and
+Kronos predictor wrapper. In the current codebase these settings are used by:
+
+- `src.models.create_kronos_tokenizer()`
+- `src.models.create_kronos_model()`
+- `src.models.create_kronos_predictor()`
+- the Kronos branch inside `scripts/train.py`
+- the Kronos branches inside `scripts/test.py`
+- the Kronos branches inside `scripts/validate.py`
+- the Kronos branches inside `scripts/backtest.py`
+
+They are still not used by the generic `src.models.create_model()` registry.
+Kronos uses dedicated runtime branches because it trains and evaluates as a
+token-generation model instead of a direct scalar regressor.
+
+Reference / credit:
+
+- Original project: `Kronos`
+- Original repository: `https://github.com/shiyu-coder/Kronos`
+- Original paper: `Kronos: A Foundation Model for the Language of Financial Markets`
+- Authors listed in the upstream citation:
+  - Yu Shi
+  - Zongliang Fu
+  - Shuo Chen
+  - Bohan Zhao
+  - Wei Xu
+  - Changshui Zhang
+  - Jian Li
+- Paper link: `https://arxiv.org/abs/2508.02739`
+- Upstream license: `MIT`
+
+### `model.models.kronos.tokenizer`
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `D_IN` | Number of continuous input features passed into the tokenizer. The current default assumes `open, high, low, close, volume, amount`. | Positive integer. Keep aligned with the real predictor input width. | Change when Kronos should tokenize a different feature set. |
+| `D_MODEL` | Internal Transformer width used inside the tokenizer. | Positive integer. | Increase for more tokenizer capacity; decrease to reduce memory and parameters. |
+| `N_HEADS` | Number of attention heads in tokenizer Transformer blocks. | Positive integer that divides `D_MODEL`. | Change only with dimension compatibility in mind. |
+| `FF_DIM` | Feed-forward hidden size in tokenizer Transformer blocks. | Positive integer, often `2x` to `4x` `D_MODEL`. | Increase for more nonlinear capacity. |
+| `N_ENC_LAYERS` | Number of tokenizer encoder layers. | Positive integer. | Increase if the tokenizer needs a deeper encoder. |
+| `N_DEC_LAYERS` | Number of tokenizer decoder layers. | Positive integer. | Increase if token-to-feature reconstruction is too weak. |
+| `FFN_DROPOUT_P` | Dropout in tokenizer feed-forward blocks. | Float in `[0, 1)`. | Increase if tokenizer overfits. |
+| `ATTN_DROPOUT_P` | Dropout inside tokenizer attention blocks. | Float in `[0, 1)`. | Increase for stronger regularization. |
+| `RESID_DROPOUT_P` | Dropout on tokenizer residual outputs. | Float in `[0, 1)`. | Increase when deeper tokenizer stacks overfit. |
+| `S1_BITS` | Number of bits used for the coarse token. This sets coarse token vocabulary size to `2 ** S1_BITS`. | Positive integer. | Increase if the coarse code is too small to represent the data well. |
+| `S2_BITS` | Number of bits used for the fine token. This sets fine token vocabulary size to `2 ** S2_BITS`. | Positive integer. | Increase if the fine code needs more detail. |
+| `BETA` | Commitment-loss weight in the binary spherical quantizer. | Non-negative float. | Increase when token assignments drift too much from pre-quantized activations. |
+| `GAMMA0` | Weight on per-sample entropy term in the quantizer. | Non-negative float. | Change only when tuning code usage behavior. |
+| `GAMMA` | Weight on codebook entropy term in the quantizer. | Non-negative float. | Change when tuning how evenly the codebook is used. |
+| `ZETA` | Overall weight multiplier for the entropy penalty term. | Non-negative float. | Increase if codebook regularization is too weak. |
+| `GROUP_SIZE` | Sub-code group size used by the quantizer entropy approximation. It must divide `S1_BITS + S2_BITS`. | Positive integer divisor of total bits. | Change only if you understand the quantizer grouping tradeoff. |
+
+### `model.models.kronos.network`
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `S1_BITS` | Coarse token bit width expected by the Kronos generator. Must match tokenizer `S1_BITS`. | Positive integer. | Keep equal to tokenizer value unless you intentionally redesign the token interface. |
+| `S2_BITS` | Fine token bit width expected by the Kronos generator. Must match tokenizer `S2_BITS`. | Positive integer. | Keep equal to tokenizer value unless you intentionally redesign the token interface. |
+| `N_LAYERS` | Number of causal Transformer blocks in the Kronos generator. | Positive integer. | Increase for deeper sequence modeling; decrease to reduce compute. |
+| `D_MODEL` | Token embedding and hidden size in the Kronos generator. | Positive integer. | Increase for model capacity; decrease for speed and memory savings. |
+| `N_HEADS` | Number of attention heads in the Kronos generator. | Positive integer that divides `D_MODEL`. | Change only if hidden dimension stays compatible. |
+| `FF_DIM` | Feed-forward hidden size inside each Kronos Transformer block. | Positive integer. | Increase when the generator head is underpowered. |
+| `FFN_DROPOUT_P` | Feed-forward dropout in the generator blocks. | Float in `[0, 1)`. | Increase if the generator overfits. |
+| `ATTN_DROPOUT_P` | Attention dropout in the generator blocks. | Float in `[0, 1)`. | Increase for stronger regularization. |
+| `RESID_DROPOUT_P` | Residual dropout in the generator blocks. | Float in `[0, 1)`. | Adjust if deep-token modeling overfits. |
+| `TOKEN_DROPOUT_P` | Dropout applied after token and time embeddings are added. | Float in `[0, 1)`. | Increase to regularize token embeddings. |
+| `LEARN_TE` | Whether time embeddings are learned instead of fixed sinusoidal-style embeddings. | `true` or `false`. | Set `true` to let the model learn calendar embeddings; set `false` for fixed embeddings. |
+| `NUM_STOCKS` | Vocabulary size for optional `stock_id` embeddings. | Positive integer. Set to the number of encoded stock IDs used by the dataset. | Increase when your stock universe grows. |
+| `NUM_GROUPS` | Vocabulary size for optional `group_id` embeddings. | Positive integer. Set to the number of encoded group IDs used by the dataset. | Increase when your sector/group mapping grows. |
+| `USE_STOCK_EMBEDDING` | Whether Kronos adds `stock_id` embeddings from prepared data. | `true` or `false`. | Enable when stock identity is useful to the model. |
+| `USE_GROUP_EMBEDDING` | Whether Kronos adds `group_id` embeddings from prepared data. | `true` or `false`. | Enable when sector/group context is useful. |
+| `STOCK_EMB_DIM` | Embedding width for `stock_id`. | Positive integer. | Increase for large stock universes; decrease to save parameters. |
+| `GROUP_EMB_DIM` | Embedding width for `group_id`. | Positive integer. | Keep smaller than stock embedding unless group structure is very important. |
+
+### `model.models.kronos.predictor`
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `MAX_CONTEXT` | Maximum token history window used during autoregressive generation and final decode. | Positive integer. | Increase for longer context if memory allows. |
+| `CLIP` | Absolute clipping value used on normalized input features before tokenization and generation. | Positive float. | Lower if outliers destabilize tokenization; raise if clipping removes too much signal. |
+
+### Runtime notes for Kronos
+
+- Kronos can now be selected from the normal shell flows with:
+  - `--model-type kronos`
+  - or `model.selection.DEFAULT_MODEL_TYPE = "kronos"`
+- `scripts/train.py` supports extra quick-smoke arguments for Kronos:
+  - `--max-train-batches`
+  - `--max-val-batches`
+- `scripts/test.py`, `scripts/validate.py`, and `scripts/backtest.py` support:
+  - `--max-samples`
+- In evaluation and backtest, Kronos does not produce the saved scalar target directly.
+  The runtime generates future rows and converts the generated future `close`
+  path back into the same horizon return target used by the rest of the repo.
 
 ## `config/hyperparameter.json`
 

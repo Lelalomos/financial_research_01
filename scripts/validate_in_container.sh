@@ -10,6 +10,7 @@ SPLIT="val"
 DEVICE=""
 FORCE_CPU=false
 EXCEL_REPORT=""
+MAX_SAMPLES=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -41,6 +42,10 @@ while [[ $# -gt 0 ]]; do
             FORCE_CPU=true
             shift
             ;;
+        --max-samples)
+            MAX_SAMPLES="$2"
+            shift 2
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo "  --model PATH_OR_ALIAS   Checkpoint path or alias: best|final"
@@ -50,6 +55,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --device DEVICE       Device override (e.g. cuda, cuda:0, cpu)"
             echo "  --excel-report PATH   Write detailed Excel validation report"
             echo "  --force-cpu           Force CPU usage"
+            echo "  --max-samples N       Limit validation samples for quick smoke tests"
             exit 0
             ;;
         *)
@@ -75,6 +81,10 @@ fi
 
 if [ "$FORCE_CPU" = true ]; then
     CMD="$CMD --force-cpu"
+fi
+
+if [ -n "$MAX_SAMPLES" ]; then
+    CMD="$CMD --max-samples $MAX_SAMPLES"
 fi
 
 echo "=========================================="

@@ -8,12 +8,14 @@ ORIGINAL_ARGS=("$@")
 MODEL_PATH="final"
 MODEL_TYPE=""
 OUTPUT_PATH="outputs/backtest_report.xlsx"
+OUTPUT_FORMAT=""
 DATA_DIR="data/processed"
 SPLIT="test"
 THRESHOLD=""
 INITIAL_CAPITAL=""
 DEVICE=""
 FORCE_CPU=false
+MAX_SAMPLES=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -27,6 +29,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output)
             OUTPUT_PATH="$2"
+            shift 2
+            ;;
+        --output-format)
+            OUTPUT_FORMAT="$2"
             shift 2
             ;;
         --data-dir)
@@ -53,17 +59,23 @@ while [[ $# -gt 0 ]]; do
             FORCE_CPU=true
             shift
             ;;
+        --max-samples)
+            MAX_SAMPLES="$2"
+            shift 2
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo "  --model PATH_OR_ALIAS   Checkpoint path or alias: best|final (default: best)"
             echo "  --model-type TYPE       Override model type from config/model.json"
             echo "  --output PATH           Output report path"
+            echo "  --output-format TYPE    excel|csv|json"
             echo "  --data-dir PATH         Processed data directory"
             echo "  --split NAME            train|val|test (default: test)"
             echo "  --threshold VALUE       Prediction threshold"
             echo "  --initial-capital NUM   Initial capital"
             echo "  --device DEVICE         Device override (e.g. cuda, cuda:0, cpu)"
             echo "  --force-cpu            Force CPU usage"
+            echo "  --max-samples N        Limit backtest samples for quick smoke tests"
             exit 0
             ;;
         *)
@@ -94,6 +106,10 @@ if [ -n "$THRESHOLD" ]; then
     CMD+=(--threshold "$THRESHOLD")
 fi
 
+if [ -n "$OUTPUT_FORMAT" ]; then
+    CMD+=(--output-format "$OUTPUT_FORMAT")
+fi
+
 if [ -n "$INITIAL_CAPITAL" ]; then
     CMD+=(--initial-capital "$INITIAL_CAPITAL")
 fi
@@ -104,6 +120,10 @@ fi
 
 if [ "$FORCE_CPU" = true ]; then
     CMD+=(--force-cpu)
+fi
+
+if [ -n "$MAX_SAMPLES" ]; then
+    CMD+=(--max-samples "$MAX_SAMPLES")
 fi
 
 echo "=========================================="

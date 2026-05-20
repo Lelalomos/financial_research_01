@@ -9,7 +9,8 @@ from pathlib import Path
 import json
 import numpy as np
 import torch
-from typing import Optional, List
+import torch.nn.functional as F
+from typing import Optional, List, Dict
 from sklearn.preprocessing import LabelEncoder
 
 # Add parent directory to path
@@ -18,13 +19,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import load_config
 from src.data import DataPreprocessor
 from src.data.dataset import create_data_loaders, create_lazy_data_loaders
-from src.models import create_model
+from src.models import create_kronos_model, create_kronos_tokenizer, create_model
 from src.training import (
     LightningDependencyError,
     Trainer,
     save_final_lightning_checkpoint,
     train_with_lightning,
 )
+from src.training.common import create_scheduler
+from src.training.early_stopping import EarlyStopping, atomic_torch_save, make_weights_only_safe
 from src.utils.data_preview import load_ticker_mapping, log_sequence_preview
 from src.utils.logger import get_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
@@ -132,6 +135,20 @@ def parse_args():
         choices=['lightning', 'custom'],
         default=None,
         help='Training backend. Defaults to config.model.training_backend.DEFAULT.'
+    )
+
+    parser.add_argument(
+        '--max-train-batches',
+        type=int,
+        default=None,
+        help='Optional limit for number of train batches per epoch. Useful for smoke testing.'
+    )
+
+    parser.add_argument(
+        '--max-val-batches',
+        type=int,
+        default=None,
+        help='Optional limit for number of validation batches per epoch. Useful for smoke testing.'
     )
 
     return parser.parse_args()
@@ -261,6 +278,283 @@ def _load_model_weights(model, checkpoint_path: str, device) -> None:
     model.load_state_dict(state_dict)
 
 
+def _create_optimizer_for_params(params, config):
+    training = config.model.training
+    optimizer_name = training.OPTIMIZER
+    lr = training.LEARNING_RATE
+    wd = training.WEIGHT_DECAY
+
+    if optimizer_name == 'adam':
+        return torch.optim.Adam(params, lr=lr, weight_decay=wd)
+    if optimizer_name == 'adamw':
+        return torch.optim.AdamW(params, lr=lr, weight_decay=wd)
+    if optimizer_name == 'sgd':
+        return torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=wd)
+    if optimizer_name == 'rmsprop':
+        return torch.optim.RMSprop(params, lr=lr, weight_decay=wd)
+    raise ValueError(f"Unknown optimizer: {optimizer_name}")
+
+
+def _save_kronos_checkpoint(
+    checkpoint_path: Path,
+    tokenizer,
+    model,
+    optimizer,
+    epoch: int,
+    metric: float,
+    model_type: str,
+    checkpoint_metadata: Optional[Dict] = None,
+):
+    payload = {
+        'epoch': epoch,
+        'model_type': model_type,
+        'best_score': metric,
+        'tokenizer_state_dict': tokenizer.state_dict(),
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict() if optimizer is not None else None,
+    }
+    if checkpoint_metadata:
+        payload.update(make_weights_only_safe(checkpoint_metadata))
+    atomic_torch_save(payload, str(checkpoint_path))
+
+
+def _load_kronos_checkpoint(tokenizer, model, checkpoint_path: str, device, optimizer=None):
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    tokenizer_state_dict = checkpoint.get('tokenizer_state_dict')
+    model_state_dict = checkpoint.get('model_state_dict', checkpoint)
+    if tokenizer_state_dict is not None:
+        tokenizer.load_state_dict(tokenizer_state_dict)
+    model.load_state_dict(model_state_dict)
+    if optimizer is not None and checkpoint.get('optimizer_state_dict') is not None:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    return checkpoint
+
+
+def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, config, max_batches=None):
+    tokenizer.train()
+    model.train()
+    total_loss = 0.0
+    total_batches = 0
+
+    for batch_idx, batch in enumerate(train_loader):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+        features = batch['features'].to(device)
+        stock_id = batch['stock_id'].to(device)
+        group_id = batch['group_id'].to(device)
+        day = batch['day'].to(device)
+        month = batch['month'].to(device)
+        dividend_flag = batch['dividend_flag'].to(device)
+
+        optimizer.zero_grad()
+
+        (z_pre, z_full), bsq_loss, _, _ = tokenizer(features)
+        recon_loss = F.mse_loss(z_full, features)
+        pre_loss = F.mse_loss(z_pre, features)
+
+        with torch.no_grad():
+            s1_ids, s2_ids = tokenizer.encode(features, half=True)
+
+        input_s1 = s1_ids[:, :-1]
+        input_s2 = s2_ids[:, :-1]
+        target_s1 = s1_ids[:, 1:]
+        target_s2 = s2_ids[:, 1:]
+
+        s1_logits, s2_logits = model(
+            input_s1,
+            input_s2,
+            stock_id=stock_id[:, :-1],
+            group_id=group_id[:, :-1],
+            day=day[:, :-1],
+            month=month[:, :-1],
+            dividend_flag=dividend_flag[:, :-1],
+            use_teacher_forcing=True,
+            s1_targets=target_s1,
+        )
+        token_loss, _, _ = model.head.compute_loss(s1_logits, s2_logits, target_s1, target_s2)
+        loss = recon_loss + pre_loss + bsq_loss + token_loss
+        loss.backward()
+
+        if config.model.training.GRADIENT_CLIP_VALUE > 0:
+            torch.nn.utils.clip_grad_norm_(
+                list(tokenizer.parameters()) + list(model.parameters()),
+                config.model.training.GRADIENT_CLIP_VALUE,
+            )
+
+        optimizer.step()
+        total_loss += float(loss.detach().cpu().item())
+        total_batches += 1
+
+    if total_batches == 0:
+        raise ValueError("Kronos training loader produced zero batches.")
+    return total_loss / total_batches
+
+
+def _validate_kronos_epoch(tokenizer, model, val_loader, device, max_batches=None):
+    tokenizer.eval()
+    model.eval()
+    total_loss = 0.0
+    total_batches = 0
+
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(val_loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                break
+            features = batch['features'].to(device)
+            stock_id = batch['stock_id'].to(device)
+            group_id = batch['group_id'].to(device)
+            day = batch['day'].to(device)
+            month = batch['month'].to(device)
+            dividend_flag = batch['dividend_flag'].to(device)
+
+            (z_pre, z_full), bsq_loss, _, _ = tokenizer(features)
+            recon_loss = F.mse_loss(z_full, features)
+            pre_loss = F.mse_loss(z_pre, features)
+            s1_ids, s2_ids = tokenizer.encode(features, half=True)
+
+            input_s1 = s1_ids[:, :-1]
+            input_s2 = s2_ids[:, :-1]
+            target_s1 = s1_ids[:, 1:]
+            target_s2 = s2_ids[:, 1:]
+
+            s1_logits, s2_logits = model(
+                input_s1,
+                input_s2,
+                stock_id=stock_id[:, :-1],
+                group_id=group_id[:, :-1],
+                day=day[:, :-1],
+                month=month[:, :-1],
+                dividend_flag=dividend_flag[:, :-1],
+                use_teacher_forcing=True,
+                s1_targets=target_s1,
+            )
+            token_loss, _, _ = model.head.compute_loss(s1_logits, s2_logits, target_s1, target_s2)
+            loss = recon_loss + pre_loss + bsq_loss + token_loss
+            total_loss += float(loss.cpu().item())
+            total_batches += 1
+
+    if total_batches == 0:
+        raise ValueError("Kronos validation loader produced zero batches.")
+    return total_loss / total_batches
+
+
+def train_kronos(
+    loaders,
+    config,
+    device,
+    model_type,
+    checkpoint_metadata,
+    logger,
+    num_features,
+    embedding_sizes,
+    args,
+):
+    config.model.models.kronos.tokenizer.D_IN = num_features
+    config.model.models.kronos.network.NUM_STOCKS = embedding_sizes['num_stocks']
+    config.model.models.kronos.network.NUM_GROUPS = embedding_sizes['num_groups']
+
+    tokenizer = create_kronos_tokenizer(config=config).to(device)
+    model = create_kronos_model(config=config).to(device)
+    optimizer = _create_optimizer_for_params(
+        list(tokenizer.parameters()) + list(model.parameters()),
+        config,
+    )
+    scheduler = create_scheduler(optimizer, config)
+
+    if args.fine_tune:
+        logger.info(f"Loading Kronos checkpoint for fine-tuning: {args.fine_tune}")
+        _load_kronos_checkpoint(tokenizer, model, args.fine_tune, device, optimizer=None)
+    elif args.resume:
+        logger.info(f"Resuming Kronos checkpoint: {args.resume}")
+        _load_kronos_checkpoint(tokenizer, model, args.resume, device, optimizer=optimizer)
+
+    early_stopping = EarlyStopping(
+        patience=config.model.training.EARLY_STOPPING_PATIENCE,
+        mode='min',
+        verbose=True,
+    )
+    checkpoint_dir = Path(config.model.checkpointing.CHECKPOINT_DIR)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    best_checkpoint_path = checkpoint_dir / f"{model_type}_best.pth"
+    final_checkpoint_path = checkpoint_dir / f"{model_type}_final.pth"
+
+    best_metric = float('inf')
+    history = {'train_loss': [], 'val_loss': []}
+
+    for epoch in range(config.model.training.NUM_EPOCHS):
+        train_loss = _train_kronos_epoch(
+            tokenizer,
+            model,
+            loaders['train'],
+            optimizer,
+            device,
+            config,
+            max_batches=args.max_train_batches,
+        )
+        history['train_loss'].append(train_loss)
+
+        if loaders.get('val') is not None:
+            val_loss = _validate_kronos_epoch(
+                tokenizer,
+                model,
+                loaders['val'],
+                device,
+                max_batches=args.max_val_batches,
+            )
+        else:
+            val_loss = train_loss
+        history['val_loss'].append(val_loss)
+
+        logger.info(
+            f"Kronos epoch {epoch + 1}/{config.model.training.NUM_EPOCHS}: "
+            f"train_loss={train_loss:.6f}, val_loss={val_loss:.6f}"
+        )
+
+        if scheduler is not None:
+            if config.model.training.SCHEDULER == 'reduce_on_plateau':
+                scheduler.step(val_loss)
+            else:
+                scheduler.step()
+
+        if val_loss < best_metric:
+            best_metric = val_loss
+            _save_kronos_checkpoint(
+                checkpoint_path=best_checkpoint_path,
+                tokenizer=tokenizer,
+                model=model,
+                optimizer=optimizer,
+                epoch=epoch,
+                metric=val_loss,
+                model_type=model_type,
+                checkpoint_metadata=checkpoint_metadata,
+            )
+            logger.info(f"Saved best Kronos checkpoint to {best_checkpoint_path}")
+
+        if early_stopping(val_loss, epoch + 1):
+            break
+
+    _save_kronos_checkpoint(
+        checkpoint_path=final_checkpoint_path,
+        tokenizer=tokenizer,
+        model=model,
+        optimizer=optimizer,
+        epoch=len(history['train_loss']),
+        metric=history['val_loss'][-1],
+        model_type=model_type,
+        checkpoint_metadata=checkpoint_metadata,
+    )
+    logger.info(f"Saved final Kronos checkpoint to {final_checkpoint_path}")
+
+    return {
+        'tokenizer': tokenizer,
+        'model': model,
+        'history': history,
+        'best_score': best_metric,
+        'best_model_path': str(best_checkpoint_path),
+        'final_model_path': str(final_checkpoint_path),
+    }
+
+
 def main():
     """Main training function."""
     args = parse_args()
@@ -361,6 +655,34 @@ def main():
 
     data_mode = getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')
     if data_mode == 'precomputed_sequences':
+        train_sequences = load_sequences(
+            data_dir,
+            'train',
+            stock_names=args.stocks,
+            stock_encoder=stock_encoder,
+        )
+        val_sequences = load_sequences(
+            data_dir,
+            'val',
+            stock_names=args.stocks,
+            stock_encoder=stock_encoder,
+        )
+        if train_sequences is None:
+            feature_cols = preprocessing_info.get('feature_cols')
+            if not feature_cols:
+                logger.error("Missing feature_cols in preprocessing info; cannot build sequences before training.")
+                return 1
+            logger.info("Saved precomputed sequence arrays not found; building from normalized split cache...")
+            train_sequences, val_sequences = build_sequences_from_normalized_splits(
+                data_dir=data_dir,
+                feature_cols=feature_cols,
+                data_config=data_config,
+                logger=logger,
+                stock_names=args.stocks,
+            )
+        train_split_df = None
+        val_split_df = None
+    elif data_mode == 'on_the_fly_sequences':
         feature_cols = preprocessing_info.get('feature_cols')
         if not feature_cols:
             logger.error("Missing feature_cols in preprocessing info; cannot stream sequences lazily.")
@@ -372,27 +694,13 @@ def main():
         )
         train_sequences = None
         val_sequences = None
-    elif data_mode == 'on_the_fly_sequences':
-        feature_cols = preprocessing_info.get('feature_cols')
-        if not feature_cols:
-            logger.error("Missing feature_cols in preprocessing info; cannot build sequences on the fly.")
-            return 1
-        train_sequences, val_sequences = build_sequences_from_normalized_splits(
-            data_dir=data_dir,
-            feature_cols=feature_cols,
-            data_config=data_config,
-            logger=logger,
-            stock_names=args.stocks,
-        )
-        train_split_df = None
-        val_split_df = None
     else:
         train_sequences = load_sequences(data_dir, 'train', stock_names=args.stocks, stock_encoder=stock_encoder)
         val_sequences = load_sequences(data_dir, 'val', stock_names=args.stocks, stock_encoder=stock_encoder)
         train_split_df = None
         val_split_df = None
 
-    if data_mode == 'precomputed_sequences':
+    if data_mode == 'on_the_fly_sequences':
         if train_split_df is None:
             logger.error(f"No normalized split cache found in {data_dir}/.cache/normalized_splits/")
             logger.error("Run preprocess_data.py with normalized split output first")
@@ -405,7 +713,7 @@ def main():
     # Log if filtering by stocks
     if args.stocks is not None:
         logger.info(f"Filtered training to stocks: {args.stocks}")
-        if data_mode == 'precomputed_sequences':
+        if data_mode == 'on_the_fly_sequences':
             logger.info(f"Loaded {len(train_split_df):,} normalized training rows (filtered)")
             if val_split_df is not None:
                 logger.info(f"Loaded {len(val_split_df):,} normalized validation rows (filtered)")
@@ -414,7 +722,7 @@ def main():
             if val_sequences:
                 logger.info(f"Loaded {len(val_sequences['target'])} validation samples (filtered)")
     else:
-        if data_mode == 'precomputed_sequences':
+        if data_mode == 'on_the_fly_sequences':
             logger.info(f"Loaded {len(train_split_df):,} normalized training rows")
             if val_split_df is not None:
                 logger.info(f"Loaded {len(val_split_df):,} normalized validation rows")
@@ -437,7 +745,7 @@ def main():
     # Create data loaders
     logger.info("Creating data loaders...")
 
-    if data_mode == 'precomputed_sequences':
+    if data_mode == 'on_the_fly_sequences':
         loaders = create_lazy_data_loaders(
             train_df=train_split_df,
             val_df=val_split_df,
@@ -471,17 +779,6 @@ def main():
     logger.info(f"  Num stocks: {embedding_sizes['num_stocks']}")
     logger.info(f"  Num groups: {embedding_sizes['num_groups']}")
 
-    # Create model
-    model = create_model(
-        model_type=model_type,
-        num_features=num_features,
-        num_stocks=embedding_sizes['num_stocks'],
-        num_groups=embedding_sizes['num_groups'],
-        config=config,
-        feature_cols=preprocessing_info.get('feature_cols'),
-    )
-
-    # Create trainer
     checkpoint_metadata = {
         'feature_cols': preprocessing_info.get('feature_cols'),
         'num_features': preprocessing_info.get('num_features'),
@@ -503,6 +800,38 @@ def main():
         key: value for key, value in checkpoint_metadata.items()
         if value is not None
     }
+
+    if model_type == 'kronos':
+        if backend == 'lightning':
+            logger.warning("Kronos training is not integrated with Lightning yet. Falling back to custom backend.")
+            backend = 'custom'
+
+        kronos_result = train_kronos(
+            loaders=loaders,
+            config=config,
+            device=device,
+            model_type=model_type,
+            checkpoint_metadata=checkpoint_metadata,
+            logger=logger,
+            num_features=num_features,
+            embedding_sizes=embedding_sizes,
+            args=args,
+        )
+        logger.info("Kronos training complete!")
+        logger.info(f"Best validation loss: {kronos_result['best_score']:.6f}")
+        logger.info(f"Saved best Kronos checkpoint to {kronos_result['best_model_path']}")
+        logger.info(f"Saved final Kronos checkpoint to {kronos_result['final_model_path']}")
+        return 0
+
+    # Create model
+    model = create_model(
+        model_type=model_type,
+        num_features=num_features,
+        num_stocks=embedding_sizes['num_stocks'],
+        num_groups=embedding_sizes['num_groups'],
+        config=config,
+        feature_cols=preprocessing_info.get('feature_cols'),
+    )
 
     # Load checkpoint for fine-tuning if specified
     if args.fine_tune:

@@ -191,8 +191,8 @@ Sliding window sequences are created:
 
 Sequence creation now supports two modes through `data.dataset.MODE`:
 
-- `precomputed_sequences`: preprocessing stops after normalized split parquet export, and training uses a lazy dataset that slices sliding windows from `data/processed/.cache/normalized_splits/*.parquet` as batches are requested
-- `on_the_fly_sequences`: preprocessing stops after normalized split parquet export, and training eagerly builds full in-memory sequence dictionaries from those normalized split caches before the first epoch
+- `precomputed_sequences`: preprocessing stops after normalized split parquet export, and training builds full in-memory sequence dictionaries from those normalized split caches before the first epoch
+- `on_the_fly_sequences`: preprocessing stops after normalized split parquet export, and training uses a lazy dataset that slices sliding windows from `data/processed/.cache/normalized_splits/*.parquet` as batches are requested
 
 ## Stage 4: Dataset
 

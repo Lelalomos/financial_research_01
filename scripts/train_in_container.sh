@@ -8,6 +8,8 @@
 #   --batch-size N        Batch size (default: 32)
 #   --learning-rate RATE  Learning rate (default: 1e-4)
 #   --backend TYPE        Training backend: lightning or custom (default: lightning)
+#   --max-train-batches N Optional limit for train batches per epoch
+#   --max-val-batches N   Optional limit for validation batches per epoch
 #   --device DEV          Device to use: cuda or cpu (default: auto-detect)
 #   --force-cpu           Force CPU usage even if GPU is available
 #   --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT GOOGL)
@@ -32,6 +34,8 @@ FINE_TUNE=""
 FREEZE_EMBEDDINGS=""
 DEVICE=""
 FORCE_CPU=""
+MAX_TRAIN_BATCHES=""
+MAX_VAL_BATCHES=""
 START_TENSORBOARD=1
 START_MLFLOW=1
 TENSORBOARD_PORT=6006
@@ -59,6 +63,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --backend)
             BACKEND="$2"
+            shift 2
+            ;;
+        --max-train-batches)
+            MAX_TRAIN_BATCHES="$2"
+            shift 2
+            ;;
+        --max-val-batches)
+            MAX_VAL_BATCHES="$2"
             shift 2
             ;;
         --device)
@@ -92,8 +104,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --stocks)
             shift
-            STOCKS="$@"
-            break
+            STOCK_VALUES=()
+            while [[ $# -gt 0 && "$1" != --* ]]; do
+                STOCK_VALUES+=("$1")
+                shift
+            done
+            STOCKS="${STOCK_VALUES[*]}"
             ;;
         --fine-tune)
             FINE_TUNE="$2"
@@ -112,6 +128,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --batch-size N        Batch size (default: 32)"
             echo "  --learning-rate RATE  Learning rate (default: 1e-4)"
             echo "  --backend TYPE        Training backend: lightning or custom (default: lightning)"
+            echo "  --max-train-batches N Optional limit for train batches per epoch"
+            echo "  --max-val-batches N   Optional limit for validation batches per epoch"
             echo "  --device DEV          Device to use: cuda or cpu (default: auto-detect)"
             echo "  --force-cpu           Force CPU usage even if GPU is available"
             echo "  --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT)"
@@ -216,6 +234,14 @@ if [ -n "$DEVICE" ]; then
     CMD="$CMD --device $DEVICE"
 fi
 
+if [ -n "$MAX_TRAIN_BATCHES" ]; then
+    CMD="$CMD --max-train-batches $MAX_TRAIN_BATCHES"
+fi
+
+if [ -n "$MAX_VAL_BATCHES" ]; then
+    CMD="$CMD --max-val-batches $MAX_VAL_BATCHES"
+fi
+
 if [ -n "$STOCKS" ]; then
     CMD="$CMD --stocks $STOCKS"
 fi
@@ -242,6 +268,12 @@ echo "Learning rate: $LEARNING_RATE"
 echo "Backend: $BACKEND"
 if [ -n "$DEVICE" ]; then
     echo "Device: $DEVICE"
+fi
+if [ -n "$MAX_TRAIN_BATCHES" ]; then
+    echo "Max train batches: $MAX_TRAIN_BATCHES"
+fi
+if [ -n "$MAX_VAL_BATCHES" ]; then
+    echo "Max val batches: $MAX_VAL_BATCHES"
 fi
 if [ -n "$FORCE_CPU" ]; then
     echo "Force CPU: yes"

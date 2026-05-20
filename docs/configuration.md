@@ -391,6 +391,22 @@ hidden_sizes = config.model.models.bilstm4_attention.LSTM4_HIDDEN_SIZES
 - `lstm3` - 3-layer LSTM
 - `lstm3_attention` - 3-layer LSTM + Attention
 - `bilstm4_attention` - 4-layer Bidirectional LSTM + Attention
+- `multi_branch_bilstm` - Multi-branch recurrent model
+- `kronos` - Tokenized autoregressive generative model
+
+Kronos credit:
+
+- Original project: `Kronos`
+- Original repository: `https://github.com/shiyu-coder/Kronos`
+- Original paper: `Kronos: A Foundation Model for the Language of Financial Markets`
+- Authors listed in the upstream citation:
+  - Yu Shi
+  - Zongliang Fu
+  - Shuo Chen
+  - Bohan Zhao
+  - Wei Xu
+  - Changshui Zhang
+  - Jian Li
 
 ### Embedding Dimensions
 
@@ -423,6 +439,21 @@ config.model.selection.DEFAULT_MODEL_TYPE = "bilstm4_attention"
 
 When `VAL_BATCH_SIZE` is `null`, validation, test, and backtest scripts fall
 back to `model.training.BATCH_SIZE`.
+
+`DEFAULT_MODEL_TYPE` also controls the fallback model used by:
+
+- `scripts/train.py`
+- `scripts/test.py`
+- `scripts/validate.py`
+- `scripts/backtest.py`
+
+If you set:
+
+```python
+config.model.selection.DEFAULT_MODEL_TYPE = "kronos"
+```
+
+those scripts use Kronos unless you override it with `--model-type`.
 
 ### Training Backend
 

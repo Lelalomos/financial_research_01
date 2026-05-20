@@ -184,6 +184,67 @@ model = create_model(
 **Use case**: Experimental QuantAgent-inspired architecture that separates noisy
 raw technical inputs from higher-level geometric context and slower macro data
 
+### 8. Kronos
+
+```python
+from src.models import create_kronos_model, create_kronos_tokenizer
+
+tokenizer = create_kronos_tokenizer(config)
+model = create_kronos_model(config)
+```
+
+**Architecture**:
+- Tokenizer stage:
+  - takes continuous market rows such as `open, high, low, close, volume, amount`
+  - projects them into a Transformer latent space
+  - compresses the latent vectors with binary spherical quantization
+  - splits each token into two parts:
+    - `s1`: coarse token
+    - `s2`: fine token
+- Generator stage:
+  - embeds `s1` and `s2` token IDs with a hierarchical embedding
+  - adds calendar/time embeddings
+  - can also add `stock_id` and `group_id` embeddings from the prepared-data pipeline
+  - runs stacked causal Transformer blocks
+  - predicts `s1` first, then predicts `s2` conditioned on `s1`
+- Predictor stage:
+  - normalizes input history
+  - converts history into token IDs with the tokenizer
+  - generates future tokens autoregressively
+  - decodes generated tokens back into continuous price/volume outputs
+
+**How it is different from the other models**:
+- Most models in this repo predict one numeric target directly.
+- Kronos is a generative sequence model.
+- It first turns continuous data into discrete token IDs, then predicts future
+  token IDs, then decodes them back to numeric values.
+- Kronos can now consume prepared-data categorical context such as `stock_id`
+  and `group_id`, but it still remains a token-generation model rather than a
+  direct regression head.
+
+**Current default size in this repo**:
+- Tokenizer: about `3.96M` params
+- Kronos generator: about `5.95M` params
+- Combined: about `9.90M` params
+
+**Use case**: Experimental tokenized time-series generation model for
+autoregressive multi-feature forecasting
+
+**Reference / credit**:
+- Original project: `Kronos`
+- Original repository: `https://github.com/shiyu-coder/Kronos`
+- Original paper: `Kronos: A Foundation Model for the Language of Financial Markets`
+- Authors listed in the upstream citation:
+  - Yu Shi
+  - Zongliang Fu
+  - Shuo Chen
+  - Bohan Zhao
+  - Wei Xu
+  - Changshui Zhang
+  - Jian Li
+- Paper link: `https://arxiv.org/abs/2508.02739`
+- Upstream license: `MIT`
+
 ## Configuration
 
 All model parameters are in `config/model.json` with separate sections for each model type:
@@ -199,6 +260,10 @@ stock_emb_dim = config.model.embeddings.EMBEDDING_DIM_STOCK  # 64
 # Access model-specific parameters (e.g., LSTM3+Attention)
 lstm3_hidden = config.model.models.lstm3_attention.LSTM3_HIDDEN_SIZE  # 256
 lstm3_heads = config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS  # 8
+
+# Access Kronos parameters
+kronos_d_model = config.model.models.kronos.network.D_MODEL  # 256
+kronos_max_context = config.model.models.kronos.predictor.MAX_CONTEXT  # 512
 
 # Access training parameters (shared)
 learning_rate = config.model.training.LEARNING_RATE  # 0.0001
@@ -245,3 +310,16 @@ output = model(
 | Attention | (batch, seq, 256) | ~200K |
 | FC | (batch, 1) | ~100K |
 | **Total** | | ~864K |
+
+## Kronos Summary
+
+| Component | Output Shape | Parameters |
+|-----------|-------------|------------|
+| Tokenizer encoder/decoder | (batch, seq, 6) | ~3.96M |
+| Kronos token generator | (batch, seq, s1/s2 logits) | ~5.95M |
+| Predictor wrapper | DataFrame forecast | 0 |
+| **Combined** | | **~9.90M** |
+
+This repo contains a local integration of the Kronos code. Credit for the
+original model idea and upstream implementation belongs to the original Kronos
+authors and repository listed above.

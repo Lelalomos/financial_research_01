@@ -9,6 +9,7 @@ CLEANUP_OLD_FILES=true
 MODEL_TYPE=""
 DEVICE=""
 FORCE_CPU=false
+MAX_SAMPLES=""
 
 mkdir -p "$REPORTS_DIR"
 
@@ -41,6 +42,10 @@ while [[ $# -gt 0 ]]; do
             FORCE_CPU=true
             shift
             ;;
+        --max-samples)
+            MAX_SAMPLES="$2"
+            shift 2
+            ;;
         --no-cleanup)
             CLEANUP_OLD_FILES=false
             shift
@@ -52,6 +57,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model-type TYPE"
             echo "  --device DEVICE"
             echo "  --force-cpu"
+            echo "  --max-samples N"
             echo "  --no-cleanup"
             exit 0
             ;;
@@ -74,6 +80,10 @@ fi
 
 if [ "$FORCE_CPU" = true ]; then
     CMD="$CMD --force-cpu"
+fi
+
+if [ -n "$MAX_SAMPLES" ]; then
+    CMD="$CMD --max-samples $MAX_SAMPLES"
 fi
 
 if [ "$CLEANUP_OLD_FILES" = true ]; then

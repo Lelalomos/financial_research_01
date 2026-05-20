@@ -26,6 +26,22 @@ from .lstm3_model import LSTM3Model, create_model as create_lstm3
 from .lstm3_attn_model import LSTM3AttentionModel, create_model as create_lstm3_attention
 from .bilstm4_attn_model import BiLSTM4AttentionModel, create_model as create_bilstm4_attention
 from .multi_branch_bilstm import MultiBranchBiLSTMModel, create_model as create_multi_branch_bilstm
+try:
+    from .kronos_model import (
+        Kronos,
+        KronosPredictor,
+        KronosTokenizer,
+        create_kronos_model,
+        create_kronos_predictor,
+        create_kronos_tokenizer,
+    )
+except ImportError:  # pragma: no cover
+    Kronos = None
+    KronosPredictor = None
+    KronosTokenizer = None
+    create_kronos_model = None
+    create_kronos_predictor = None
+    create_kronos_tokenizer = None
 
 # Map model types to their create functions
 _MODEL_REGISTRY = {
@@ -50,6 +66,12 @@ __all__ = [
     'LSTM3AttentionModel',
     'BiLSTM4AttentionModel',
     'MultiBranchBiLSTMModel',
+    'Kronos',
+    'KronosTokenizer',
+    'KronosPredictor',
+    'create_kronos_tokenizer',
+    'create_kronos_model',
+    'create_kronos_predictor',
     'create_model',
     'get_model_class',
     'list_available_models',

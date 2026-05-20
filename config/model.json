@@ -207,6 +207,49 @@
         "GEOMETRIC_PREFIX_FEATURES": ["atr_", "roc_", "bb_width", "slope_", "channel_", "dist_to_swing_", "days_since_swing_", "swing_", "fib_", "dist_fib_", "break_fib_61"],
         "MACRO_FINANCIAL_EXACT_FEATURES": ["vix", "bondyield", "Gold", "Copper", "Corn", "Soybeans", "Cocoa", "Silver", "pe_ratio", "peg_ratio", "eps", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
         "MACRO_FINANCIAL_PREFIX_FEATURES": []
+      },
+      "kronos": {
+        "tokenizer": {
+          "D_IN": 6,
+          "D_MODEL": 256,
+          "N_HEADS": 8,
+          "FF_DIM": 512,
+          "N_ENC_LAYERS": 4,
+          "N_DEC_LAYERS": 4,
+          "FFN_DROPOUT_P": 0.1,
+          "ATTN_DROPOUT_P": 0.1,
+          "RESID_DROPOUT_P": 0.1,
+          "S1_BITS": 8,
+          "S2_BITS": 8,
+          "BETA": 0.25,
+          "GAMMA0": 1.0,
+          "GAMMA": 1.0,
+          "ZETA": 1.0,
+          "GROUP_SIZE": 8
+        },
+        "network": {
+          "S1_BITS": 8,
+          "S2_BITS": 8,
+          "N_LAYERS": 8,
+          "D_MODEL": 256,
+          "N_HEADS": 8,
+          "FF_DIM": 512,
+          "FFN_DROPOUT_P": 0.1,
+          "ATTN_DROPOUT_P": 0.1,
+          "RESID_DROPOUT_P": 0.1,
+          "TOKEN_DROPOUT_P": 0.1,
+          "LEARN_TE": true,
+          "NUM_STOCKS": 1,
+          "NUM_GROUPS": 1,
+          "USE_STOCK_EMBEDDING": true,
+          "USE_GROUP_EMBEDDING": true,
+          "STOCK_EMB_DIM": 32,
+          "GROUP_EMB_DIM": 16
+        },
+        "predictor": {
+          "MAX_CONTEXT": 512,
+          "CLIP": 5.0
+        }
       }
     }
   }

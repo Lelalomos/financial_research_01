@@ -34,6 +34,8 @@ setup(
         "tensorboard>=2.13.0",
         "lightning>=2.2.0",
         "mlflow>=2.14.0",
+        "huggingface_hub>=0.33.1",
+        "einops>=0.8.1",
         "openpyxl>=3.1.2",
         "pydantic>=2.0.0",
     ],

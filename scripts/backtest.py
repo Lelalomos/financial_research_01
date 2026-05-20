@@ -24,6 +24,12 @@ from src.config import load_config
 from src.data.dataset import FinancialDataset
 from src.models import create_model
 from src.evaluation import Backtester
+from src.evaluation.kronos import (
+    build_kronos_sequence_metadata,
+    compute_kronos_backtest_results,
+    generate_kronos_predictions,
+    load_kronos_checkpoint,
+)
 from src.utils.logger import get_logger
 from src.utils.device import resolve_device, get_device_info
 from src.training import (
@@ -116,10 +122,17 @@ def parse_args():
         help='Initial capital for backtest'
     )
 
+    parser.add_argument(
+        '--max-samples',
+        type=int,
+        default=None,
+        help='Optional limit for backtest samples. Useful for quick smoke tests.'
+    )
+
     return parser.parse_args()
 
 
-def load_sequences(data_dir: Path, split: str):
+def load_sequences(data_dir: Path, split: str, max_samples: int = None):
     """Load sequences from directory."""
     split_dir = data_dir / split
 
@@ -134,6 +147,10 @@ def load_sequences(data_dir: Path, split: str):
 
     if len(sequences) == 0:
         return None
+
+    if max_samples is not None:
+        limit = max(int(max_samples), 0)
+        sequences = {key: value[:limit] for key, value in sequences.items()}
 
     return sequences
 
@@ -286,7 +303,7 @@ def main():
 
     logger.info(f"Loading {args.split} data from {data_dir}...")
 
-    sequences = load_sequences(data_dir, args.split)
+    sequences = load_sequences(data_dir, args.split, max_samples=args.max_samples)
 
     if sequences is None:
         logger.error(f"No {args.split} data found")
@@ -348,46 +365,103 @@ def main():
     logger.info(f"Selected checkpoint file: {resolved_checkpoint.name}")
     logger.info(f"Selected checkpoint path: {resolved_checkpoint}")
 
-    # Create model
-    logger.info(f"Creating {model_type} model...")
+    if model_type == 'kronos':
+        logger.info("Creating Kronos tokenizer/model for backtest...")
+        tokenizer, model, checkpoint = load_kronos_checkpoint(
+            checkpoint_path=checkpoint_path,
+            config=config,
+            num_features=dataset.num_features,
+            num_stocks=embedding_sizes['num_stocks'],
+            num_groups=embedding_sizes['num_groups'],
+            device=device,
+        )
+        logger.info(f"Checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
 
-    model = create_model(
-        model_type=model_type,
-        num_features=dataset.num_features,
-        num_stocks=embedding_sizes['num_stocks'],
-        num_groups=embedding_sizes['num_groups'],
-        config=config,
-        feature_cols=info.get('feature_cols'),
-    )
+        metadata = build_kronos_sequence_metadata(
+            data_dir=data_dir,
+            split=args.split,
+            feature_cols=info.get('feature_cols') or [],
+            sequence_length=info['sequence_length'],
+            prediction_horizon=info['prediction_horizon'],
+            normalize_target=bool(info.get('normalize_target', False)),
+            target_threshold=float(info.get('target_threshold', 1.0)),
+            expected_samples=len(sequences['target']),
+            max_samples=args.max_samples,
+        )
+        predictions, targets, sample_stock_ids, sample_group_ids = generate_kronos_predictions(
+            sequences=sequences,
+            metadata=metadata,
+            config=config,
+            tokenizer=tokenizer,
+            model=model,
+            device=device,
+            batch_size=get_eval_batch_size(config),
+            normalize_target=bool(info.get('normalize_target', False)),
+            target_threshold=float(info.get('target_threshold', 1.0)),
+            feature_cols=info.get('feature_cols') or [],
+        )
 
-    logger.info(f"Loading checkpoint from {checkpoint_path}")
+        logger.info("Running Kronos backtest...")
+        results = compute_kronos_backtest_results(
+            predictions=predictions,
+            targets=targets,
+            stock_ids=sample_stock_ids,
+            group_ids=sample_group_ids,
+            prediction_threshold=args.threshold,
+            initial_capital=args.initial_capital,
+            stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
+            group_id_to_sector=group_id_to_sector if group_id_to_sector else None,
+        )
 
-    checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model = model.to(device)
+        backtester = Backtester(model, config, device=str(device))
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        backtester._print_backtest_summary(results)
+        if results.get('sector_stats'):
+            backtester._print_sector_stats(results['sector_stats'])
+        backtester.generate_report(results, str(output_path), format=args.output_format)
+        logger.info(f"Backtest report saved to {output_path}")
+    else:
+        # Create model
+        logger.info(f"Creating {model_type} model...")
 
-    logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
+        model = create_model(
+            model_type=model_type,
+            num_features=dataset.num_features,
+            num_stocks=embedding_sizes['num_stocks'],
+            num_groups=embedding_sizes['num_groups'],
+            config=config,
+            feature_cols=info.get('feature_cols'),
+        )
 
-    # Run backtest
-    logger.info("Running backtest...")
+        logger.info(f"Loading checkpoint from {checkpoint_path}")
 
-    backtester = Backtester(model, config, device=str(device))
+        checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.to(device)
 
-    results = backtester.run_backtest(
-        loader,
-        prediction_threshold=args.threshold,
-        initial_capital=args.initial_capital,
-        stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
-        group_id_to_sector=group_id_to_sector if group_id_to_sector else None
-    )
+        logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
 
-    # Generate report
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        # Run backtest
+        logger.info("Running backtest...")
 
-    backtester.generate_report(results, str(output_path), format=args.output_format)
+        backtester = Backtester(model, config, device=str(device))
 
-    logger.info(f"Backtest report saved to {output_path}")
+        results = backtester.run_backtest(
+            loader,
+            prediction_threshold=args.threshold,
+            initial_capital=args.initial_capital,
+            stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
+            group_id_to_sector=group_id_to_sector if group_id_to_sector else None
+        )
+
+        # Generate report
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        backtester.generate_report(results, str(output_path), format=args.output_format)
+
+        logger.info(f"Backtest report saved to {output_path}")
 
     return 0
 

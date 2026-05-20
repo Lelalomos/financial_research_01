@@ -258,7 +258,7 @@ def main():
     manifest_path = cache_dir / "preprocess_manifest.json"
     manifest = _load_manifest(manifest_path)
     data_mode = getattr(getattr(config.data, "dataset", None), "MODE", "precomputed_sequences")
-    skip_sequence_arrays = args.skip_sequences or data_mode in {"precomputed_sequences", "on_the_fly_sequences"}
+    skip_sequence_arrays = args.skip_sequences or data_mode == "on_the_fly_sequences"
 
     pipeline_fingerprint = _build_pipeline_fingerprint(args, config)
     if args.no_resume_cache or manifest.get("fingerprint") != pipeline_fingerprint:
