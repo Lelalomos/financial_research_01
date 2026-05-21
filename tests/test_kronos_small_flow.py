@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from src.config.config_loader import Config
 
 
 def _load_kronos_small_script():
@@ -15,6 +16,12 @@ def _load_kronos_small_script():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _load_raw_model_config():
+    config_path = Path(__file__).parent.parent / "config" / "model.json"
+    with open(config_path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 class _FakeLogger:
@@ -48,9 +55,21 @@ def test_build_local_model_config_sets_kronos_vocab_sizes():
 
     config = module.build_local_model_config(sequences)
 
-    assert config.model.models.kronos.network.NUM_STOCKS == 8
-    assert config.model.models.kronos.network.NUM_GROUPS == 4
+    assert "NUM_STOCKS" not in config.model.models.kronos.network
+    assert "NUM_GROUPS" not in config.model.models.kronos.network
     assert config.model.models.kronos.tokenizer.D_IN == sequences["features"].shape[-1]
+
+
+def test_infer_kronos_vocab_sizes_uses_sequence_ids():
+    module = _load_kronos_small_script()
+    sequences = _make_sequences()
+    sequences["stock_id"][0, 0] = 7
+    sequences["group_id"][0, 0] = 3
+
+    num_stocks, num_groups = module.infer_kronos_vocab_sizes(sequences)
+
+    assert num_stocks == 8
+    assert num_groups == 4
 
 
 def test_predict_next_step_returns_single_decoded_row():
@@ -136,3 +155,58 @@ def test_main_smoke_flow_with_monkeypatched_train_and_predict(tmp_path, monkeypa
     )
 
     assert module.main() == 0
+
+
+def test_train_kronos_small_uses_configured_optimizer(monkeypatch):
+    module = _load_kronos_small_script()
+    config = Config(_load_raw_model_config())
+    config.model.training._data["OPTIMIZER"] = "adamw"
+
+    class DummyTokenizer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+
+    class DummyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+
+    captured = {}
+    real_create_optimizer = module.create_optimizer_for_params
+
+    def tracking_create_optimizer(params, optimizer_config):
+        optimizer = real_create_optimizer(params, optimizer_config)
+        captured["optimizer_type"] = type(optimizer)
+        captured["lr"] = optimizer.param_groups[0]["lr"]
+        captured["param_count"] = len(optimizer.param_groups[0]["params"])
+        captured["optimizer_name"] = optimizer_config.model.training.OPTIMIZER
+        return optimizer
+
+    def fake_create_kronos_model(config, num_stocks=None, num_groups=None):
+        captured["num_stocks"] = num_stocks
+        captured["num_groups"] = num_groups
+        return DummyModel()
+
+    monkeypatch.setattr(module, "create_kronos_tokenizer", lambda config: DummyTokenizer())
+    monkeypatch.setattr(module, "create_kronos_model", fake_create_kronos_model)
+    monkeypatch.setattr(module, "make_dataloader", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(module, "create_optimizer_for_params", tracking_create_optimizer)
+
+    module.train_kronos_small(
+        train_sequences=_make_sequences(),
+        val_sequences=None,
+        config=config,
+        device=torch.device("cpu"),
+        batch_size=2,
+        epochs=1,
+        max_batches=0,
+        learning_rate=2e-4,
+    )
+
+    assert captured["optimizer_type"] is torch.optim.AdamW
+    assert captured["optimizer_name"] == "adamw"
+    assert captured["lr"] == pytest.approx(2e-4)
+    assert captured["param_count"] == 2
+    assert captured["num_stocks"] == 1
+    assert captured["num_groups"] == 1

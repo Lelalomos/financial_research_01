@@ -786,7 +786,7 @@ def create_kronos_tokenizer(config=None) -> KronosTokenizer:
     )
 
 
-def create_kronos_model(config=None) -> Kronos:
+def create_kronos_model(config=None, num_stocks=None, num_groups=None) -> Kronos:
     """
     Create a Kronos model from config/model.json.
     """
@@ -794,6 +794,19 @@ def create_kronos_model(config=None) -> Kronos:
         config = load_config("model")
 
     network_cfg = config.model.models.kronos.network
+    use_stock_embedding = getattr(network_cfg, "USE_STOCK_EMBEDDING", False)
+    use_group_embedding = getattr(network_cfg, "USE_GROUP_EMBEDDING", False)
+
+    if num_stocks is None:
+        num_stocks = getattr(network_cfg, "NUM_STOCKS", None)
+    if num_groups is None:
+        num_groups = getattr(network_cfg, "NUM_GROUPS", None)
+
+    if use_stock_embedding and num_stocks is None:
+        raise ValueError("Kronos stock embeddings require runtime num_stocks from dataset metadata.")
+    if use_group_embedding and num_groups is None:
+        raise ValueError("Kronos group embeddings require runtime num_groups from dataset metadata.")
+
     return Kronos(
         s1_bits=network_cfg.S1_BITS,
         s2_bits=network_cfg.S2_BITS,
@@ -806,16 +819,23 @@ def create_kronos_model(config=None) -> Kronos:
         resid_dropout_p=network_cfg.RESID_DROPOUT_P,
         token_dropout_p=network_cfg.TOKEN_DROPOUT_P,
         learn_te=network_cfg.LEARN_TE,
-        num_stocks=getattr(network_cfg, "NUM_STOCKS", 1),
-        num_groups=getattr(network_cfg, "NUM_GROUPS", 1),
-        use_stock_embedding=getattr(network_cfg, "USE_STOCK_EMBEDDING", False),
-        use_group_embedding=getattr(network_cfg, "USE_GROUP_EMBEDDING", False),
+        num_stocks=1 if num_stocks is None else int(num_stocks),
+        num_groups=1 if num_groups is None else int(num_groups),
+        use_stock_embedding=use_stock_embedding,
+        use_group_embedding=use_group_embedding,
         stock_emb_dim=getattr(network_cfg, "STOCK_EMB_DIM", 0),
         group_emb_dim=getattr(network_cfg, "GROUP_EMB_DIM", 0),
     )
 
 
-def create_kronos_predictor(model=None, tokenizer=None, config=None, device=None) -> KronosPredictor:
+def create_kronos_predictor(
+    model=None,
+    tokenizer=None,
+    config=None,
+    device=None,
+    num_stocks=None,
+    num_groups=None,
+) -> KronosPredictor:
     """
     Create a KronosPredictor from config/model.json.
     """
@@ -825,7 +845,7 @@ def create_kronos_predictor(model=None, tokenizer=None, config=None, device=None
     if tokenizer is None:
         tokenizer = create_kronos_tokenizer(config=config)
     if model is None:
-        model = create_kronos_model(config=config)
+        model = create_kronos_model(config=config, num_stocks=num_stocks, num_groups=num_groups)
 
     predictor_cfg = config.model.models.kronos.predictor
     return KronosPredictor(

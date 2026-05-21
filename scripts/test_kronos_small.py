@@ -30,6 +30,7 @@ from src.config import load_config
 from src.config.config_loader import Config
 from src.data.dataset import FinancialDataset
 from src.models import create_kronos_model, create_kronos_tokenizer
+from src.training.common import create_optimizer_for_params
 from src.utils.logger import get_logger
 
 
@@ -77,9 +78,6 @@ def build_local_model_config(train_sequences: Dict[str, np.ndarray], base_config
     source = base_config or load_config("model")
     config = Config(copy.deepcopy(source.to_dict()))
 
-    network_cfg = config.model.models.kronos.network
-    network_cfg.NUM_STOCKS = int(np.max(train_sequences["stock_id"])) + 1
-    network_cfg.NUM_GROUPS = int(np.max(train_sequences["group_id"])) + 1
     config.model.models.kronos.tokenizer.D_IN = int(train_sequences["features"].shape[-1])
     return config
 
@@ -98,6 +96,12 @@ def _to_device(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str
     return {key: value.to(device) for key, value in batch.items()}
 
 
+def infer_kronos_vocab_sizes(train_sequences: Dict[str, np.ndarray]) -> tuple[int, int]:
+    num_stocks = int(np.max(train_sequences["stock_id"])) + 1
+    num_groups = int(np.max(train_sequences["group_id"])) + 1
+    return num_stocks, num_groups
+
+
 def train_kronos_small(
     train_sequences: Dict[str, np.ndarray],
     val_sequences: Optional[Dict[str, np.ndarray]],
@@ -113,15 +117,21 @@ def train_kronos_small(
             "Kronos helpers are unavailable. Install required deps such as einops and huggingface_hub in the container."
         )
 
+    num_stocks, num_groups = infer_kronos_vocab_sizes(train_sequences)
     tokenizer = create_kronos_tokenizer(config=config).to(device)
-    model = create_kronos_model(config=config).to(device)
+    model = create_kronos_model(
+        config=config,
+        num_stocks=num_stocks,
+        num_groups=num_groups,
+    ).to(device)
 
     train_loader = make_dataloader(train_sequences, batch_size=batch_size)
     val_loader = make_dataloader(val_sequences, batch_size=batch_size) if val_sequences is not None else None
 
-    optimizer = torch.optim.Adam(
+    config.model.training.LEARNING_RATE = learning_rate
+    optimizer = create_optimizer_for_params(
         list(tokenizer.parameters()) + list(model.parameters()),
-        lr=learning_rate,
+        config,
     )
 
     history = {"train_loss": None, "val_loss": None}

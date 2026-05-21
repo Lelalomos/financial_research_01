@@ -6,27 +6,35 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from typing import Optional
+from typing import Iterable, Optional
 
 from .losses import DirectionalHuberLoss, DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss
 
 
-def create_optimizer(model: nn.Module, config) -> optim.Optimizer:
-    """Create optimizer based on config. Shared by Trainer and Lightning backends."""
+def create_optimizer_for_params(
+    params: Iterable[torch.nn.Parameter],
+    config,
+) -> optim.Optimizer:
+    """Create optimizer for an arbitrary parameter iterable based on config."""
     training = config.model.training
     optimizer_name = training.OPTIMIZER
     lr = training.LEARNING_RATE
     wd = training.WEIGHT_DECAY
 
     if optimizer_name == 'adam':
-        return optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
+        return optim.Adam(params, lr=lr, weight_decay=wd)
     if optimizer_name == 'adamw':
-        return optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+        return optim.AdamW(params, lr=lr, weight_decay=wd)
     if optimizer_name == 'sgd':
-        return optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
+        return optim.SGD(params, lr=lr, momentum=0.9, weight_decay=wd)
     if optimizer_name == 'rmsprop':
-        return optim.RMSprop(model.parameters(), lr=lr, weight_decay=wd)
+        return optim.RMSprop(params, lr=lr, weight_decay=wd)
     raise ValueError(f"Unknown optimizer: {optimizer_name}")
+
+
+def create_optimizer(model: nn.Module, config) -> optim.Optimizer:
+    """Create optimizer based on config. Shared by Trainer and Lightning backends."""
+    return create_optimizer_for_params(model.parameters(), config)
 
 
 def create_scheduler(

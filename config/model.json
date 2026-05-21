@@ -239,8 +239,6 @@
           "RESID_DROPOUT_P": 0.1,
           "TOKEN_DROPOUT_P": 0.1,
           "LEARN_TE": true,
-          "NUM_STOCKS": 1,
-          "NUM_GROUPS": 1,
           "USE_STOCK_EMBEDDING": true,
           "USE_GROUP_EMBEDDING": true,
           "STOCK_EMB_DIM": 32,

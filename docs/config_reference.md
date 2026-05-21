@@ -567,12 +567,14 @@ Reference / credit:
 | `RESID_DROPOUT_P` | Residual dropout in the generator blocks. | Float in `[0, 1)`. | Adjust if deep-token modeling overfits. |
 | `TOKEN_DROPOUT_P` | Dropout applied after token and time embeddings are added. | Float in `[0, 1)`. | Increase to regularize token embeddings. |
 | `LEARN_TE` | Whether time embeddings are learned instead of fixed sinusoidal-style embeddings. | `true` or `false`. | Set `true` to let the model learn calendar embeddings; set `false` for fixed embeddings. |
-| `NUM_STOCKS` | Vocabulary size for optional `stock_id` embeddings. | Positive integer. Set to the number of encoded stock IDs used by the dataset. | Increase when your stock universe grows. |
-| `NUM_GROUPS` | Vocabulary size for optional `group_id` embeddings. | Positive integer. Set to the number of encoded group IDs used by the dataset. | Increase when your sector/group mapping grows. |
 | `USE_STOCK_EMBEDDING` | Whether Kronos adds `stock_id` embeddings from prepared data. | `true` or `false`. | Enable when stock identity is useful to the model. |
 | `USE_GROUP_EMBEDDING` | Whether Kronos adds `group_id` embeddings from prepared data. | `true` or `false`. | Enable when sector/group context is useful. |
 | `STOCK_EMB_DIM` | Embedding width for `stock_id`. | Positive integer. | Increase for large stock universes; decrease to save parameters. |
 | `GROUP_EMB_DIM` | Embedding width for `group_id`. | Positive integer. | Keep smaller than stock embedding unless group structure is very important. |
+
+Kronos derives stock/group vocabulary sizes from dataset metadata at runtime.
+`NUM_STOCKS` and `NUM_GROUPS` are intentionally not stored in
+`config/model.json`.
 
 ### `model.models.kronos.predictor`
 

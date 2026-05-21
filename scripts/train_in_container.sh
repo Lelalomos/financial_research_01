@@ -23,8 +23,10 @@
 #   --help                Show this help message
 
 set -e
+CONTAINER_NAME="crnn_predictor"
+ORIGINAL_ARGS=("$@")
 # bilstm4_attention_best_lightning.pth
-MODEL_TYPE=""
+MODEL_TYPE="kronos"
 EPOCHS=10
 BATCH_SIZE=128
 LEARNING_RATE=0.0001
@@ -42,6 +44,17 @@ TENSORBOARD_PORT=6006
 MLFLOW_PORT=5000
 
 export PATH="$HOME/.local/bin:$PATH"
+
+if [ ! -f "/.dockerenv" ]; then
+    if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+        echo "Container '$CONTAINER_NAME' is not running."
+        echo "Start it with: docker compose up -d"
+        exit 1
+    fi
+
+    echo "Host environment detected. Re-running inside container '$CONTAINER_NAME'..."
+    exec docker exec -i "$CONTAINER_NAME" bash -lc 'cd /app && bash ./scripts/train_in_container.sh "$@"' -- "${ORIGINAL_ARGS[@]}"
+fi
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -224,34 +237,39 @@ finally:
 PY
 }
 
-CMD="python scripts/train.py --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+CMD=(python scripts/train.py --backend "$BACKEND" --epochs "$EPOCHS" --batch-size "$BATCH_SIZE" --lr "$LEARNING_RATE")
+
+if [ -n "$FORCE_CPU" ]; then
+    CMD+=(--force-cpu)
+fi
 
 if [ -n "$MODEL_TYPE" ]; then
-    CMD="$CMD --model-type $MODEL_TYPE"
+    CMD+=(--model-type "$MODEL_TYPE")
 fi
 
 if [ -n "$DEVICE" ]; then
-    CMD="$CMD --device $DEVICE"
+    CMD+=(--device "$DEVICE")
 fi
 
 if [ -n "$MAX_TRAIN_BATCHES" ]; then
-    CMD="$CMD --max-train-batches $MAX_TRAIN_BATCHES"
+    CMD+=(--max-train-batches "$MAX_TRAIN_BATCHES")
 fi
 
 if [ -n "$MAX_VAL_BATCHES" ]; then
-    CMD="$CMD --max-val-batches $MAX_VAL_BATCHES"
+    CMD+=(--max-val-batches "$MAX_VAL_BATCHES")
 fi
 
 if [ -n "$STOCKS" ]; then
-    CMD="$CMD --stocks $STOCKS"
+    read -r -a STOCK_ARGS <<< "$STOCKS"
+    CMD+=(--stocks "${STOCK_ARGS[@]}")
 fi
 
 if [ -n "$FINE_TUNE" ]; then
-    CMD="$CMD --fine-tune $FINE_TUNE"
+    CMD+=(--fine-tune "$FINE_TUNE")
 fi
 
 if [ -n "$FREEZE_EMBEDDINGS" ]; then
-    CMD="$CMD $FREEZE_EMBEDDINGS"
+    CMD+=(--freeze-embeddings)
 fi
 
 echo "=========================================="
@@ -293,7 +311,9 @@ fi
 if [ "$START_MLFLOW" -eq 1 ]; then
     echo "MLflow monitor: http://127.0.0.1:$MLFLOW_PORT"
 fi
-echo "Command: $CMD"
+printf 'Command:'
+printf ' %q' "${CMD[@]}"
+echo ""
 echo "=========================================="
 echo ""
 
@@ -305,7 +325,7 @@ if [ "$START_MLFLOW" -eq 1 ]; then
     start_mlflow_ui
 fi
 
-eval $CMD
+"${CMD[@]}"
 
 echo ""
 echo "=========================================="

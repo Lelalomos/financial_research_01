@@ -158,11 +158,13 @@ def load_kronos_checkpoint(
         raise RuntimeError("Kronos helpers are unavailable. Install required Kronos dependencies first.")
 
     config.model.models.kronos.tokenizer.D_IN = int(num_features)
-    config.model.models.kronos.network.NUM_STOCKS = int(max(num_stocks, 1))
-    config.model.models.kronos.network.NUM_GROUPS = int(max(num_groups, 1))
 
     tokenizer = create_kronos_tokenizer(config=config).to(device)
-    model = create_kronos_model(config=config).to(device)
+    model = create_kronos_model(
+        config=config,
+        num_stocks=int(max(num_stocks, 1)),
+        num_groups=int(max(num_groups, 1)),
+    ).to(device)
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     tokenizer_state = checkpoint.get("tokenizer_state_dict")

@@ -190,7 +190,7 @@ raw technical inputs from higher-level geometric context and slower macro data
 from src.models import create_kronos_model, create_kronos_tokenizer
 
 tokenizer = create_kronos_tokenizer(config)
-model = create_kronos_model(config)
+model = create_kronos_model(config, num_stocks=num_stocks, num_groups=num_groups)
 ```
 
 **Architecture**:
@@ -221,6 +221,8 @@ model = create_kronos_model(config)
 - Kronos can now consume prepared-data categorical context such as `stock_id`
   and `group_id`, but it still remains a token-generation model rather than a
   direct regression head.
+- `num_stocks` and `num_groups` are derived from dataset metadata at runtime,
+  not stored as static values in `config/model.json`.
 
 **Current default size in this repo**:
 - Tokenizer: about `3.96M` params

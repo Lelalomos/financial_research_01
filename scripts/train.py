@@ -12,6 +12,7 @@ import torch
 import torch.nn.functional as F
 from typing import Optional, List, Dict
 from sklearn.preprocessing import LabelEncoder
+from tqdm import tqdm
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,7 +27,7 @@ from src.training import (
     save_final_lightning_checkpoint,
     train_with_lightning,
 )
-from src.training.common import create_scheduler
+from src.training.common import create_optimizer_for_params, create_scheduler
 from src.training.early_stopping import EarlyStopping, atomic_torch_save, make_weights_only_safe
 from src.utils.data_preview import load_ticker_mapping, log_sequence_preview
 from src.utils.logger import get_logger
@@ -278,23 +279,6 @@ def _load_model_weights(model, checkpoint_path: str, device) -> None:
     model.load_state_dict(state_dict)
 
 
-def _create_optimizer_for_params(params, config):
-    training = config.model.training
-    optimizer_name = training.OPTIMIZER
-    lr = training.LEARNING_RATE
-    wd = training.WEIGHT_DECAY
-
-    if optimizer_name == 'adam':
-        return torch.optim.Adam(params, lr=lr, weight_decay=wd)
-    if optimizer_name == 'adamw':
-        return torch.optim.AdamW(params, lr=lr, weight_decay=wd)
-    if optimizer_name == 'sgd':
-        return torch.optim.SGD(params, lr=lr, momentum=0.9, weight_decay=wd)
-    if optimizer_name == 'rmsprop':
-        return torch.optim.RMSprop(params, lr=lr, weight_decay=wd)
-    raise ValueError(f"Unknown optimizer: {optimizer_name}")
-
-
 def _save_kronos_checkpoint(
     checkpoint_path: Path,
     tokenizer,
@@ -335,8 +319,10 @@ def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, confi
     model.train()
     total_loss = 0.0
     total_batches = 0
+    total_steps = max_batches if max_batches is not None else len(train_loader)
+    progress_bar = tqdm(train_loader, total=total_steps, desc="Kronos train", leave=False)
 
-    for batch_idx, batch in enumerate(train_loader):
+    for batch_idx, batch in enumerate(progress_bar):
         if max_batches is not None and batch_idx >= max_batches:
             break
         features = batch['features'].to(device)
@@ -384,6 +370,10 @@ def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, confi
         optimizer.step()
         total_loss += float(loss.detach().cpu().item())
         total_batches += 1
+        progress_bar.set_postfix({
+            'loss': f"{loss.detach().cpu().item():.4f}",
+            'avg_loss': f"{(total_loss / total_batches):.4f}",
+        })
 
     if total_batches == 0:
         raise ValueError("Kronos training loader produced zero batches.")
@@ -395,9 +385,11 @@ def _validate_kronos_epoch(tokenizer, model, val_loader, device, max_batches=Non
     model.eval()
     total_loss = 0.0
     total_batches = 0
+    total_steps = max_batches if max_batches is not None else len(val_loader)
+    progress_bar = tqdm(val_loader, total=total_steps, desc="Kronos val", leave=False)
 
     with torch.no_grad():
-        for batch_idx, batch in enumerate(val_loader):
+        for batch_idx, batch in enumerate(progress_bar):
             if max_batches is not None and batch_idx >= max_batches:
                 break
             features = batch['features'].to(device)
@@ -432,6 +424,10 @@ def _validate_kronos_epoch(tokenizer, model, val_loader, device, max_batches=Non
             loss = recon_loss + pre_loss + bsq_loss + token_loss
             total_loss += float(loss.cpu().item())
             total_batches += 1
+            progress_bar.set_postfix({
+                'loss': f"{loss.cpu().item():.4f}",
+                'avg_loss': f"{(total_loss / total_batches):.4f}",
+            })
 
     if total_batches == 0:
         raise ValueError("Kronos validation loader produced zero batches.")
@@ -450,12 +446,14 @@ def train_kronos(
     args,
 ):
     config.model.models.kronos.tokenizer.D_IN = num_features
-    config.model.models.kronos.network.NUM_STOCKS = embedding_sizes['num_stocks']
-    config.model.models.kronos.network.NUM_GROUPS = embedding_sizes['num_groups']
 
     tokenizer = create_kronos_tokenizer(config=config).to(device)
-    model = create_kronos_model(config=config).to(device)
-    optimizer = _create_optimizer_for_params(
+    model = create_kronos_model(
+        config=config,
+        num_stocks=embedding_sizes['num_stocks'],
+        num_groups=embedding_sizes['num_groups'],
+    ).to(device)
+    optimizer = create_optimizer_for_params(
         list(tokenizer.parameters()) + list(model.parameters()),
         config,
     )
