@@ -5,8 +5,8 @@ set -e
 
 CONTAINER_NAME="crnn_predictor"
 ORIGINAL_ARGS=("$@")
-MODEL_PATH="final"
-MODEL_TYPE=""
+MODEL_PATH="best"
+MODEL_TYPE="chronos2"
 OUTPUT_PATH="outputs/backtest_report.xlsx"
 OUTPUT_FORMAT=""
 DATA_DIR="data/processed"

@@ -34,6 +34,29 @@ from src.utils.logger import get_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
 
 
+class LimitedLoader:
+    """Wrap a loader-like iterable and stop after a fixed number of batches."""
+
+    def __init__(self, loader, limit: Optional[int]):
+        self.loader = loader
+        self.limit = None if limit is None else max(int(limit), 0)
+        self.dataset = loader.dataset
+
+    def __iter__(self):
+        if self.limit is None:
+            yield from self.loader
+            return
+        for idx, batch in enumerate(self.loader):
+            if idx >= self.limit:
+                break
+            yield batch
+
+    def __len__(self):
+        if self.limit is None:
+            return len(self.loader)
+        return min(len(self.loader), self.limit)
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Train CRNN model')
@@ -765,6 +788,13 @@ def main():
                 "scheduler for this run because it requires val/loss."
             )
             config.model.training.SCHEDULER = None
+
+    max_train_batches = getattr(args, 'max_train_batches', None)
+    max_val_batches = getattr(args, 'max_val_batches', None)
+    if max_train_batches is not None:
+        loaders['train'] = LimitedLoader(loaders['train'], max_train_batches)
+    if loaders.get('val') is not None and max_val_batches is not None:
+        loaders['val'] = LimitedLoader(loaders['val'], max_val_batches)
 
     # Get embedding sizes
     train_dataset = loaders['train'].dataset

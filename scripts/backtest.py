@@ -29,6 +29,7 @@ from src.evaluation.kronos import (
     compute_kronos_backtest_results,
     generate_kronos_predictions,
     load_kronos_checkpoint,
+    resolve_kronos_embedding_sizes,
 )
 from src.utils.logger import get_logger
 from src.utils.device import resolve_device, get_device_info
@@ -340,6 +341,7 @@ def main():
 
     # Get embedding sizes
     embedding_sizes = dataset.get_embedding_sizes()
+    resolved_num_stocks, resolved_num_groups = resolve_kronos_embedding_sizes(info, embedding_sizes)
 
     # Resolve checkpoint and model type before model creation
     checkpoint_path = find_checkpoint_path(
@@ -347,8 +349,8 @@ def main():
         checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
         model_type=requested_model_type,
         num_features=dataset.num_features,
-        num_stocks=embedding_sizes['num_stocks'],
-        num_groups=embedding_sizes['num_groups'],
+        num_stocks=resolved_num_stocks,
+        num_groups=resolved_num_groups,
     )
 
     model_type = requested_model_type
@@ -371,8 +373,8 @@ def main():
             checkpoint_path=checkpoint_path,
             config=config,
             num_features=dataset.num_features,
-            num_stocks=embedding_sizes['num_stocks'],
-            num_groups=embedding_sizes['num_groups'],
+            num_stocks=resolved_num_stocks,
+            num_groups=resolved_num_groups,
             device=device,
         )
         logger.info(f"Checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
@@ -388,9 +390,10 @@ def main():
             expected_samples=len(sequences['target']),
             max_samples=args.max_samples,
         )
-        predictions, targets, sample_stock_ids, sample_group_ids = generate_kronos_predictions(
+        predictions, targets, sample_stock_ids, sample_group_ids, _raw_predictions, _raw_targets = generate_kronos_predictions(
             sequences=sequences,
             metadata=metadata,
+            data_dir=data_dir,
             config=config,
             tokenizer=tokenizer,
             model=model,
@@ -428,8 +431,8 @@ def main():
         model = create_model(
             model_type=model_type,
             num_features=dataset.num_features,
-            num_stocks=embedding_sizes['num_stocks'],
-            num_groups=embedding_sizes['num_groups'],
+            num_stocks=resolved_num_stocks,
+            num_groups=resolved_num_groups,
             config=config,
             feature_cols=info.get('feature_cols'),
         )

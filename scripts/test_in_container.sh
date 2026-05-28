@@ -6,7 +6,7 @@ set -e
 MODEL_PATH="best"
 REPORTS_DIR="outputs"
 CLEANUP_OLD_FILES=true
-MODEL_TYPE=""
+MODEL_TYPE="chronos2"
 DEVICE=""
 FORCE_CPU=false
 MAX_SAMPLES=""

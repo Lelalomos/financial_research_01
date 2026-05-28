@@ -17,7 +17,7 @@ set -e
 
 # Default values
 START_DATE="2000-01-01"
-MODEL_TYPE="crnn_attention"
+MODEL_TYPE="chronos2"
 EPOCHS=100
 SKIP_PREPROCESS=false
 SKIP_TRAIN=false

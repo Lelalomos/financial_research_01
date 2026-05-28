@@ -26,7 +26,7 @@ set -e
 CONTAINER_NAME="crnn_predictor"
 ORIGINAL_ARGS=("$@")
 # bilstm4_attention_best_lightning.pth
-MODEL_TYPE="kronos"
+MODEL_TYPE="chronos2"
 EPOCHS=10
 BATCH_SIZE=128
 LEARNING_RATE=0.0001

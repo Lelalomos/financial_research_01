@@ -27,6 +27,11 @@ from .lstm3_attn_model import LSTM3AttentionModel, create_model as create_lstm3_
 from .bilstm4_attn_model import BiLSTM4AttentionModel, create_model as create_bilstm4_attention
 from .multi_branch_bilstm import MultiBranchBiLSTMModel, create_model as create_multi_branch_bilstm
 try:
+    from .chronos2_model import Chronos2ForecastModel, create_model as create_chronos2
+except ImportError:  # pragma: no cover
+    Chronos2ForecastModel = None
+    create_chronos2 = None
+try:
     from .kronos_model import (
         Kronos,
         KronosPredictor,
@@ -56,6 +61,9 @@ _MODEL_REGISTRY = {
     'multi_branch_bilstm': (MultiBranchBiLSTMModel, create_multi_branch_bilstm),
 }
 
+if Chronos2ForecastModel is not None and create_chronos2 is not None:
+    _MODEL_REGISTRY['chronos2'] = (Chronos2ForecastModel, create_chronos2)
+
 __all__ = [
     'CRNNModel',
     'RNNModel',
@@ -66,6 +74,7 @@ __all__ = [
     'LSTM3AttentionModel',
     'BiLSTM4AttentionModel',
     'MultiBranchBiLSTMModel',
+    'Chronos2ForecastModel',
     'Kronos',
     'KronosTokenizer',
     'KronosPredictor',
@@ -116,7 +125,7 @@ def create_model(
         'num_groups': num_groups,
         'config': config,
     }
-    if model_type == 'multi_branch_bilstm':
+    if model_type in {'multi_branch_bilstm', 'chronos2'}:
         kwargs['feature_cols'] = feature_cols
 
     return create_fn(**kwargs)

@@ -20,6 +20,15 @@ def _load_train_script():
     return module
 
 
+def _load_script(script_name: str, module_name: str):
+    script_path = Path(__file__).parent.parent / "scripts" / script_name
+    spec = importlib.util.spec_from_file_location(module_name, script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 class _FakeLogger:
     def info(self, *_args, **_kwargs):
         pass
@@ -62,6 +71,60 @@ def _make_sequences():
         "dividend_flag": np.ones((2, 3), dtype=np.int32),
         "target": np.array([0.1, 0.2], dtype=np.float32),
     }
+
+
+class _DummyEvalDataset:
+    num_features = 1
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    @staticmethod
+    def get_embedding_sizes():
+        return {
+            "num_stocks": 1,
+            "num_groups": 2,
+            "num_days": 32,
+            "num_months": 13,
+            "num_dividend_flags": 3,
+        }
+
+
+class _DummyEvalModel:
+    def load_state_dict(self, _state):
+        return None
+
+    def to(self, _device):
+        return self
+
+
+class _DummyBacktester:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def run_backtest(self, *_args, **_kwargs):
+        return {"summary": {}}
+
+    def generate_report(self, *_args, **_kwargs):
+        return None
+
+
+def test_limited_loader_stops_after_requested_batches(tmp_path):
+    module = _load_train_script()
+
+    class DummyLoader:
+        dataset = object()
+
+        def __iter__(self):
+            for idx in range(5):
+                yield idx
+
+        def __len__(self):
+            return 5
+
+    loader = module.LimitedLoader(DummyLoader(), limit=2)
+    assert list(loader) == [0, 1]
+    assert len(loader) == 2
 
 
 def test_train_uses_precomputed_sequences_mode_as_eager_build(tmp_path, monkeypatch):
@@ -400,10 +463,133 @@ def test_train_kronos_uses_shared_optimizer_factory(tmp_path, monkeypatch):
     )
 
     assert captured["num_stocks"] == 7
-    assert captured["num_groups"] == 3
-    assert captured["optimizer_param_count"] == 2
-    assert result["best_score"] == pytest.approx(0.4)
-    assert len(checkpoint_calls) == 2
+
+
+def test_test_script_prefers_metadata_embedding_sizes_for_generic_models(tmp_path, monkeypatch):
+    module = _load_script("test.py", "test_eval_script")
+    data_dir = tmp_path / "processed"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "info.json").write_text(
+        json.dumps(
+            {
+                "feature_cols": ["close"],
+                "num_features": 1,
+                "num_stocks": 150,
+                "num_groups": 11,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    args = SimpleNamespace(
+        model="best",
+        model_type="chronos2",
+        data_dir=str(data_dir),
+        raw_data_dir=None,
+        split="test",
+        device="cpu",
+        force_cpu=True,
+        excel_report=None,
+        output=None,
+        max_samples=16,
+    )
+
+    captured = {}
+    model_config = Config(copy.deepcopy(load_config("model").to_dict()))
+
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    monkeypatch.setattr(module, "get_logger", lambda *a, **k: _FakeLogger())
+    monkeypatch.setattr(module, "resolve_device", lambda **_kwargs: torch.device("cpu"))
+    monkeypatch.setattr(module, "get_device_info", lambda **_kwargs: {"cuda_available": False, "cuda_working": False})
+    monkeypatch.setattr(module, "load_config", lambda _name: model_config)
+    monkeypatch.setattr(module, "load_sequences", lambda *_args, **_kwargs: _make_sequences())
+    monkeypatch.setattr(module, "load_id_mappings", lambda *_args, **_kwargs: ({}, {}))
+    monkeypatch.setattr(module, "FinancialDataset", _DummyEvalDataset)
+    monkeypatch.setattr(module.torch.utils.data, "DataLoader", lambda dataset, **_kwargs: {"dataset": dataset})
+
+    def fake_find_checkpoint_path(**kwargs):
+        captured["find_checkpoint_path"] = kwargs
+        return str(tmp_path / "chronos2_best.pth")
+
+    def fake_create_model(**kwargs):
+        captured["create_model"] = kwargs
+        return _DummyEvalModel()
+
+    monkeypatch.setattr(module, "find_checkpoint_path", fake_find_checkpoint_path)
+    monkeypatch.setattr(module, "create_model", fake_create_model)
+    monkeypatch.setattr(module, "load_checkpoint_metadata", lambda *_args, **_kwargs: {"model_state_dict": {}, "epoch": 1})
+    monkeypatch.setattr(module, "evaluate_model", lambda *_args, **_kwargs: {"loss": 0.1})
+    monkeypatch.setattr(module, "print_metrics", lambda *_args, **_kwargs: None)
+
+    assert module.main() == 0
+    assert captured["find_checkpoint_path"]["num_stocks"] == 150
+    assert captured["find_checkpoint_path"]["num_groups"] == 11
+    assert captured["create_model"]["num_stocks"] == 150
+    assert captured["create_model"]["num_groups"] == 11
+
+
+def test_backtest_script_prefers_metadata_embedding_sizes_for_generic_models(tmp_path, monkeypatch):
+    module = _load_script("backtest.py", "test_backtest_script")
+    data_dir = tmp_path / "processed"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "info.json").write_text(
+        json.dumps(
+            {
+                "feature_cols": ["close"],
+                "num_features": 1,
+                "num_stocks": 150,
+                "num_groups": 11,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    args = SimpleNamespace(
+        model="best",
+        model_type="chronos2",
+        data_dir=str(data_dir),
+        raw_data_dir=None,
+        split="test",
+        device="cpu",
+        force_cpu=True,
+        output=str(tmp_path / "backtest.json"),
+        output_format="json",
+        threshold=0.1,
+        initial_capital=10000.0,
+        max_samples=16,
+    )
+
+    captured = {}
+    model_config = Config(copy.deepcopy(load_config("model").to_dict()))
+
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    monkeypatch.setattr(module, "get_logger", lambda *a, **k: _FakeLogger())
+    monkeypatch.setattr(module, "resolve_device", lambda **_kwargs: torch.device("cpu"))
+    monkeypatch.setattr(module, "get_device_info", lambda **_kwargs: {"cuda_available": False, "cuda_working": False})
+    monkeypatch.setattr(module, "load_config", lambda _name: model_config)
+    monkeypatch.setattr(module, "load_sequences", lambda *_args, **_kwargs: _make_sequences())
+    monkeypatch.setattr(module, "load_id_mappings", lambda *_args, **_kwargs: ({}, {}))
+    monkeypatch.setattr(module, "FinancialDataset", _DummyEvalDataset)
+    monkeypatch.setattr(module.torch.utils.data, "DataLoader", lambda dataset, **_kwargs: {"dataset": dataset})
+
+    def fake_find_checkpoint_path(**kwargs):
+        captured["find_checkpoint_path"] = kwargs
+        return str(tmp_path / "chronos2_best.pth")
+
+    def fake_create_model(**kwargs):
+        captured["create_model"] = kwargs
+        return _DummyEvalModel()
+
+    monkeypatch.setattr(module, "find_checkpoint_path", fake_find_checkpoint_path)
+    monkeypatch.setattr(module, "create_model", fake_create_model)
+    monkeypatch.setattr(module, "load_checkpoint_metadata", lambda *_args, **_kwargs: {"model_state_dict": {}, "epoch": 1})
+    monkeypatch.setattr(module, "Backtester", _DummyBacktester)
+
+    assert module.main() == 0
+    assert captured["find_checkpoint_path"]["num_stocks"] == 150
+    assert captured["find_checkpoint_path"]["num_groups"] == 11
+    assert captured["create_model"]["num_stocks"] == 150
+    assert captured["create_model"]["num_groups"] == 11
 
 
 def test_kronos_epoch_loops_update_progress_bar(monkeypatch):

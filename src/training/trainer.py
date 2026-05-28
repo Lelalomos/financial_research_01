@@ -132,6 +132,7 @@ class Trainer:
             'LSTM3AttentionModel': 'lstm3_attention',
             'BiLSTM4AttentionModel': 'bilstm4_attention',
             'MultiBranchBiLSTMModel': 'multi_branch_bilstm',
+            'Chronos2ForecastModel': 'chronos2',
         }
         return mapping.get(class_name, class_name.lower())
 

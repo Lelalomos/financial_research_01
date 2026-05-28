@@ -146,3 +146,21 @@ def test_main_config_rejects_invalid_split_sum():
 def test_load_config_still_returns_attribute_config():
     config = load_config("model")
     assert config.model.training.BATCH_SIZE > 0
+
+
+def test_model_config_default_model_type_is_chronos2():
+    data = _load_raw_config("model")
+    assert data["model"]["selection"]["DEFAULT_MODEL_TYPE"] == "chronos2"
+    assert "chronos2" in data["model"]["models"]
+
+
+def test_model_config_includes_chronos2_embedding_fields():
+    data = _load_raw_config("model")
+    chronos2 = data["model"]["models"]["chronos2"]
+    assert chronos2["USE_STOCK_EMBEDDING"] is True
+    assert chronos2["USE_GROUP_EMBEDDING"] is True
+    assert chronos2["STOCK_EMB_DIM"] > 0
+    assert chronos2["GROUP_EMB_DIM"] > 0
+    assert chronos2["DAY_EMB_DIM"] > 0
+    assert chronos2["MONTH_EMB_DIM"] > 0
+    assert chronos2["DIVIDEND_FLAG_EMB_DIM"] > 0

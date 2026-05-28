@@ -9,6 +9,7 @@ close path into the same percent-change style signal used by the project.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -50,6 +51,78 @@ def _normalize_target_values(returns: np.ndarray, normalize_target: bool, target
     if not normalize_target:
         return returns.astype(np.float32)
     return np.tanh(returns / max(float(target_threshold), 1e-8)).astype(np.float32)
+
+
+def _denormalize_target_values(values: np.ndarray, normalize_target: bool, target_threshold: float) -> np.ndarray:
+    if not normalize_target:
+        return values.astype(np.float32)
+    clipped = np.clip(values, -0.99, 0.99)
+    return (max(float(target_threshold), 1e-8) * np.arctanh(clipped)).astype(np.float32)
+
+
+@lru_cache(maxsize=16)
+def _infer_feature_inverse_transform(data_dir: str, feature_col: str) -> Dict[str, float]:
+    data_path = Path(data_dir)
+    train_split_path = data_path / ".cache" / "normalized_splits" / "train.parquet"
+    raw_path = data_path.parent / "pre_normalized.parquet"
+
+    if not train_split_path.exists():
+        raise FileNotFoundError(f"Missing normalized train split cache: {train_split_path}")
+    if not raw_path.exists():
+        raise FileNotFoundError(f"Missing pre-normalized parquet: {raw_path}")
+
+    train_df = pd.read_parquet(train_split_path, columns=["date", "tic_id", feature_col])
+    raw_df = pd.read_parquet(raw_path, columns=["date", "tic_id", feature_col])
+    merged = train_df.merge(raw_df, on=["date", "tic_id"], how="inner", suffixes=("_normalized", "_raw"))
+    if merged.empty:
+        raise ValueError(f"Could not infer inverse transform for '{feature_col}': no aligned rows found.")
+
+    normalized = merged[f"{feature_col}_normalized"].to_numpy(dtype=np.float64)
+    raw = merged[f"{feature_col}_raw"].to_numpy(dtype=np.float64)
+
+    finite_mask = np.isfinite(normalized) & np.isfinite(raw)
+    normalized = normalized[finite_mask]
+    raw = raw[finite_mask]
+    if normalized.size < 2:
+        raise ValueError(f"Could not infer inverse transform for '{feature_col}': not enough finite rows.")
+
+    slope, intercept = np.polyfit(normalized, raw, 1)
+    affine_pred = slope * normalized + intercept
+    affine_residual = float(np.max(np.abs(raw - affine_pred)))
+
+    log_shift = float(np.median(raw - np.expm1(normalized)))
+    log_pred = np.expm1(normalized) + log_shift
+    log_residual = float(np.max(np.abs(raw - log_pred)))
+
+    if affine_residual <= log_residual:
+        return {
+            "kind": "affine",
+            "slope": float(slope),
+            "intercept": float(intercept),
+            "max_residual": affine_residual,
+        }
+
+    return {
+        "kind": "log_shift",
+        "shift": log_shift,
+        "max_residual": log_residual,
+    }
+
+
+def _inverse_feature_values(values: np.ndarray, transform: Dict[str, float]) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    kind = transform["kind"]
+    if kind == "affine":
+        return (values * transform["slope"] + transform["intercept"]).astype(np.float32)
+    if kind == "log_shift":
+        return (np.expm1(values) + transform["shift"]).astype(np.float32)
+    raise ValueError(f"Unsupported inverse transform kind: {kind}")
+
+
+def resolve_kronos_embedding_sizes(info: Dict[str, object], fallback_sizes: Dict[str, int]) -> Tuple[int, int]:
+    num_stocks = int(info.get("num_stocks") or fallback_sizes["num_stocks"])
+    num_groups = int(info.get("num_groups") or fallback_sizes["num_groups"])
+    return max(num_stocks, fallback_sizes["num_stocks"]), max(num_groups, fallback_sizes["num_groups"])
 
 
 def _load_split_with_raw_close(data_dir: Path, split: str) -> pd.DataFrame:
@@ -131,6 +204,13 @@ def build_kronos_sequence_metadata(
         "y_dates": np.asarray(y_dates, dtype="datetime64[ns]"),
         "last_close": np.asarray(last_close, dtype=np.float32),
         "future_close": np.asarray(future_close, dtype=np.float32),
+        "raw_targets": np.asarray(
+            [
+                ((future - base) / base) * 100.0 if base != 0 else 0.0
+                for base, future in zip(last_close, future_close)
+            ],
+            dtype=np.float32,
+        ),
         "targets": np.asarray(targets, dtype=np.float32),
     }
 
@@ -180,6 +260,7 @@ def load_kronos_checkpoint(
 def generate_kronos_predictions(
     sequences: Dict[str, np.ndarray],
     metadata: Dict[str, np.ndarray],
+    data_dir: Path,
     config,
     tokenizer,
     model,
@@ -188,13 +269,15 @@ def generate_kronos_predictions(
     normalize_target: bool,
     target_threshold: float,
     feature_cols,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     data_config = load_config("main")
     prediction_horizon = int(data_config.data.sequences.PREDICTION_HORIZON)
 
     predictor_cfg = config.model.models.kronos.predictor
     close_index = list(feature_cols).index("close") if "close" in feature_cols else 0
+    close_inverse_transform = _infer_feature_inverse_transform(str(data_dir), "close")
     predictions = []
+    raw_predictions = []
 
     total = len(sequences["features"])
     for start in range(0, total, batch_size):
@@ -240,17 +323,23 @@ def generate_kronos_predictions(
             future_month=future_month,
         )
 
-        predicted_close = preds[:, -1, close_index]
+        predicted_close = _inverse_feature_values(preds[:, -1, close_index], close_inverse_transform)
         base_close = metadata["last_close"][start:end]
         predicted_return = np.where(base_close != 0, ((predicted_close - base_close) / base_close) * 100.0, 0.0)
+        raw_predictions.append(predicted_return.astype(np.float32))
         predictions.append(_normalize_target_values(predicted_return, normalize_target, target_threshold))
 
     prediction_array = np.concatenate(predictions, axis=0) if predictions else np.array([], dtype=np.float32)
+    raw_prediction_array = (
+        np.concatenate(raw_predictions, axis=0) if raw_predictions else np.array([], dtype=np.float32)
+    )
     return (
         prediction_array,
         metadata["targets"],
         sequences["stock_id"][:, 0],
         sequences["group_id"][:, 0],
+        raw_prediction_array,
+        metadata["raw_targets"],
     )
 
 
@@ -269,12 +358,20 @@ def build_kronos_report(
     targets: np.ndarray,
     stock_ids: np.ndarray,
     group_ids: np.ndarray,
+    raw_predictions: Optional[np.ndarray] = None,
+    raw_targets: Optional[np.ndarray] = None,
+    normalize_target: bool = False,
+    target_threshold: float = 1.0,
     stock_id_to_ticker: Optional[Dict[int, str]] = None,
     group_id_to_sector: Optional[Dict[int, str]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Dict[str, float]]]:
     tickers = np.array([stock_id_to_ticker.get(int(sid), f"stock_{int(sid)}") for sid in stock_ids]) if stock_id_to_ticker else np.array([f"stock_{int(sid)}" for sid in stock_ids])
     sectors = np.array([group_id_to_sector.get(int(gid), f"sector_{int(gid)}") for gid in group_ids]) if group_id_to_sector else np.array([f"sector_{int(gid)}" for gid in group_ids])
     direction_scores = (np.sign(predictions) == np.sign(targets)).astype(int)
+    if raw_predictions is None:
+        raw_predictions = _denormalize_target_values(predictions, normalize_target, target_threshold)
+    if raw_targets is None:
+        raw_targets = _denormalize_target_values(targets, normalize_target, target_threshold)
 
     report_df = pd.DataFrame(
         {
@@ -284,7 +381,10 @@ def build_kronos_report(
             "group_id": group_ids,
             "real_target": targets,
             "predict_target": predictions,
+            "real_target_percent": raw_targets,
+            "predict_target_percent": raw_predictions,
             "distance": predictions - targets,
+            "distance_percent": raw_predictions - raw_targets,
             "direction_score": direction_scores,
         }
     )

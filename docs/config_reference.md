@@ -282,7 +282,7 @@ experiment tracking.
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
-| `DEFAULT_MODEL_TYPE` | Default model family when CLI does not specify one. This fallback is used by training, test, validation, and backtest scripts. | Must match a key under `model.models`. | Set to your most trusted baseline or to `kronos` when you want Kronos to be the default runtime model. |
+| `DEFAULT_MODEL_TYPE` | Default model family when CLI does not specify one. This fallback is used by training, test, validation, and backtest scripts. | Must match a key under `model.models`. | Set to your most trusted baseline. In the current repo, the default is `chronos2`; switch it if you want another model family to drive the default runtime path. |
 
 ### `model.loss`
 
@@ -497,6 +497,37 @@ macro/financial branches before fusion.
 | `GEOMETRIC_PREFIX_FEATURES` | Prefix rules assigning geometric/structural features. | List of prefixes. | Keep aligned with generated geometric feature names. |
 | `MACRO_FINANCIAL_EXACT_FEATURES` | Exact macro/fundamental feature names assigned to macro branch. | List of strings. | Update when external/fundamental columns change. |
 | `MACRO_FINANCIAL_PREFIX_FEATURES` | Prefix rules for macro/fundamental branch. | List of prefixes. | Use if new macro feature families share naming prefixes. |
+
+### `model.models.chronos2`
+
+This block configures the repo-integrated Chronos2-style forecasting adapter.
+It uses patchified `close` history, a transformer encoder, a quantile forecast
+head, and a final scalar return head.
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `D_MODEL` | Transformer hidden size for patch tokens. | Positive integer. | Increase for more model capacity. |
+| `D_KV` | Reserved compatibility field from the Chronos2-style design. | Positive integer. | Keep aligned with your experiment setup; current adapter does not use it directly. |
+| `D_FF` | Feed-forward width in the transformer and forecast head. | Positive integer. | Increase if the encoder is underpowered. |
+| `NUM_LAYERS` | Number of transformer encoder layers. | Positive integer. | Increase for deeper sequence modeling. |
+| `NUM_HEADS` | Number of attention heads. | Positive integer compatible with `D_MODEL`. | Tune attention capacity carefully. |
+| `DROPOUT_RATE` | Dropout used in the patch encoder and forecast head. | Float in `[0, 1)`. | Increase if Chronos2 overfits. |
+| `ATTN_IMPLEMENTATION` | Reserved compatibility field for attention backend selection. | String. | Keep for future adapter changes; current adapter uses PyTorch transformer layers. |
+| `INPUT_PATCH_SIZE` | Number of timesteps per patch. | Positive integer. | Increase to give each token more local context. |
+| `INPUT_PATCH_STRIDE` | Step between consecutive patches. | Positive integer. | Reduce for more overlap; increase for fewer tokens. |
+| `USE_REG_TOKEN` | Reserved compatibility flag for a regression token. | `true` or `false`. | Kept for config compatibility; current adapter does not use it directly. |
+| `USE_ARCSINH` | Reserved compatibility flag for alternate value scaling. | `true` or `false`. | Keep `false` unless adapter logic is extended. |
+| `USE_STOCK_EMBEDDING` | Whether Chronos2 includes `stock_id` embeddings. | `true` or `false`. | Disable for ablation or if stock identity hurts generalization. |
+| `USE_GROUP_EMBEDDING` | Whether Chronos2 includes `group_id` embeddings. | `true` or `false`. | Disable for ablation or if sector identity is noisy. |
+| `STOCK_EMB_DIM` | Chronos2-specific stock embedding size. | Positive integer. | Increase for large ticker universes; decrease to save parameters. |
+| `GROUP_EMB_DIM` | Chronos2-specific group embedding size. | Positive integer. | Increase only if sector information is important. |
+| `DAY_EMB_DIM` | Chronos2-specific day-of-month embedding size. | Positive integer. | Keep small; increase only if calendar effects matter. |
+| `MONTH_EMB_DIM` | Chronos2-specific month embedding size. | Positive integer. | Keep small. |
+| `DIVIDEND_FLAG_EMB_DIM` | Chronos2-specific dividend flag embedding size. | Positive integer. | Keep small unless dividend state matters strongly. |
+| `DROPOUT_EMBEDDING` | Dropout applied to the Chronos2 categorical embedding block. | Float in `[0, 1)`. | Increase if Chronos2 embeddings overfit. |
+| `QUANTILES` | Quantiles predicted across the horizon before scalar summarization. | List of floats in `(0, 1)`. | Add/remove quantiles for richer or cheaper forecast summaries. |
+| `HEAD_HIDDEN_SIZES` | Hidden sizes of the final scalar prediction head. | List of positive integers. | Tune final prediction capacity. |
+| `HEAD_DROPOUT` | Dropout used in the final scalar prediction head. | Float in `[0, 1)`. | Increase for stronger regularization. |
 
 ### `model.models.kronos`
 

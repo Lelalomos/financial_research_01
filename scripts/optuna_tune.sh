@@ -15,7 +15,7 @@
 set -e
 
 # Default values
-MODEL_TYPE="bilstm4_attention"
+MODEL_TYPE="chronos2"
 N_TRIALS=50
 STOCKS=20
 YEARS=""
