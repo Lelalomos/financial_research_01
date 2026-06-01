@@ -5,6 +5,7 @@
 # Options:
 #   --start-date DATE    Start date for data download (default: 2000-01-01)
 #   --end-date DATE      End date for data download (default: current)
+#   --model-type TYPE    Route special prep flows by model type
 #   --stock-limit N      Limit number of stocks from index (e.g., 400)
 #   --stocks N           Sample N stocks balanced across ALL group_ids
 #   --tickers T1 T2 ...  Specific tickers to download
@@ -13,9 +14,12 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 # Default values
 START_DATE="2000-01-01"
 END_DATE=""
+MODEL_TYPE=""
 STOCK_LIMIT=""
 STOCKS="150"
 TICKERS=""
@@ -30,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --end-date)
             END_DATE="$2"
+            shift 2
+            ;;
+        --model-type)
+            MODEL_TYPE="$2"
             shift 2
             ;;
         --stock-limit)
@@ -55,6 +63,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --start-date DATE    Start date for data download (default: 2000-01-01)"
             echo "  --end-date DATE      End date for data download (default: current)"
+            echo "  --model-type TYPE    Route special prep flows by model type"
             echo "  --stock-limit N      Limit number of stocks from index (e.g., 400 for first 400)"
             echo "  --stocks N           Sample N stocks balanced across ALL group_ids"
             echo "  --tickers T1 T2 ...  Specific tickers to download (e.g., AAPL MSFT GOOGL)"
@@ -70,8 +79,18 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
 # Build command
-CMD="python scripts/preprocess_data.py --start-date $START_DATE"
+if [ "$MODEL_TYPE" = "chronos2" ]; then
+    CMD="python scripts/prepare_chronos2_data.py --start-date $START_DATE"
+elif [ "$MODEL_TYPE" = "chronos_rich" ]; then
+    CMD="python scripts/prepare_chronos_rich_data.py --start-date $START_DATE"
+elif [ "$MODEL_TYPE" = "kronos_rich" ]; then
+    CMD="python scripts/prepare_kronos_rich_data.py --start-date $START_DATE"
+else
+    CMD="python scripts/preprocess_data.py --start-date $START_DATE"
+fi
 
 if [ -n "$END_DATE" ]; then
     CMD="$CMD --end-date $END_DATE"
@@ -112,6 +131,7 @@ fi
 if [ -n "$EXPORT_PRE_NORMALIZE" ]; then
     echo "Export pre-normalize: $EXPORT_PRE_NORMALIZE"
 fi
+echo "Model type: $MODEL_TYPE"
 echo "Command: $CMD"
 echo "=========================================="
 echo ""

@@ -49,6 +49,55 @@ def test_main_config_accepts_on_the_fly_sequence_mode():
     validate_config_data("main", valid)
 
 
+def test_main_config_includes_chronos2_preparation_settings():
+    data = _load_raw_config("main")
+    chronos2_prep = data["data"]["chronos2_preparation"]
+    assert chronos2_prep["OUTPUT_DIR"]
+    assert chronos2_prep["TARGET_COLUMN"] == "close"
+    assert chronos2_prep["INCLUDE_SCALAR_TARGET"] is True
+    assert chronos2_prep["TARGET_MODE"] == "trend_extension"
+    assert chronos2_prep["TREND_LOOKBACK"] == 7
+    assert chronos2_prep["TREND_METHOD"] == "mean_gap"
+
+
+def test_main_config_includes_kronos_rich_preparation_settings():
+    data = _load_raw_config("main")
+    prep = data["data"]["kronos_rich_preparation"]
+    assert prep["OUTPUT_DIR"] == "data/processed_kronos_rich"
+    assert prep["OHLCV_COLUMNS"] == ["open", "high", "low", "close", "volume"]
+    assert prep["INCLUDE_RETURN_PATH"] is True
+    assert prep["INCLUDE_REGIME_LABEL"] is True
+
+
+def test_main_config_includes_chronos_rich_preparation_settings():
+    data = _load_raw_config("main")
+    prep = data["data"]["chronos_rich_preparation"]
+    assert prep["OUTPUT_DIR"] == "data/processed_chronos_rich"
+    assert prep["OHLCV_COLUMNS"] == ["open", "high", "low", "close", "volume"]
+    assert prep["INCLUDE_RETURN_PATH"] is True
+    assert prep["INCLUDE_REGIME_LABEL"] is True
+
+
+def test_main_config_includes_cointegration_feature_settings():
+    data = _load_raw_config("main")
+    flags = data["data"]["features"]["FEATURE_FLAGS"]
+    cointegration = data["data"]["cointegration"]
+
+    assert isinstance(flags["cointegration_features"], bool)
+    assert cointegration["ROLLING_WINDOW"] == 252
+    assert cointegration["NORMALIZATION_WINDOW"] == 252
+    assert cointegration["JOHANSEN_DET_ORDER"] == 0
+    assert cointegration["JOHANSEN_K_AR_DIFF"] == 1
+
+
+def test_main_config_includes_sampling_settings():
+    data = _load_raw_config("main")
+    sampling = data["data"]["sampling"]
+
+    assert sampling["STOCK_SELECTION_MODE"] == "random"
+    assert sampling["MARKET_CAP_METADATA_DIR"] == "raw_data/ticket_data/us"
+
+
 def test_main_config_rejects_invalid_regime_quantiles():
     data = _load_raw_config("main")
     invalid = copy.deepcopy(data)
@@ -164,3 +213,15 @@ def test_model_config_includes_chronos2_embedding_fields():
     assert chronos2["DAY_EMB_DIM"] > 0
     assert chronos2["MONTH_EMB_DIM"] > 0
     assert chronos2["DIVIDEND_FLAG_EMB_DIM"] > 0
+
+
+def test_model_config_includes_separate_kronos_rich_block():
+    data = _load_raw_config("model")
+    kronos = data["model"]["models"]["kronos"]
+    kronos_rich = data["model"]["models"]["kronos_rich"]
+
+    assert kronos_rich["tokenizer"]["D_MODEL"] == kronos["tokenizer"]["D_MODEL"]
+    assert kronos_rich["network"]["D_MODEL"] == kronos["network"]["D_MODEL"]
+    assert kronos_rich["predictor"]["MAX_CONTEXT"] == kronos["predictor"]["MAX_CONTEXT"]
+    assert kronos_rich["network"]["USE_STOCK_EMBEDDING"] is False
+    assert kronos_rich["network"]["USE_GROUP_EMBEDDING"] is False

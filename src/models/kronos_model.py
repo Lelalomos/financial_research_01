@@ -758,14 +758,22 @@ class KronosPredictor:
         return pred_dfs
 
 
-def create_kronos_tokenizer(config=None) -> KronosTokenizer:
+def _get_kronos_family_cfg(config=None, model_key: str = "kronos"):
+    """Return the Kronos-family config block for the requested model key."""
+    if config is None:
+        config = load_config("model")
+    if not hasattr(config.model.models, model_key):
+        raise ValueError(f"Missing config block for Kronos family model '{model_key}'.")
+    return getattr(config.model.models, model_key)
+
+
+def create_kronos_tokenizer(config=None, model_key: str = "kronos") -> KronosTokenizer:
     """
     Create a KronosTokenizer from config/model.json.
     """
-    if config is None:
-        config = load_config("model")
+    family_cfg = _get_kronos_family_cfg(config=config, model_key=model_key)
 
-    tokenizer_cfg = config.model.models.kronos.tokenizer
+    tokenizer_cfg = family_cfg.tokenizer
     return KronosTokenizer(
         d_in=tokenizer_cfg.D_IN,
         d_model=tokenizer_cfg.D_MODEL,
@@ -786,16 +794,15 @@ def create_kronos_tokenizer(config=None) -> KronosTokenizer:
     )
 
 
-def create_kronos_model(config=None, num_stocks=None, num_groups=None) -> Kronos:
+def create_kronos_model(config=None, num_stocks=None, num_groups=None, model_key: str = "kronos") -> Kronos:
     """
     Create a Kronos model from config/model.json.
     """
-    if config is None:
-        config = load_config("model")
-
-    network_cfg = config.model.models.kronos.network
-    use_stock_embedding = getattr(network_cfg, "USE_STOCK_EMBEDDING", False)
-    use_group_embedding = getattr(network_cfg, "USE_GROUP_EMBEDDING", False)
+    family_cfg = _get_kronos_family_cfg(config=config, model_key=model_key)
+    network_cfg = family_cfg.network
+    use_upstream_style = model_key == "kronos_rich"
+    use_stock_embedding = getattr(network_cfg, "USE_STOCK_EMBEDDING", False) and not use_upstream_style
+    use_group_embedding = getattr(network_cfg, "USE_GROUP_EMBEDDING", False) and not use_upstream_style
 
     if num_stocks is None:
         num_stocks = getattr(network_cfg, "NUM_STOCKS", None)
@@ -835,25 +842,65 @@ def create_kronos_predictor(
     device=None,
     num_stocks=None,
     num_groups=None,
+    model_key: str = "kronos",
 ) -> KronosPredictor:
     """
     Create a KronosPredictor from config/model.json.
     """
-    if config is None:
-        config = load_config("model")
+    family_cfg = _get_kronos_family_cfg(config=config, model_key=model_key)
 
     if tokenizer is None:
-        tokenizer = create_kronos_tokenizer(config=config)
+        tokenizer = create_kronos_tokenizer(config=config, model_key=model_key)
     if model is None:
-        model = create_kronos_model(config=config, num_stocks=num_stocks, num_groups=num_groups)
+        model = create_kronos_model(
+            config=config,
+            num_stocks=num_stocks,
+            num_groups=num_groups,
+            model_key=model_key,
+        )
 
-    predictor_cfg = config.model.models.kronos.predictor
+    predictor_cfg = family_cfg.predictor
     return KronosPredictor(
         model=model,
         tokenizer=tokenizer,
         device=device,
         max_context=predictor_cfg.MAX_CONTEXT,
         clip=predictor_cfg.CLIP,
+    )
+
+
+def create_kronos_rich_tokenizer(config=None) -> KronosTokenizer:
+    """Create the separate Kronos-rich tokenizer from config/model.json."""
+    return create_kronos_tokenizer(config=config, model_key="kronos_rich")
+
+
+def create_kronos_rich_model(config=None, num_stocks=None, num_groups=None) -> Kronos:
+    """Create the separate Kronos-rich model from config/model.json."""
+    return create_kronos_model(
+        config=config,
+        num_stocks=num_stocks,
+        num_groups=num_groups,
+        model_key="kronos_rich",
+    )
+
+
+def create_kronos_rich_predictor(
+    model=None,
+    tokenizer=None,
+    config=None,
+    device=None,
+    num_stocks=None,
+    num_groups=None,
+) -> KronosPredictor:
+    """Create the separate Kronos-rich predictor from config/model.json."""
+    return create_kronos_predictor(
+        model=model,
+        tokenizer=tokenizer,
+        config=config,
+        device=device,
+        num_stocks=num_stocks,
+        num_groups=num_groups,
+        model_key="kronos_rich",
     )
 
 
@@ -864,4 +911,7 @@ __all__ = [
     "create_kronos_tokenizer",
     "create_kronos_model",
     "create_kronos_predictor",
+    "create_kronos_rich_tokenizer",
+    "create_kronos_rich_model",
+    "create_kronos_rich_predictor",
 ]

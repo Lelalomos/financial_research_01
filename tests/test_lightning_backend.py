@@ -20,8 +20,10 @@ from src.training.lightning_module import (
     LightningDependencyError,
     create_lightning_trainer,
     _require_lightning,
+    save_final_lightning_checkpoint,
     train_with_lightning,
 )
+from scripts import train as train_script
 
 
 class TinyFinancialModel(torch.nn.Module):
@@ -234,6 +236,112 @@ def test_lightning_checkpoint_frequency_controls_periodic_saves(tmp_path):
     assert periodic_path.exists()
     checkpoint = torch.load(periodic_path, map_location="cpu", weights_only=True)
     assert checkpoint["epoch"] == 4
+
+
+def test_trainer_save_model_logs_checkpoint(tmp_path):
+    config = _config()
+    config.model.checkpointing._data["CHECKPOINT_DIR"] = str(tmp_path)
+    trainer = Trainer(
+        TinyFinancialModel(),
+        config,
+        device="cpu",
+        model_type="tiny",
+    )
+    trainer.best_val_loss = 0.125
+    logged = {}
+
+    def _log_checkpoint(path, metric=None, metric_name="loss"):
+        logged["path"] = path
+        logged["metric"] = metric
+        logged["metric_name"] = metric_name
+
+    trainer.logger.log_checkpoint = _log_checkpoint
+    output_path = tmp_path / "tiny_final.pth"
+    trainer.save_model(str(output_path))
+
+    assert output_path.exists()
+    assert logged == {
+        "path": str(output_path),
+        "metric": 0.125,
+        "metric_name": "best_val_loss",
+    }
+
+
+def test_lightning_final_checkpoint_logs_save(tmp_path, monkeypatch):
+    _require_lightning()
+
+    class DummyLogger:
+        def __init__(self):
+            self.calls = []
+
+        def log_checkpoint(self, path, metric=None, metric_name="loss"):
+            self.calls.append((path, metric, metric_name))
+
+    dummy_logger = DummyLogger()
+    monkeypatch.setattr("src.training.lightning_module.get_training_logger", lambda log_dir="logs": dummy_logger)
+
+    model = TinyFinancialModel()
+    module = FinancialLightningModule(
+        model=model,
+        config=_config(),
+        model_type="tiny",
+    )
+
+    class DummyTrainer:
+        current_epoch = 0
+        optimizers = [torch.optim.SGD(model.parameters(), lr=0.1)]
+        callback_metrics = {
+            "val/loss": torch.tensor(0.25),
+            "train/loss": torch.tensor(0.5),
+        }
+
+    checkpoint_path = save_final_lightning_checkpoint(
+        trainer=DummyTrainer(),
+        lightning_module=module,
+        checkpoint_dir=str(tmp_path),
+        model_type="tiny",
+        checkpoint_metadata={"feature_cols": ["a", "b", "c"]},
+    )
+
+    assert Path(checkpoint_path).exists()
+    assert dummy_logger.calls == [(checkpoint_path, 0.25, "val_loss")]
+
+
+def test_kronos_checkpoint_save_logs_checkpoint(tmp_path, monkeypatch):
+    class DummyLogger:
+        def __init__(self):
+            self.calls = []
+
+        def log_checkpoint(self, path, metric=None, metric_name="loss"):
+            self.calls.append((path, metric, metric_name))
+
+    class DummyModule(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(2, 2)
+
+    dummy_logger = DummyLogger()
+    monkeypatch.setattr(train_script, "get_training_logger", lambda log_dir="logs": dummy_logger)
+
+    tokenizer = DummyModule()
+    model = DummyModule()
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    checkpoint_path = tmp_path / "kronos_best.pth"
+
+    train_script._save_kronos_checkpoint(
+        checkpoint_path=checkpoint_path,
+        tokenizer=tokenizer,
+        model=model,
+        optimizer=optimizer,
+        epoch=1,
+        metric=0.42,
+        model_type="kronos",
+        checkpoint_metadata={"num_features": 2},
+        logger=None,
+    )
+
+    assert checkpoint_path.exists()
+    assert dummy_logger.calls == [(str(checkpoint_path), 0.42, "score")]
 
 
 def test_lightning_trainer_uses_custom_trainer_gradient_clip_config():

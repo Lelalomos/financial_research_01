@@ -83,6 +83,29 @@ config.data.technical_indicators.EMA_PERIODS.append(20)
 }
 ```
 
+### Stock Sampling
+
+```json
+{
+  "data": {
+    "sampling": {
+      "STOCK_SELECTION_MODE": "random",
+      "MARKET_CAP_METADATA_DIR": "raw_data/ticket_data/us"
+    }
+  }
+}
+```
+
+These settings are used when preprocessing runs with `--stocks N`.
+
+- `STOCK_SELECTION_MODE = "random"`
+  - keeps the current balanced random sampling inside each group
+- `STOCK_SELECTION_MODE = "sorted"`
+  - sorts stocks inside each group by market cap and selects the largest first
+
+`MARKET_CAP_METADATA_DIR` points to the local ticker metadata JSON files used
+to read market-cap values for `sorted` mode.
+
 ### Technical Indicators
 
 ```json
@@ -238,6 +261,7 @@ support lines over the configured trendline window.
         "treasury_yields": true,
         "time_features": true,
         "financial_metrics": true,
+        "cointegration_features": false,
         "polars_time_features": false,
         "polars_fibonacci_features": false,
         "polars_external_merges": false
@@ -253,9 +277,59 @@ additional retracement columns included in training features.
 `geometric_features` is enabled by default. It adds normalized ATR, rate of
 change, Bollinger Band width, and support/resistance slope features.
 
+`cointegration_features` is disabled by default. Enable it when you want the
+pipeline to add rolling pair-spread features, rolling Johansen sector
+equilibrium features, sector-relative features, and ADF stationarity outputs.
+
 The `polars_*` flags are disabled by default. They enable opt-in Polars
 implementations for time features, Fibonacci features, and external data merges
 while preserving pandas DataFrame outputs. See `docs/polars_migration.md`.
+
+### Cointegration Configuration
+
+```json
+{
+  "data": {
+    "cointegration": {
+      "ROLLING_WINDOW": 252,
+      "NORMALIZATION_WINDOW": 252,
+      "JOHANSEN_DET_ORDER": 0,
+      "JOHANSEN_K_AR_DIFF": 1
+    }
+  }
+}
+```
+
+These settings are used only when:
+
+```json
+data.features.FEATURE_FLAGS.cointegration_features = true
+```
+
+`ROLLING_WINDOW` controls how much past history is used to estimate the raw
+cointegration relationship itself. It is used for:
+
+- rolling OLS hedge ratio beta
+- `spread`
+- rolling Johansen equilibrium vectors
+- ADF stationarity checks
+
+`NORMALIZATION_WINDOW` controls how much past history is used to normalize the
+already-built feature values. It is used for:
+
+- `spread_norm`
+- `equilibrium_gap_norm`
+- `relative_price_vs_sector_norm`
+
+Simple rule:
+
+- `ROLLING_WINDOW` builds the raw feature
+- `NORMALIZATION_WINDOW` scales the raw feature
+
+Good starting values:
+
+- `252` for medium-term behavior
+- `504` for slower, more stable behavior
 
 ### Candlestick Configuration
 

@@ -21,6 +21,8 @@ This guide is operational. It is meant to be used together with:
 The main CLI entrypoints are:
 
 - `scripts/preprocess_data.py`
+- `scripts/prepare_chronos2_data.py`
+- `scripts/prepare_kronos_rich_data.py`
 - `scripts/train.py`
 - `scripts/test.py`
 - `scripts/validate.py`
@@ -116,6 +118,7 @@ The current model registry supports these model types:
 - `bilstm4_attention`
 - `multi_branch_bilstm`
 - `kronos`
+- `kronos_rich`
 
 Practical guidance:
 
@@ -128,6 +131,29 @@ Practical guidance:
   technical, geometric, and macro/financial feature streams
 - `kronos`: experimental tokenized generative model; slower but useful when you
   want autoregressive multi-feature forecasting
+- `chronos_rich`: Chronos-family multi-target model that predicts future OHLCV,
+  future return path, and future regime while still exposing a scalar return
+  prediction for the normal direct-model evaluation flow. It uses a
+  Chronos-2-style patch backbone with time attention and group attention across
+  same-`group_id` series in the batch, while still keeping the repo's metadata
+  embedding path.
+- `kronos_rich`: separate Kronos-family branch reserved for richer
+  market-behavior experiments while keeping the generator path closer to
+  upstream Kronos than the repo-adapted `kronos` branch
+
+Preprocessing note:
+
+- `--model-type chronos2` uses `scripts/prepare_chronos2_data.py`
+- `--model-type chronos_rich` uses `scripts/prepare_chronos_rich_data.py`
+- `--model-type kronos_rich` uses `scripts/prepare_kronos_rich_data.py`
+- other model types use `scripts/preprocess_data.py`
+- shell wrappers resolve the default model type from `config/model.json` when
+  `--model-type` is omitted
+- shell wrappers auto-select matching processed directories for `chronos2`,
+  `chronos_rich`, and `kronos_rich` unless you override `--data-dir`
+- full-pipeline wrappers like `run_all.sh` and `run_all_in_container.sh` now
+  forward the chosen model type into preprocess, train, validate, test, and
+  backtest so all steps stay on the same dataset path
 
 If you want one sensible first model, use `crnn_attention` or `lstm3_attention`.
 
@@ -186,6 +212,14 @@ This means:
 - `--model-type crnn_attention` activates the CRNN attention model
 - its hidden sizes, dropout, and attention settings come from the matching JSON block
 - `--model-type kronos` activates the Kronos tokenizer + generator branch
+- `--model-type chronos_rich` activates the Chronos-family rich direct model
+- it predicts `future_ohlcv`, `future_return_path`, and `future_regime`
+- it also exposes the final predicted return-path value as the scalar
+  backtest/test prediction
+- `--model-type kronos_rich` activates the separate Kronos-rich tokenizer +
+  generator branch
+- unlike `kronos`, `kronos_rich` uses the upstream-style generator path without
+  the repo's extra `stock_id` / `group_id` generator embeddings
 - if `DEFAULT_MODEL_TYPE` is set to `kronos`, the same train, test, validate,
   and backtest scripts use Kronos without any extra wrapper
 

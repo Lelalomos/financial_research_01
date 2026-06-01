@@ -3,10 +3,13 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 MODEL_PATH="best"
 REPORTS_DIR="outputs"
 CLEANUP_OLD_FILES=true
-MODEL_TYPE="chronos2"
+MODEL_TYPE=""
+DATA_DIR=""
 DEVICE=""
 FORCE_CPU=false
 MAX_SAMPLES=""
@@ -34,6 +37,10 @@ while [[ $# -gt 0 ]]; do
             MODEL_TYPE="$2"
             shift 2
             ;;
+        --data-dir)
+            DATA_DIR="$2"
+            shift 2
+            ;;
         --device)
             DEVICE="$2"
             shift 2
@@ -55,6 +62,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model PATH_OR_ALIAS   Checkpoint path or alias: best|final"
             echo "  --excel-report PATH"
             echo "  --model-type TYPE"
+            echo "  --data-dir PATH"
             echo "  --device DEVICE"
             echo "  --force-cpu"
             echo "  --max-samples N"
@@ -68,7 +76,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT"
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
+
+CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT --data-dir $DATA_DIR"
 
 if [ -n "$MODEL_TYPE" ]; then
     CMD="$CMD --model-type $MODEL_TYPE"

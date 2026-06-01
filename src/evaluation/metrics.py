@@ -18,6 +18,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from pathlib import Path
 import pandas as pd
 
+from src.models.model_output import get_prediction_tensor
+
 
 def calculate_metrics(
     predictions: np.ndarray,
@@ -245,7 +247,7 @@ def evaluate_model(
                 dividend_flag = torch.ones(features.shape[0], features.shape[1],
                                               dtype=torch.long, device=device)
 
-            output = model(features, stock_id, group_id, day, month, dividend_flag)
+            output = get_prediction_tensor(model(features, stock_id, group_id, day, month, dividend_flag))
 
             all_predictions.extend(output.cpu().numpy().flatten())
             all_targets.extend(target.cpu().numpy().flatten())
@@ -334,7 +336,7 @@ def evaluate_model_with_report(
                 dividend_flag = torch.ones(features.shape[0], features.shape[1],
                                               dtype=torch.long, device=device)
 
-            output = model(features, stock_id, group_id, day, month, dividend_flag)
+            output = get_prediction_tensor(model(features, stock_id, group_id, day, month, dividend_flag))
 
             all_predictions.extend(output.cpu().numpy().flatten())
             all_targets.extend(target.cpu().numpy().flatten())

@@ -3,8 +3,10 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 START_DATE="2000-01-01"
-MODEL_TYPE="chronos2"
+MODEL_TYPE=""
 EPOCHS=100
 SKIP_PREPROCESS=false
 SKIP_TRAIN=false
@@ -65,10 +67,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
 TOTAL_START=$(date +%s)
 
 if [ "$SKIP_PREPROCESS" = false ]; then
-    bash scripts/preprocess_in_container.sh --start-date "$START_DATE"
+    bash scripts/preprocess_in_container.sh --start-date "$START_DATE" --model-type "$MODEL_TYPE"
 fi
 
 if [ "$SKIP_TRAIN" = false ]; then
@@ -76,15 +80,15 @@ if [ "$SKIP_TRAIN" = false ]; then
 fi
 
 if [ "$SKIP_VALIDATE" = false ]; then
-    bash scripts/validate_in_container.sh
+    bash scripts/validate_in_container.sh --model-type "$MODEL_TYPE"
 fi
 
 if [ "$SKIP_TEST" = false ]; then
-    bash scripts/test_in_container.sh
+    bash scripts/test_in_container.sh --model-type "$MODEL_TYPE"
 fi
 
 if [ "$SKIP_BACKTEST" = false ]; then
-    bash scripts/backtest_in_container.sh
+    bash scripts/backtest_in_container.sh --model-type "$MODEL_TYPE"
 fi
 
 TOTAL_END=$(date +%s)

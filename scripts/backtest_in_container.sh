@@ -5,11 +5,12 @@ set -e
 
 CONTAINER_NAME="crnn_predictor"
 ORIGINAL_ARGS=("$@")
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
 MODEL_PATH="best"
-MODEL_TYPE="chronos2"
+MODEL_TYPE=""
 OUTPUT_PATH="outputs/backtest_report.xlsx"
 OUTPUT_FORMAT=""
-DATA_DIR="data/processed"
+DATA_DIR=""
 SPLIT="test"
 THRESHOLD=""
 INITIAL_CAPITAL=""
@@ -85,6 +86,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
+
 if [ ! -f "/.dockerenv" ]; then
     if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
         echo "Container '$CONTAINER_NAME' is not running."
@@ -130,11 +137,7 @@ echo "=========================================="
 echo "BACKTESTING MODEL (IN CONTAINER)"
 echo "=========================================="
 echo "Model: $MODEL_PATH"
-if [ -n "$MODEL_TYPE" ]; then
-    echo "Model type override: $MODEL_TYPE"
-else
-    echo "Model type: from config/model.json"
-fi
+echo "Model type: $MODEL_TYPE"
 echo "Split: $SPLIT"
 echo "Output: $OUTPUT_PATH"
 printf 'Command:'

@@ -20,6 +20,7 @@ import numpy as np
 from tqdm import tqdm
 
 from src.config import load_config
+from src.models.model_output import compute_batch_loss, get_prediction_tensor
 from src.utils.logger import TrainingLogger
 from src.utils.validation import (
     check_tensor_for_nan_inf,
@@ -29,7 +30,7 @@ from src.utils.validation import (
     check_model_parameters,
     check_gradients
 )
-from .early_stopping import EarlyStopping, ModelCheckpoint, make_weights_only_safe
+from .early_stopping import EarlyStopping, ModelCheckpoint, atomic_torch_save, make_weights_only_safe
 from .experiment_tracking import create_experiment_tracker, training_params
 from .common import create_loss_function, create_optimizer, create_scheduler
 
@@ -133,6 +134,7 @@ class Trainer:
             'BiLSTM4AttentionModel': 'bilstm4_attention',
             'MultiBranchBiLSTMModel': 'multi_branch_bilstm',
             'Chronos2ForecastModel': 'chronos2',
+            'ChronosRichModel': 'chronos_rich',
         }
         return mapping.get(class_name, class_name.lower())
 
@@ -206,7 +208,7 @@ class Trainer:
             if self.config.model.training.USE_MIXED_PRECISION:
                 with torch.amp.autocast('cuda'):
                     output = self.model(features, stock_id, group_id, day, month, dividend_flag)
-                    loss = self.criterion(output, target)
+                    loss = compute_batch_loss(self.model, output, batch, self.criterion)
 
                 # Backward pass with gradient scaling (accumulation-aware)
                 self.scaler.scale(loss / self.accumulation_steps).backward()
@@ -224,7 +226,7 @@ class Trainer:
                     self.optimizer.zero_grad()
             else:
                 output = self.model(features, stock_id, group_id, day, month, dividend_flag)
-                loss = self.criterion(output, target)
+                loss = compute_batch_loss(self.model, output, batch, self.criterion)
 
                 # Backward pass (accumulation-aware)
                 (loss / self.accumulation_steps).backward()
@@ -282,7 +284,8 @@ class Trainer:
             total_loss += loss.item() * batch_size
             total_samples += batch_size
 
-            all_predictions.extend(output.detach().cpu().numpy().flatten())
+            scalar_output = get_prediction_tensor(output)
+            all_predictions.extend(scalar_output.detach().cpu().numpy().flatten())
             all_targets.extend(target.detach().cpu().numpy().flatten())
 
             # Update progress bar
@@ -341,7 +344,7 @@ class Trainer:
 
                 # Forward pass
                 output = self.model(features, stock_id, group_id, day, month, dividend_flag)
-                loss = self.criterion(output, target)
+                loss = compute_batch_loss(self.model, output, batch, self.criterion)
 
                 # Check for NaN/Inf validation loss
                 if torch.isnan(loss) or torch.isinf(loss):
@@ -359,7 +362,8 @@ class Trainer:
                 total_loss += loss.item() * batch_size
                 total_samples += batch_size
 
-                all_predictions.extend(output.cpu().numpy().flatten())
+                scalar_output = get_prediction_tensor(output)
+                all_predictions.extend(scalar_output.cpu().numpy().flatten())
                 all_targets.extend(target.cpu().numpy().flatten())
 
         # Calculate metrics
@@ -533,8 +537,9 @@ class Trainer:
                 **self.checkpoint_metadata,
             },
         }
-        torch.save(make_weights_only_safe(checkpoint), filepath)
-        self.logger.info(f"Saved model checkpoint to {filepath}")
+        atomic_torch_save(make_weights_only_safe(checkpoint), filepath)
+        metric = None if self.best_val_loss == float('inf') else float(self.best_val_loss)
+        self.logger.log_checkpoint(filepath, metric=metric, metric_name="best_val_loss")
 
     def load_best_model(self):
         """Load best model checkpoint."""

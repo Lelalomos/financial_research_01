@@ -80,6 +80,18 @@ Controls data sources, feature engineering, preprocessing, and dataset layout.
 |---|---|---|---|
 | `MODE` | Controls how sequence windows are prepared for training. | `precomputed_sequences` or `on_the_fly_sequences`. | Use `precomputed_sequences` to create and save sequence arrays during preprocessing; use `on_the_fly_sequences` for lazy/streaming window generation during training when RAM is limited. |
 
+### Wrapper routing note
+
+Shell wrappers under `scripts/` now resolve the fallback model type from
+`config/model.json -> model.selection.DEFAULT_MODEL_TYPE` when `--model-type`
+is omitted. They then map special model families to these processed data
+directories unless `--data-dir` overrides them:
+
+- `chronos2` -> `data/processed_chronos2`
+- `chronos_rich` -> `data/processed_chronos_rich`
+- `kronos_rich` -> `data/processed_kronos_rich`
+- all other model types -> `data/processed`
+
 ### `data.technical_indicators`
 
 | Field | Meaning | How to set | When to change |
@@ -151,9 +163,23 @@ included at all.
 | `time_features` | Include day/month/day-of-week features. | `true` or `false`. | Disable if calendar seasonality is not desired. |
 | `financial_metrics` | Include company fundamental metrics. | `true` or `false`. | Disable when raw fundamentals are unavailable or unreliable. |
 | `market_regime` | Include `regime_id` feature. | `true` or `false`. | Enable together with `data.regime.ENABLED`. |
+| `cointegration_features` | Include rolling pair-spread, sector-relative, and Johansen equilibrium features. | `true` or `false`. | Enable for richer continuous state features for attention models and attribution analysis. |
 | `polars_fibonacci_features` | Use Polars path for Fibonacci feature engineering where supported. | `true` or `false`. | Enable only when validating Polars migration/performance. |
 | `polars_time_features` | Use Polars path for time feature generation where supported. | `true` or `false`. | Enable when profiling time-feature generation. |
 | `polars_external_merges` | Use Polars path for external-data merges where supported. | `true` or `false`. | Enable only if parity has been validated. |
+
+### `data.cointegration`
+
+These fields control the rolling past-only cointegration feature family. The
+pipeline uses these settings only when
+`data.features.FEATURE_FLAGS.cointegration_features = true`.
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `ROLLING_WINDOW` | Historical lookback used for rolling pair OLS spread features and rolling Johansen sector equilibrium features. | Integer such as `252` or `504`. | Increase for slower, more stable equilibrium estimates; decrease for faster reaction. |
+| `NORMALIZATION_WINDOW` | Historical lookback used for rolling normalization of `spread`, `equilibrium_gap`, and `relative_price_vs_sector`. | Integer such as `252` or `504`. | Keep aligned with `ROLLING_WINDOW` unless you explicitly want a different smoothing horizon. |
+| `JOHANSEN_DET_ORDER` | Deterministic term setting passed to `statsmodels.tsa.vector_ar.vecm.coint_johansen`. | Integer `-1`, `0`, or `1`. | Change only if you intentionally want a different deterministic assumption in the sector equilibrium model. |
+| `JOHANSEN_K_AR_DIFF` | Lag-difference order passed to `coint_johansen`. | Positive integer. | Increase only when you intentionally want a slower VECM lag structure. |
 
 ### `data.regime`
 
@@ -180,6 +206,16 @@ included at all.
 |---|---|---|---|
 | `MIN_TRADING_DAYS` | Minimum history required for a stock to be kept. | Positive integer. | Increase for stricter data quality; decrease to keep more symbols. |
 | `MAX_MISSING_RATIO` | Maximum tolerated missing-data fraction before filtering. | Float between `0` and `1`. | Lower for stricter data cleanliness. |
+
+### `data.sampling`
+
+These fields control balanced stock selection when preprocessing runs with
+`--stocks N`.
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `STOCK_SELECTION_MODE` | How stocks are chosen inside each group. | `random` or `sorted`. | Use `random` to keep current behavior; use `sorted` to select the largest-market-cap stocks first inside each group. |
+| `MARKET_CAP_METADATA_DIR` | Directory of per-ticker JSON metadata files used to read market cap in `sorted` mode. | Relative path string like `raw_data/ticket_data/us`. | Change if ticker metadata is stored elsewhere. |
 
 ### `data.external_data`
 
@@ -218,6 +254,7 @@ These fields describe expected columns and load-time validation behavior.
 | `OPTIONAL_COLUMNS.time_features` | Optional calendar feature columns. | List of strings. | Extend if you add more calendar features. |
 | `OPTIONAL_COLUMNS.external` | Optional merged macro/external columns. | List of strings. | Extend if you add more external series. |
 | `OPTIONAL_COLUMNS.market_regime` | Optional regime columns. | List of strings. | Keep aligned with regime feature names. |
+| `OPTIONAL_COLUMNS.cointegration` | Optional rolling spread and equilibrium columns. | List of strings. | Keep aligned with the generated cointegration feature names so validation and attribution stay correct. |
 | `OPTIONAL_COLUMNS.grouping` | Optional grouping columns like sector/group. | List of strings. | Extend if grouping schema changes. |
 | `OPTIONAL_COLUMNS.categorical_encoded` | Optional encoded categorical ID columns. | List of strings. | Keep aligned with encoder outputs. |
 | `VALIDATE_ON_LOAD` | Whether validation should run when loading prepared data. | `true` or `false`. | Disable only for debugging broken intermediate data. |
@@ -231,6 +268,55 @@ These fields describe expected columns and load-time validation behavior.
 | `PROCESSED_DATA_PATH` | Base directory for processed sequence datasets. | Relative path string. | Change if you version processed outputs separately. |
 | `SPLITS_PATH` | Directory for saved split metadata or artifacts. | Relative path string. | Change if split artifacts move. |
 | `EXTERNAL_DATA_PATH` | Base directory for external series data. | Relative path string. | Change if external data storage moves. |
+
+### `data.chronos2_preparation`
+
+These fields configure the separate Chronos2-style data preparation script that
+builds future target paths for quantile training experiments without replacing
+the repo's normal scalar-target dataset.
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `OUTPUT_DIR` | Output directory for Chronos2-prepared sequence arrays and metadata. | Relative path string like `data/processed_chronos2`. | Change when you want Chronos2 data stored separately from the standard processed dataset. |
+| `TARGET_COLUMN` | Column used to build the future target path for each sample. | Existing normalized split column name, typically `close`. | Change only if you intentionally want Chronos2 quantiles over another series. |
+| `INCLUDE_SCALAR_TARGET` | Whether to also save the repo's scalar horizon return target alongside the future path arrays. | `true` or `false`. | Keep `true` if you want backward-compatible diagnostics or hybrid training experiments. |
+| `TARGET_MODE` | How `future_target` is generated. Current supported mode is `trend_extension`. | String. | Keep `trend_extension` when you want synthetic future paths continued from recent trend instead of real observed future values. |
+| `TREND_LOOKBACK` | Number of recent values from `TARGET_COLUMN` used to estimate the continuation trend. | Integer `>= 2`; common choice `7`. | Increase for smoother trend estimates; decrease for more reactive continuation. |
+| `TREND_METHOD` | Method used to turn recent values into one continuation gap. Current supported method is `mean_gap`. | String. | Keep `mean_gap` unless another continuation rule is implemented. |
+
+### `data.chronos_rich_preparation`
+
+These fields configure the separate Chronos-rich data preparation script that
+builds the same richer future targets used by `kronos_rich`, but writes them to
+a Chronos-specific processed dataset for the `chronos_rich` model family.
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `OUTPUT_DIR` | Output directory for Chronos-rich prepared arrays and metadata. | Relative path string like `data/processed_chronos_rich`. | Change when you want Chronos-rich data stored separately from other prepared datasets. |
+| `OHLCV_COLUMNS` | Future market columns saved into `future_ohlcv`. | List like `["open", "high", "low", "close", "volume"]`. | Keep aligned with columns present in the normalized split cache. |
+| `INCLUDE_SCALAR_TARGET` | Whether to also save the repo's scalar horizon return target. | `true` or `false`. | Keep `true` for compatibility with existing diagnostics or hybrid experiments. |
+| `INCLUDE_RETURN_PATH` | Whether to save `future_return_path`. | `true` or `false`. | Disable if you only want OHLCV rows and regime labels. |
+| `INCLUDE_REGIME_LABEL` | Whether to save `future_regime`. | `true` or `false`. | Disable for pure sequence-only experiments. |
+| `REGIME_SOURCE` | How future regime labels are chosen. Current supported value is `column_or_realized_volatility`. | String. | Keep default unless another regime labeling mode is implemented. |
+| `VOLATILITY_LOW_QUANTILE` | Low quantile cut for fallback realized-volatility regime labels. | Float in `(0, 1)`; common value `0.33`. | Change when you want a different low-volatility bucket boundary. |
+| `VOLATILITY_HIGH_QUANTILE` | High quantile cut for fallback realized-volatility regime labels. | Float in `(0, 1)`; common value `0.66`. | Change when you want a different high-volatility bucket boundary. |
+
+### `data.kronos_rich_preparation`
+
+These fields configure the separate Kronos-rich data preparation script that
+builds future OHLCV rows, future paths, and future regime/volatility labels
+without replacing the repo's normal scalar-target dataset.
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `OUTPUT_DIR` | Output directory for Kronos-rich prepared arrays and metadata. | Relative path string like `data/processed_kronos_rich`. | Change when you want Kronos-rich data stored separately from other prepared datasets. |
+| `OHLCV_COLUMNS` | Future market columns saved into `future_ohlcv`. | List like `["open", "high", "low", "close", "volume"]`. | Keep aligned with columns present in the normalized split cache. |
+| `INCLUDE_SCALAR_TARGET` | Whether to also save the repo's scalar horizon return target. | `true` or `false`. | Keep `true` for compatibility with existing diagnostics or hybrid experiments. |
+| `INCLUDE_RETURN_PATH` | Whether to save `future_return_path`. | `true` or `false`. | Disable if you only want OHLCV rows and regime labels. |
+| `INCLUDE_REGIME_LABEL` | Whether to save `future_regime`. | `true` or `false`. | Disable for pure sequence-only experiments. |
+| `REGIME_SOURCE` | How future regime labels are chosen. Current supported value is `column_or_realized_volatility`. | String. | Keep default unless another regime labeling mode is implemented. |
+| `VOLATILITY_LOW_QUANTILE` | Low quantile cut for fallback realized-volatility regime labels. | Float in `(0, 1)`; common value `0.33`. | Change when you want a different low-volatility bucket boundary. |
+| `VOLATILITY_HIGH_QUANTILE` | High quantile cut for fallback realized-volatility regime labels. | Float in `(0, 1)`; common value `0.66`. | Change when you want a different high-volatility bucket boundary. |
 
 ## `config/model.json`
 
@@ -529,6 +615,56 @@ head, and a final scalar return head.
 | `HEAD_HIDDEN_SIZES` | Hidden sizes of the final scalar prediction head. | List of positive integers. | Tune final prediction capacity. |
 | `HEAD_DROPOUT` | Dropout used in the final scalar prediction head. | Float in `[0, 1)`. | Increase for stronger regularization. |
 
+### `model.models.chronos_rich`
+
+This block configures the repo-integrated Chronos-rich adapter. It keeps the
+Chronos2-style patch pipeline, adds explicit time attention plus group
+attention across same-`group_id` series in the batch, and predicts richer
+future outputs:
+
+- `future_ohlcv`
+- `future_return_path`
+- `future_regime`
+
+It also exposes the final return-path value as the scalar `prediction` so the
+existing direct-model evaluation and backtest flow can still operate. The repo
+embedding block (`stock_id`, `group_id`, `day`, `month`, `dividend_flag`) is
+kept as additional metadata context on top of the attention backbone.
+
+The core architecture fields have the same meaning as `model.models.chronos2`:
+
+- `D_MODEL`
+- `D_KV`
+- `D_FF`
+- `NUM_LAYERS`
+- `NUM_HEADS`
+- `DROPOUT_RATE`
+- `ATTN_IMPLEMENTATION`
+- `INPUT_PATCH_SIZE`
+- `INPUT_PATCH_STRIDE`
+- `USE_REG_TOKEN`
+- `USE_ARCSINH`
+- `USE_STOCK_EMBEDDING`
+- `USE_GROUP_EMBEDDING`
+- `STOCK_EMB_DIM`
+- `GROUP_EMB_DIM`
+- `DAY_EMB_DIM`
+- `MONTH_EMB_DIM`
+- `DIVIDEND_FLAG_EMB_DIM`
+- `DROPOUT_EMBEDDING`
+- `QUANTILES`
+- `HEAD_HIDDEN_SIZES`
+- `HEAD_DROPOUT`
+
+Additional Chronos-rich loss-balance fields:
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `SCALAR_LOSS_WEIGHT` | Weight on the scalar horizon-return loss. | Non-negative float. | Increase when the final return matters more than the richer side targets. |
+| `OHLCV_LOSS_WEIGHT` | Weight on the `future_ohlcv` regression loss. | Non-negative float. | Increase when full path reconstruction matters more. |
+| `RETURN_PATH_LOSS_WEIGHT` | Weight on the `future_return_path` regression loss. | Non-negative float. | Increase when the shape of the return path matters more. |
+| `REGIME_LOSS_WEIGHT` | Weight on the `future_regime` classification loss. | Non-negative float. | Increase when regime prediction matters more. |
+
 ### `model.models.kronos`
 
 This block configures the Kronos tokenizer, Kronos generator network, and
@@ -602,6 +738,26 @@ Reference / credit:
 | `USE_GROUP_EMBEDDING` | Whether Kronos adds `group_id` embeddings from prepared data. | `true` or `false`. | Enable when sector/group context is useful. |
 | `STOCK_EMB_DIM` | Embedding width for `stock_id`. | Positive integer. | Increase for large stock universes; decrease to save parameters. |
 | `GROUP_EMB_DIM` | Embedding width for `group_id`. | Positive integer. | Keep smaller than stock embedding unless group structure is very important. |
+
+### `model.models.kronos_rich`
+
+This block is a separate Kronos-family config path reserved for the
+`kronos_rich` branch. It stays close to upstream Kronos generator behavior
+while leaving the original local `kronos` path unchanged.
+
+In the current codebase it uses the same field structure as `model.models.kronos`:
+
+- `tokenizer`
+- `network`
+- `predictor`
+
+The meaning of each field is the same as the `kronos` tables above with one
+important runtime rule:
+
+- `kronos` keeps the repo's optional `stock_id` / `group_id` generator context embeddings
+- `kronos_rich` uses the upstream-style generator path and does not apply those extra repo embeddings even if the config fields are present
+
+Use this block when running `--model-type kronos_rich`.
 
 Kronos derives stock/group vocabulary sizes from dataset metadata at runtime.
 `NUM_STOCKS` and `NUM_GROUPS` are intentionally not stored in

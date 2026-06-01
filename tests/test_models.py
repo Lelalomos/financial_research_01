@@ -36,9 +36,10 @@ from src.models import (
     BiLSTM4AttentionModel,
     MultiBranchBiLSTMModel,
 )
+from src.models.model_output import get_prediction_tensor
 
 
-# All model types in the registry
+# All tensor-output model types in the registry
 ALL_MODEL_TYPES = [
     'crnn',
     'rnn',
@@ -467,11 +468,12 @@ class TestModelRegistry:
     def test_list_available_models(self):
         """Test that all registered models are listed."""
         models = list_available_models()
-        assert len(models) == 9
-        expected = {'crnn', 'rnn', 'rnn_attention', 'crnn_attention',
-                   'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention',
-                   'multi_branch_bilstm'}
-        assert set(models) == expected
+        expected = {
+            'crnn', 'rnn', 'rnn_attention', 'crnn_attention',
+            'transformer', 'lstm3', 'lstm3_attention', 'bilstm4_attention',
+            'multi_branch_bilstm', 'chronos2', 'chronos_rich',
+        }
+        assert expected.issubset(set(models))
 
     @pytest.mark.parametrize("model_type", ALL_MODEL_TYPES)
     def test_all_models_in_registry(self, model_type):
@@ -500,7 +502,7 @@ class TestModelRegistry:
             sample_inputs['dividend_flag']
         )
 
-        assert output.shape == (sample_inputs['batch_size'], 1)
+        assert get_prediction_tensor(output).shape == (sample_inputs['batch_size'], 1)
 
     @pytest.mark.parametrize("model_type,expected_class", [
         ('crnn', CRNNModel),

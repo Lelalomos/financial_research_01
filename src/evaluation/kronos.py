@@ -18,7 +18,12 @@ import pandas as pd
 import torch
 
 from src.config import load_config
-from src.models import create_kronos_model, create_kronos_tokenizer
+from src.models import (
+    create_kronos_model,
+    create_kronos_rich_model,
+    create_kronos_rich_tokenizer,
+    create_kronos_tokenizer,
+)
 from src.models.kronos_model import auto_regressive_inference
 
 from .metrics import (
@@ -29,6 +34,17 @@ from .metrics import (
     calculate_sortino_ratio,
     calculate_turnover,
 )
+
+
+_KRONOS_CREATORS = {
+    "kronos": (create_kronos_tokenizer, create_kronos_model),
+    "kronos_rich": (create_kronos_rich_tokenizer, create_kronos_rich_model),
+}
+
+
+def is_kronos_family(model_type: str) -> bool:
+    """Return True when the model type uses the Kronos family runtime."""
+    return model_type in _KRONOS_CREATORS
 
 
 def _dates_to_stamp_tensor(date_array: np.ndarray, device) -> torch.Tensor:
@@ -233,14 +249,19 @@ def load_kronos_checkpoint(
     num_stocks: int,
     num_groups: int,
     device,
+    model_type: str = "kronos",
 ):
-    if create_kronos_model is None or create_kronos_tokenizer is None:
+    if model_type not in _KRONOS_CREATORS:
+        raise ValueError(f"Unsupported Kronos family model type: {model_type}")
+    tokenizer_factory, model_factory = _KRONOS_CREATORS[model_type]
+
+    if tokenizer_factory is None or model_factory is None:
         raise RuntimeError("Kronos helpers are unavailable. Install required Kronos dependencies first.")
 
-    config.model.models.kronos.tokenizer.D_IN = int(num_features)
+    getattr(config.model.models, model_type).tokenizer.D_IN = int(num_features)
 
-    tokenizer = create_kronos_tokenizer(config=config).to(device)
-    model = create_kronos_model(
+    tokenizer = tokenizer_factory(config=config).to(device)
+    model = model_factory(
         config=config,
         num_stocks=int(max(num_stocks, 1)),
         num_groups=int(max(num_groups, 1)),
@@ -269,11 +290,12 @@ def generate_kronos_predictions(
     normalize_target: bool,
     target_threshold: float,
     feature_cols,
+    model_type: str = "kronos",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     data_config = load_config("main")
     prediction_horizon = int(data_config.data.sequences.PREDICTION_HORIZON)
 
-    predictor_cfg = config.model.models.kronos.predictor
+    predictor_cfg = getattr(config.model.models, model_type).predictor
     close_index = list(feature_cols).index("close") if "close" in feature_cols else 0
     close_inverse_transform = _infer_feature_inverse_transform(str(data_dir), "close")
     predictions = []

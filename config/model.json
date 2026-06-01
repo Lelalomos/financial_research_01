@@ -41,7 +41,7 @@
       "ALLOW_CUSTOM_FALLBACK": true
     },
     "selection": {
-      "DEFAULT_MODEL_TYPE": "chronos2"
+      "DEFAULT_MODEL_TYPE": "chronos_rich"
     },
     "loss": {
       "LOSS_TYPE": "directional_huber",
@@ -232,6 +232,34 @@
         "HEAD_HIDDEN_SIZES": [256, 128],
         "HEAD_DROPOUT": 0.2
       },
+      "chronos_rich": {
+        "D_MODEL": 128,
+        "D_KV": 32,
+        "D_FF": 256,
+        "NUM_LAYERS": 3,
+        "NUM_HEADS": 4,
+        "DROPOUT_RATE": 0.1,
+        "ATTN_IMPLEMENTATION": "eager",
+        "INPUT_PATCH_SIZE": 5,
+        "INPUT_PATCH_STRIDE": 5,
+        "USE_REG_TOKEN": false,
+        "USE_ARCSINH": false,
+        "USE_STOCK_EMBEDDING": true,
+        "USE_GROUP_EMBEDDING": true,
+        "STOCK_EMB_DIM": 64,
+        "GROUP_EMB_DIM": 32,
+        "DAY_EMB_DIM": 16,
+        "MONTH_EMB_DIM": 16,
+        "DIVIDEND_FLAG_EMB_DIM": 8,
+        "DROPOUT_EMBEDDING": 0.1,
+        "QUANTILES": [0.1, 0.5, 0.9],
+        "HEAD_HIDDEN_SIZES": [256, 128],
+        "HEAD_DROPOUT": 0.2,
+        "SCALAR_LOSS_WEIGHT": 1.0,
+        "OHLCV_LOSS_WEIGHT": 1.0,
+        "RETURN_PATH_LOSS_WEIGHT": 1.0,
+        "REGIME_LOSS_WEIGHT": 0.5
+      },
       "kronos": {
         "tokenizer": {
           "D_IN": 6,
@@ -263,8 +291,49 @@
           "RESID_DROPOUT_P": 0.1,
           "TOKEN_DROPOUT_P": 0.1,
           "LEARN_TE": true,
-          "USE_STOCK_EMBEDDING": true,
-          "USE_GROUP_EMBEDDING": true,
+          "USE_STOCK_EMBEDDING": false,
+          "USE_GROUP_EMBEDDING": false,
+          "STOCK_EMB_DIM": 32,
+          "GROUP_EMB_DIM": 16
+        },
+        "predictor": {
+          "MAX_CONTEXT": 512,
+          "CLIP": 5.0
+        }
+      },
+      "kronos_rich": {
+        "tokenizer": {
+          "D_IN": 6,
+          "D_MODEL": 256,
+          "N_HEADS": 8,
+          "FF_DIM": 512,
+          "N_ENC_LAYERS": 4,
+          "N_DEC_LAYERS": 4,
+          "FFN_DROPOUT_P": 0.1,
+          "ATTN_DROPOUT_P": 0.1,
+          "RESID_DROPOUT_P": 0.1,
+          "S1_BITS": 8,
+          "S2_BITS": 8,
+          "BETA": 0.25,
+          "GAMMA0": 1.0,
+          "GAMMA": 1.0,
+          "ZETA": 1.0,
+          "GROUP_SIZE": 8
+        },
+        "network": {
+          "S1_BITS": 8,
+          "S2_BITS": 8,
+          "N_LAYERS": 8,
+          "D_MODEL": 256,
+          "N_HEADS": 8,
+          "FF_DIM": 512,
+          "FFN_DROPOUT_P": 0.1,
+          "ATTN_DROPOUT_P": 0.1,
+          "RESID_DROPOUT_P": 0.1,
+          "TOKEN_DROPOUT_P": 0.1,
+          "LEARN_TE": true,
+          "USE_STOCK_EMBEDDING": false,
+          "USE_GROUP_EMBEDDING": false,
           "STOCK_EMB_DIM": 32,
           "GROUP_EMB_DIM": 16
         },

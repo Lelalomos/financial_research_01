@@ -15,9 +15,11 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 # Default values
 START_DATE="2000-01-01"
-MODEL_TYPE="chronos2"
+MODEL_TYPE=""
 EPOCHS=100
 SKIP_PREPROCESS=false
 SKIP_TRAIN=false
@@ -83,6 +85,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
 TOTAL_START=$(date +%s)
 
 echo "=========================================="
@@ -100,7 +104,7 @@ if [ "$SKIP_PREPROCESS" = false ]; then
     echo "=========================================="
     echo "STEP 1: PREPROCESSING DATA"
     echo "=========================================="
-    bash /app/scripts/preprocess.sh --start-date "$START_DATE"
+    bash /app/scripts/preprocess.sh --start-date "$START_DATE" --model-type "$MODEL_TYPE"
     STEP_END=$(date +%s)
     echo "Preprocessing time: $((STEP_END - STEP_START))s"
     echo ""
@@ -130,7 +134,7 @@ if [ "$SKIP_VALIDATE" = false ]; then
     echo "=========================================="
     echo "STEP 3: VALIDATING MODEL"
     echo "=========================================="
-    bash /app/scripts/validate.sh
+    bash /app/scripts/validate.sh --model-type "$MODEL_TYPE"
     STEP_END=$(date +%s)
     echo "Validation time: $((STEP_END - STEP_START))s"
     echo ""
@@ -145,7 +149,7 @@ if [ "$SKIP_TEST" = false ]; then
     echo "=========================================="
     echo "STEP 4: TESTING MODEL"
     echo "=========================================="
-    bash /app/scripts/test.sh
+    bash /app/scripts/test.sh --model-type "$MODEL_TYPE"
     STEP_END=$(date +%s)
     echo "Testing time: $((STEP_END - STEP_START))s"
     echo ""
@@ -160,7 +164,7 @@ if [ "$SKIP_BACKTEST" = false ]; then
     echo "=========================================="
     echo "STEP 5: BACKTESTING MODEL"
     echo "=========================================="
-    bash /app/scripts/backtest.sh
+    bash /app/scripts/backtest.sh --model-type "$MODEL_TYPE"
     STEP_END=$(date +%s)
     echo "Backtesting time: $((STEP_END - STEP_START))s"
     echo ""

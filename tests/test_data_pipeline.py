@@ -71,7 +71,7 @@ class TestDataPipeline(unittest.TestCase):
         # Test technical indicators
         result = engineer.add_technical_indicators(result)
         self.assertIn('ema_50', result.columns)
-        self.assertIn('rsi_14', result.columns)
+        self.assertIn(f'rsi_{self.config.data.technical_indicators.RSI_PERIOD}', result.columns)
 
         # Test target calculation
         result = engineer.calculate_target(result)
@@ -140,7 +140,7 @@ class TestDataPipeline(unittest.TestCase):
         self.assertIn('tic_id', df.columns)
 
         # Test normalization
-        feature_cols = ['close', 'volume', 'ema_50', 'rsi_14']
+        feature_cols = ['close', 'volume', 'ema_50', f'rsi_{self.config.data.technical_indicators.RSI_PERIOD}']
         df = preprocessor.normalize_features(df, fit=True, feature_cols=feature_cols)
         self.assertIn('close', df.columns)  # Column should exist
 

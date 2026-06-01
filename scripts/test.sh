@@ -10,11 +10,14 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 # Default values
 MODEL_PATH="models/bilstm4_attention_best_20260105_113045.pth"
 REPORTS_DIR="reports"
 CLEANUP_OLD_FILES=true
 MODEL_TYPE=""
+DATA_DIR=""
 DEVICE=""
 FORCE_CPU=false
 
@@ -48,6 +51,10 @@ while [[ $# -gt 0 ]]; do
             MODEL_TYPE="$2"
             shift 2
             ;;
+        --data-dir)
+            DATA_DIR="$2"
+            shift 2
+            ;;
         --device)
             DEVICE="$2"
             shift 2
@@ -67,6 +74,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model PATH       Model checkpoint path (default: models/bilstm4_attention_best_20260105_113045.pth)"
             echo "  --excel-report PATH Custom Excel report path (default: auto-generated with timestamp)"
             echo "  --model-type TYPE  Override model type from config/model.json"
+            echo "  --data-dir PATH    Processed data directory override"
             echo "  --device DEVICE    Device override (e.g. cuda, cuda:0, cpu)"
             echo "  --force-cpu        Force CPU usage"
             echo "  --no-cleanup       Skip cleanup of old test files before running"
@@ -81,8 +89,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
+
 # Build command - ALWAYS include Excel report
-CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT"
+CMD="python scripts/test.py --model $MODEL_PATH --excel-report $EXCEL_REPORT --data-dir $DATA_DIR"
 
 if [ -n "$MODEL_TYPE" ]; then
     CMD="$CMD --model-type $MODEL_TYPE"
@@ -105,11 +119,7 @@ echo "=========================================="
 echo "TESTING MODEL"
 echo "=========================================="
 echo "Model path: $MODEL_PATH"
-if [ -n "$MODEL_TYPE" ]; then
-    echo "Model type override: $MODEL_TYPE"
-else
-    echo "Model type: from config/model.json"
-fi
+echo "Model type: $MODEL_TYPE"
 echo "Excel report: $EXCEL_REPORT"
 echo "Command: $CMD"
 echo "=========================================="

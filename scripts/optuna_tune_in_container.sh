@@ -3,7 +3,9 @@
 
 set -e
 
-MODEL_TYPE="chronos2"
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
+MODEL_TYPE=""
 N_TRIALS=50
 STOCKS=20
 YEARS=""
@@ -52,6 +54,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
 
 CMD="python scripts/optuna_tune.py --model-type $MODEL_TYPE --n-trials $N_TRIALS --stocks $STOCKS --max-epochs $MAX_EPOCHS"
 

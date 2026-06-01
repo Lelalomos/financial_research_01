@@ -8,6 +8,7 @@
 #   --batch-size N        Batch size (default: 256)
 #   --learning-rate RATE  Learning rate (default: 1e-4)
 #   --backend TYPE        Training backend: lightning or custom (default: lightning)
+#   --data-dir PATH       Processed data directory override
 #   --device DEV          Device to use: cuda or cpu (default: auto-detect)
 #   --force-cpu           Force CPU usage even if GPU is available
 #   --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT GOOGL)
@@ -22,12 +23,15 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 # Default values
 MODEL_TYPE=""
 EPOCHS=30
 BATCH_SIZE=32
 LEARNING_RATE=0.0001
 BACKEND="lightning"
+DATA_DIR=""
 STOCKS=""
 FINE_TUNE=""
 FREEZE_EMBEDDINGS=""
@@ -59,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --backend)
             BACKEND="$2"
+            shift 2
+            ;;
+        --data-dir)
+            DATA_DIR="$2"
             shift 2
             ;;
         --device)
@@ -112,6 +120,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --batch-size N        Batch size (default: 256)"
             echo "  --learning-rate RATE  Learning rate (default: 1e-4)"
             echo "  --backend TYPE        Training backend: lightning or custom (default: lightning)"
+            echo "  --data-dir PATH       Processed data directory override"
             echo "  --device DEV          Device to use: cuda or cpu (default: auto-detect)"
             echo "  --force-cpu           Force CPU usage even if GPU is available"
             echo "  --stocks T1 T2 ...    Fine-tune on specific stocks (e.g., AAPL MSFT)"
@@ -132,6 +141,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -166,7 +181,7 @@ start_mlflow_ui() {
 }
 
 # Build command
-CMD="docker exec crnn_predictor python scripts/train.py --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE $FORCE_CPU"
+CMD="docker exec crnn_predictor python scripts/train.py --backend $BACKEND --epochs $EPOCHS --batch-size $BATCH_SIZE --lr $LEARNING_RATE --data-dir $DATA_DIR $FORCE_CPU"
 
 if [ -n "$MODEL_TYPE" ]; then
     CMD="$CMD --model-type $MODEL_TYPE"
@@ -192,15 +207,12 @@ fi
 echo "=========================================="
 echo "TRAINING MODEL"
 echo "=========================================="
-if [ -n "$MODEL_TYPE" ]; then
-    echo "Model type override: $MODEL_TYPE"
-else
-    echo "Model type: from config/model.json"
-fi
+echo "Model type: $MODEL_TYPE"
 echo "Epochs: $EPOCHS"
 echo "Batch size: $BATCH_SIZE"
 echo "Learning rate: $LEARNING_RATE"
 echo "Backend: $BACKEND"
+echo "Data dir: $DATA_DIR"
 if [ -n "$DEVICE" ]; then
     echo "Device: $DEVICE"
 fi

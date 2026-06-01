@@ -31,6 +31,7 @@ from src.evaluation.kronos import (
     build_kronos_sequence_metadata,
     compute_kronos_metrics,
     generate_kronos_predictions,
+    is_kronos_family,
     load_kronos_checkpoint,
     resolve_kronos_embedding_sizes,
 )
@@ -129,10 +130,8 @@ def load_sequences(data_dir: Path, split: str, max_samples: int = None):
         return None
 
     sequences = {}
-    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'dividend_flag', 'target']:
-        file_path = split_dir / f'{file}.npy'
-        if file_path.exists():
-            sequences[file] = np.load(file_path)
+    for file_path in sorted(split_dir.glob("*.npy")):
+        sequences[file_path.stem] = np.load(file_path)
 
     if len(sequences) == 0:
         return None
@@ -354,7 +353,7 @@ def main():
     logger.info(f"Selected checkpoint file: {resolved_checkpoint.name}")
     logger.info(f"Selected checkpoint path: {resolved_checkpoint}")
 
-    if model_type == 'kronos':
+    if is_kronos_family(model_type):
         logger.info("Creating Kronos tokenizer/model for evaluation...")
         tokenizer, model, checkpoint = load_kronos_checkpoint(
             checkpoint_path=checkpoint_path,
@@ -363,6 +362,7 @@ def main():
             num_stocks=resolved_num_stocks,
             num_groups=resolved_num_groups,
             device=device,
+            model_type=model_type,
         )
         logger.info(f"Checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
 
@@ -389,6 +389,7 @@ def main():
             normalize_target=bool(info.get('normalize_target', False)),
             target_threshold=float(info.get('target_threshold', 1.0)),
             feature_cols=info.get('feature_cols') or [],
+            model_type=model_type,
         )
         metrics = compute_kronos_metrics(predictions, targets)
         print_metrics(metrics, prefix=f"{args.split.upper()} - ")

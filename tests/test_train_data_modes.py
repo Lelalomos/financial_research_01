@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -104,6 +105,12 @@ class _DummyBacktester:
 
     def run_backtest(self, *_args, **_kwargs):
         return {"summary": {}}
+
+    def _print_backtest_summary(self, *_args, **_kwargs):
+        return None
+
+    def _print_sector_stats(self, *_args, **_kwargs):
+        return None
 
     def generate_report(self, *_args, **_kwargs):
         return None
@@ -305,10 +312,11 @@ def test_train_uses_on_the_fly_sequences_mode_as_lazy_streaming(tmp_path, monkey
     assert called["lazy_loaders"] == 1
 
 
-def test_train_routes_kronos_through_unified_branch(tmp_path, monkeypatch):
+@pytest.mark.parametrize("model_type", ["kronos", "kronos_rich"])
+def test_train_routes_kronos_through_unified_branch(tmp_path, monkeypatch, model_type):
     module = _load_train_script()
     args = _make_args(tmp_path)
-    args.model_type = "kronos"
+    args.model_type = model_type
     args.backend = "custom"
     data_dir = Path(args.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -363,8 +371,8 @@ def test_train_routes_kronos_through_unified_branch(tmp_path, monkeypatch):
         called["kronos"] += 1
         return {
             "best_score": 0.2,
-            "best_model_path": "kronos_best.pth",
-            "final_model_path": "kronos_final.pth",
+            "best_model_path": f"{model_type}_best.pth",
+            "final_model_path": f"{model_type}_final.pth",
         }
 
     def fail_create_model(**_kwargs):
@@ -445,7 +453,7 @@ def test_train_kronos_uses_shared_optimizer_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(
         module,
         "_save_kronos_checkpoint",
-        lambda checkpoint_path, tokenizer, model, optimizer, epoch, metric, model_type, checkpoint_metadata=None: checkpoint_calls.append(
+        lambda checkpoint_path, tokenizer, model, optimizer, epoch, metric, model_type, checkpoint_metadata=None, **kwargs: checkpoint_calls.append(
             (str(checkpoint_path), metric, model_type)
         ),
     )
@@ -463,6 +471,111 @@ def test_train_kronos_uses_shared_optimizer_factory(tmp_path, monkeypatch):
     )
 
     assert captured["num_stocks"] == 7
+
+
+@pytest.mark.parametrize(
+    ("script_name", "split"),
+    [("test.py", "test"), ("validate.py", "val"), ("backtest.py", "test")],
+)
+def test_eval_scripts_route_kronos_rich_to_kronos_loader(tmp_path, monkeypatch, script_name, split):
+    module = _load_script(script_name, f"test_{script_name.replace('.py', '')}_kronos_rich")
+    data_dir = tmp_path / "processed"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "info.json").write_text(
+        json.dumps(
+            {
+                "feature_cols": ["close"],
+                "num_features": 1,
+                "num_stocks": 3,
+                "num_groups": 2,
+                "sequence_length": 3,
+                "prediction_horizon": 2,
+                "normalize_target": False,
+                "target_threshold": 1.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    args = SimpleNamespace(
+        model="best",
+        model_type="kronos_rich",
+        data_dir=str(data_dir),
+        raw_data_dir=None,
+        split=split,
+        device="cpu",
+        force_cpu=True,
+        excel_report=None,
+        output=None if script_name != "backtest.py" else str(tmp_path / "report.xlsx"),
+        max_samples=4,
+        output_format="excel",
+        threshold=0.0,
+        initial_capital=1000.0,
+    )
+
+    captured = {}
+
+    class DummyLoader:
+        dataset = _DummyEvalDataset()
+
+    model_config = Config(copy.deepcopy(load_config("model").to_dict()))
+
+    monkeypatch.setattr(module, "parse_args", lambda: args)
+    monkeypatch.setattr(module, "load_config", lambda name: model_config if name == "model" else load_config(name))
+    monkeypatch.setattr(module, "get_logger", lambda *a, **k: _FakeLogger())
+    monkeypatch.setattr(module, "resolve_device", lambda **_kwargs: torch.device("cpu"))
+    monkeypatch.setattr(module, "get_device_info", lambda **_kwargs: {"cuda_available": False})
+    monkeypatch.setattr(
+        module,
+        "load_sequences",
+        lambda *_args, **_kwargs: {
+            "features": torch.ones((2, 3, 1), dtype=torch.float32).numpy(),
+            "stock_id": torch.zeros((2, 3), dtype=torch.int64).numpy(),
+            "group_id": torch.zeros((2, 3), dtype=torch.int64).numpy(),
+            "day": torch.ones((2, 3), dtype=torch.int32).numpy(),
+            "month": torch.ones((2, 3), dtype=torch.int32).numpy(),
+            "dividend_flag": torch.ones((2, 3), dtype=torch.int32).numpy(),
+            "target": torch.tensor([0.1, -0.2], dtype=torch.float32).numpy(),
+        },
+    )
+    monkeypatch.setattr(module, "FinancialDataset", _DummyEvalDataset)
+    monkeypatch.setattr(module.torch.utils.data, "DataLoader", lambda *a, **k: DummyLoader())
+    monkeypatch.setattr(module, "find_checkpoint_path", lambda **_kwargs: str(tmp_path / "kronos_rich_best.pth"))
+    monkeypatch.setattr(module, "build_kronos_sequence_metadata", lambda **_kwargs: {"x_dates": np.empty((2, 3), dtype=object), "y_dates": np.empty((2, 2), dtype=object)})
+
+    def fake_load_kronos_checkpoint(**kwargs):
+        captured["model_type"] = kwargs["model_type"]
+        return object(), object(), {"epoch": 1}
+
+    monkeypatch.setattr(module, "load_kronos_checkpoint", fake_load_kronos_checkpoint)
+    monkeypatch.setattr(
+        module,
+        "generate_kronos_predictions",
+        lambda **kwargs: (
+            np.array([0.1, -0.1], dtype=np.float32),
+            np.array([0.2, -0.2], dtype=np.float32),
+            np.array([0, 1], dtype=np.int64),
+            np.array([0, 1], dtype=np.int64),
+            np.array([0.1, -0.1], dtype=np.float32),
+            np.array([0.2, -0.2], dtype=np.float32),
+        ),
+    )
+    monkeypatch.setattr(module, "compute_kronos_metrics", lambda predictions, targets: {"mae": 0.1}, raising=False)
+    monkeypatch.setattr(module, "print_metrics", lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(module, "build_kronos_report", lambda *args, **kwargs: (_DummyReport(), {}), raising=False)
+    monkeypatch.setattr(module, "print_sector_stats", lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(module, "load_checkpoint_metadata", lambda *args, **kwargs: {"model_state_dict": {}, "epoch": 1})
+    monkeypatch.setattr(module, "create_model", lambda **_kwargs: _DummyEvalModel())
+    monkeypatch.setattr(module, "Backtester", _DummyBacktester, raising=False)
+    monkeypatch.setattr(module, "compute_kronos_backtest_results", lambda **_kwargs: {"sector_stats": {}, "final_capital": 1000.0}, raising=False)
+    monkeypatch.setattr(module, "load_id_mappings", lambda *args, **kwargs: ({}, {}), raising=False)
+
+    class _DummyReport:
+        def to_excel(self, *_args, **_kwargs):
+            return None
+
+    assert module.main() == 0
+    assert captured["model_type"] == "kronos_rich"
 
 
 def test_test_script_prefers_metadata_embedding_sizes_for_generic_models(tmp_path, monkeypatch):

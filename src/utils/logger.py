@@ -233,8 +233,16 @@ class TrainingLogger(StructuredLogger):
         """Log validation metrics."""
         self.log_metrics(metrics, step=step, prefix="val_")
 
-    def log_checkpoint(self, checkpoint_path: str, metric: float, metric_name: str = "loss"):
+    def log_checkpoint(
+        self,
+        checkpoint_path: str,
+        metric: Optional[float] = None,
+        metric_name: str = "loss",
+    ):
         """Log model checkpoint save."""
+        if metric is None:
+            self.info(f"Checkpoint saved: {checkpoint_path}")
+            return
         self.info(f"Checkpoint saved: {checkpoint_path} ({metric_name}: {metric:.6f})")
 
     def log_early_stop(self, epoch: int, best_metric: float):

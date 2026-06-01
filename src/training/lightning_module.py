@@ -11,6 +11,7 @@ from typing import Dict, Optional
 import numpy as np
 import torch
 
+from src.models.model_output import compute_batch_loss, get_prediction_tensor
 from .common import (
     calculate_prediction_health,
     collapse_penalty_from_health,
@@ -83,19 +84,19 @@ class FinancialLightningModule(_LIGHTNING_MODULE_BASE):
 
     def training_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> torch.Tensor:
         output = self(batch)
-        target = batch["target"]
-        loss = self.criterion(output, target)
+        loss = compute_batch_loss(self.model, output, batch, self.criterion)
         self.log("train/loss", loss, prog_bar=True, on_epoch=True, on_step=False)
         return loss
 
     def validation_step(self, batch: Dict[str, torch.Tensor], batch_idx: int) -> Dict[str, torch.Tensor]:
         output = self(batch)
+        prediction = get_prediction_tensor(output)
         target = batch["target"]
-        loss = self.criterion(output, target)
-        mse = torch.mean((output - target) ** 2)
-        mae = torch.mean(torch.abs(output - target))
+        loss = compute_batch_loss(self.model, output, batch, self.criterion)
+        mse = torch.mean((prediction - target) ** 2)
+        mae = torch.mean(torch.abs(prediction - target))
         rmse = torch.sqrt(mse)
-        directional_accuracy = (torch.sign(output) == torch.sign(target)).float().mean()
+        directional_accuracy = (torch.sign(prediction) == torch.sign(target)).float().mean()
 
         metrics = {
             "val/loss": loss,
@@ -104,7 +105,7 @@ class FinancialLightningModule(_LIGHTNING_MODULE_BASE):
             "val/rmse": rmse,
             "val/directional_accuracy": directional_accuracy,
         }
-        self._val_epoch_predictions.extend(output.detach().cpu().numpy().flatten().tolist())
+        self._val_epoch_predictions.extend(prediction.detach().cpu().numpy().flatten().tolist())
         self._val_epoch_targets.extend(target.detach().cpu().numpy().flatten().tolist())
         self.log_dict(metrics, prog_bar=False, on_epoch=True, on_step=False)
         return metrics
@@ -455,4 +456,9 @@ def save_final_lightning_checkpoint(
 
     final_path = save_dir / f"{model_type}_final_lightning.pth"
     atomic_torch_save(checkpoint, str(final_path))
+    get_training_logger(log_dir="logs").log_checkpoint(
+        str(final_path),
+        metric=_metric_to_float(callback_metrics.get("val/loss")),
+        metric_name="val_loss",
+    )
     return str(final_path)

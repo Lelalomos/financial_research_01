@@ -117,6 +117,12 @@ def predict_single_row(args):
     if result['prediction'] is not None:
         pred = result['prediction']
         print(f"Predicted Change: {pred:+.2f}%")
+        if 'future_regime' in result:
+            print(f"Predicted Regime: {result['future_regime']}")
+        if 'future_return_path' in result:
+            print(f"Future Return Path: {result['future_return_path']}")
+        if 'future_ohlcv' in result:
+            print(f"Future OHLCV: {result['future_ohlcv']}")
 
         if pred > 0:
             print(f"Signal: BUY (Positive movement expected)")
@@ -227,6 +233,12 @@ def predict_interactive(args):
                 pred = result['prediction']
                 print(f"\nPrediction for {ticker} on {date}:")
                 print(f"  Predicted Change: {pred:+.2f}%")
+                if 'future_regime' in result:
+                    print(f"  Predicted Regime: {result['future_regime']}")
+                if 'future_return_path' in result:
+                    print(f"  Future Return Path: {result['future_return_path']}")
+                if 'future_ohlcv' in result:
+                    print(f"  Future OHLCV: {result['future_ohlcv']}")
 
                 if pred > 1:
                     print(f"  Signal: Strong BUY")
@@ -266,6 +278,7 @@ def show_model_info(args):
     print(f"Number of Features: {info['num_features']}")
     print(f"Number of Stocks: {info['num_stocks']}")
     print(f"Number of Groups: {info['num_groups']}")
+    print(f"Supports Rich Output: {info['supports_rich_output']}")
 
     if info['training_epochs']:
         print(f"Training Epochs: {info['training_epochs']}")

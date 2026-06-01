@@ -30,6 +30,7 @@ setup(
         "TA-Lib>=0.4.28",
         "stockstats>=0.5.4",
         "scikit-learn>=1.3.0",
+        "statsmodels>=0.14.0",
         "tqdm>=4.65.0",
         "tensorboard>=2.13.0",
         "lightning>=2.2.0",

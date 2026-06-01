@@ -52,6 +52,18 @@ class FeatureConfig(StrictBaseModel):
     FEATURE_FLAGS: Dict[str, bool]
 
 
+class CointegrationConfig(StrictBaseModel):
+    ROLLING_WINDOW: int = Field(default=252, ge=20)
+    NORMALIZATION_WINDOW: int = Field(default=252, ge=20)
+    JOHANSEN_DET_ORDER: int = Field(default=0, ge=-1, le=1)
+    JOHANSEN_K_AR_DIFF: int = Field(default=1, ge=1, le=10)
+
+
+class SamplingConfig(StrictBaseModel):
+    STOCK_SELECTION_MODE: Literal['random', 'sorted'] = 'random'
+    MARKET_CAP_METADATA_DIR: str = 'raw_data/ticket_data/us'
+
+
 class DatasetModeConfig(StrictBaseModel):
     MODE: Literal['precomputed_sequences', 'on_the_fly_sequences'] = 'precomputed_sequences'
 
@@ -117,8 +129,10 @@ class MainDataConfig(StrictBaseModel):
     candlestick: CandlestickConfig = Field(default_factory=CandlestickConfig)
     geometric: GeometricConfig = Field(default_factory=GeometricConfig)
     features: FeatureConfig
+    cointegration: CointegrationConfig = Field(default_factory=CointegrationConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     normalization: NormalizationConfig
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     download: DownloadConfig
 
 

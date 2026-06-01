@@ -20,7 +20,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.config import load_config
 from src.data import DataPreprocessor
 from src.data.dataset import create_data_loaders, create_lazy_data_loaders
-from src.models import create_kronos_model, create_kronos_tokenizer, create_model
+from src.models import (
+    create_kronos_model,
+    create_kronos_rich_model,
+    create_kronos_rich_tokenizer,
+    create_kronos_tokenizer,
+    create_model,
+)
+from src.evaluation.kronos import is_kronos_family
 from src.training import (
     LightningDependencyError,
     Trainer,
@@ -30,7 +37,7 @@ from src.training import (
 from src.training.common import create_optimizer_for_params, create_scheduler
 from src.training.early_stopping import EarlyStopping, atomic_torch_save, make_weights_only_safe
 from src.utils.data_preview import load_ticker_mapping, log_sequence_preview
-from src.utils.logger import get_logger
+from src.utils.logger import get_logger, get_training_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
 
 
@@ -199,10 +206,8 @@ def load_sequences(data_dir: Path, split: str, stock_names: Optional[List[str]] 
         return None
 
     sequences = {}
-    for file in ['features', 'stock_id', 'group_id', 'day', 'month', 'dividend_flag', 'target']:
-        file_path = split_dir / f'{file}.npy'
-        if file_path.exists():
-            sequences[file] = np.load(file_path)
+    for file_path in sorted(split_dir.glob("*.npy")):
+        sequences[file_path.stem] = np.load(file_path)
 
     if len(sequences) == 0:
         return None
@@ -311,6 +316,7 @@ def _save_kronos_checkpoint(
     metric: float,
     model_type: str,
     checkpoint_metadata: Optional[Dict] = None,
+    logger=None,
 ):
     payload = {
         'epoch': epoch,
@@ -323,6 +329,8 @@ def _save_kronos_checkpoint(
     if checkpoint_metadata:
         payload.update(make_weights_only_safe(checkpoint_metadata))
     atomic_torch_save(payload, str(checkpoint_path))
+    checkpoint_logger = logger if hasattr(logger, "log_checkpoint") else get_training_logger(log_dir="logs")
+    checkpoint_logger.log_checkpoint(str(checkpoint_path), metric=float(metric), metric_name="score")
 
 
 def _load_kronos_checkpoint(tokenizer, model, checkpoint_path: str, device, optimizer=None):
@@ -468,10 +476,17 @@ def train_kronos(
     embedding_sizes,
     args,
 ):
-    config.model.models.kronos.tokenizer.D_IN = num_features
+    kronos_cfg = getattr(config.model.models, model_type)
+    kronos_cfg.tokenizer.D_IN = num_features
+    if model_type == "kronos_rich":
+        tokenizer_factory = create_kronos_rich_tokenizer
+        model_factory = create_kronos_rich_model
+    else:
+        tokenizer_factory = create_kronos_tokenizer
+        model_factory = create_kronos_model
 
-    tokenizer = create_kronos_tokenizer(config=config).to(device)
-    model = create_kronos_model(
+    tokenizer = tokenizer_factory(config=config).to(device)
+    model = model_factory(
         config=config,
         num_stocks=embedding_sizes['num_stocks'],
         num_groups=embedding_sizes['num_groups'],
@@ -548,8 +563,8 @@ def train_kronos(
                 metric=val_loss,
                 model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata,
+                logger=logger,
             )
-            logger.info(f"Saved best Kronos checkpoint to {best_checkpoint_path}")
 
         if early_stopping(val_loss, epoch + 1):
             break
@@ -563,8 +578,8 @@ def train_kronos(
         metric=history['val_loss'][-1],
         model_type=model_type,
         checkpoint_metadata=checkpoint_metadata,
+        logger=logger,
     )
-    logger.info(f"Saved final Kronos checkpoint to {final_checkpoint_path}")
 
     return {
         'tokenizer': tokenizer,
@@ -829,7 +844,7 @@ def main():
         if value is not None
     }
 
-    if model_type == 'kronos':
+    if is_kronos_family(model_type):
         if backend == 'lightning':
             logger.warning("Kronos training is not integrated with Lightning yet. Falling back to custom backend.")
             backend = 'custom'
@@ -845,10 +860,10 @@ def main():
             embedding_sizes=embedding_sizes,
             args=args,
         )
-        logger.info("Kronos training complete!")
+        logger.info(f"{model_type} training complete!")
         logger.info(f"Best validation loss: {kronos_result['best_score']:.6f}")
-        logger.info(f"Saved best Kronos checkpoint to {kronos_result['best_model_path']}")
-        logger.info(f"Saved final Kronos checkpoint to {kronos_result['final_model_path']}")
+        logger.info(f"Saved best {model_type} checkpoint to {kronos_result['best_model_path']}")
+        logger.info(f"Saved final {model_type} checkpoint to {kronos_result['final_model_path']}")
         return 0
 
     # Create model

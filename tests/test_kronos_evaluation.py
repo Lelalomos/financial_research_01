@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.evaluation.kronos import (
     _infer_feature_inverse_transform,
@@ -7,8 +8,12 @@ from src.evaluation.kronos import (
     build_kronos_sequence_metadata,
     build_kronos_report,
     compute_kronos_backtest_results,
+    is_kronos_family,
+    load_kronos_checkpoint,
     resolve_kronos_embedding_sizes,
 )
+from src.models.kronos_model import create_kronos_model, create_kronos_rich_model
+from src.config.config_loader import Config
 
 
 def test_build_kronos_sequence_metadata_aligns_windows(tmp_path):
@@ -148,3 +153,168 @@ def test_compute_kronos_backtest_results_returns_expected_shapes():
     assert results["targets"].shape == (3,)
     assert "sector_stats" in results
     assert results["final_capital"] > 0
+
+
+@pytest.mark.parametrize("model_type", ["kronos", "kronos_rich"])
+def test_is_kronos_family_accepts_both_model_types(model_type):
+    assert is_kronos_family(model_type) is True
+
+
+def test_is_kronos_family_rejects_non_kronos_model():
+    assert is_kronos_family("chronos2") is False
+
+
+def test_load_kronos_checkpoint_uses_requested_model_type(tmp_path, monkeypatch):
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {"D_IN": 1},
+                        "network": {},
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    },
+                    "kronos_rich": {
+                        "tokenizer": {"D_IN": 1},
+                        "network": {},
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    },
+                }
+            }
+        }
+    )
+
+    class DummyModule:
+        def __init__(self, label):
+            self.label = label
+            self.loaded_state = None
+            self.eval_called = False
+
+        def to(self, _device):
+            return self
+
+        def load_state_dict(self, state):
+            self.loaded_state = state
+
+        def eval(self):
+            self.eval_called = True
+            return self
+
+    created = {}
+
+    def fake_tokenizer_factory(config):
+        created["tokenizer"] = DummyModule("tokenizer")
+        return created["tokenizer"]
+
+    def fake_model_factory(config, num_stocks=None, num_groups=None):
+        created["model"] = DummyModule("model")
+        created["num_stocks"] = num_stocks
+        created["num_groups"] = num_groups
+        return created["model"]
+
+    monkeypatch.setattr("src.evaluation.kronos._KRONOS_CREATORS", {
+        "kronos_rich": (fake_tokenizer_factory, fake_model_factory),
+    })
+    monkeypatch.setattr(
+        "torch.load",
+        lambda *args, **kwargs: {
+            "tokenizer_state_dict": {"tok": 1},
+            "model_state_dict": {"mdl": 2},
+            "epoch": 3,
+        },
+    )
+
+    tokenizer, model, checkpoint = load_kronos_checkpoint(
+        checkpoint_path=str(tmp_path / "fake.pth"),
+        config=model_config,
+        num_features=9,
+        num_stocks=4,
+        num_groups=2,
+        device="cpu",
+        model_type="kronos_rich",
+    )
+
+    assert model_config.model.models.kronos_rich.tokenizer.D_IN == 9
+    assert created["num_stocks"] == 4
+    assert created["num_groups"] == 2
+    assert tokenizer.loaded_state == {"tok": 1}
+    assert model.loaded_state == {"mdl": 2}
+    assert checkpoint["epoch"] == 3
+
+
+def test_create_kronos_rich_model_uses_upstream_style_without_repo_embeddings():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos_rich": {
+                        "tokenizer": {"D_IN": 6},
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": True,
+                            "USE_GROUP_EMBEDDING": True,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    model = create_kronos_rich_model(config=model_config, num_stocks=10, num_groups=3)
+
+    assert model.use_stock_embedding is False
+    assert model.use_group_embedding is False
+    assert model.stock_embedding is None
+    assert model.group_embedding is None
+
+
+def test_create_kronos_model_keeps_repo_embeddings_when_enabled():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {"D_IN": 6},
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": True,
+                            "USE_GROUP_EMBEDDING": True,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    model = create_kronos_model(config=model_config, num_stocks=10, num_groups=3, model_key="kronos")
+
+    assert model.use_stock_embedding is True
+    assert model.use_group_embedding is True
+    assert model.stock_embedding is not None
+    assert model.group_embedding is not None

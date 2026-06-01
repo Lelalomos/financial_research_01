@@ -8,6 +8,7 @@
 #   --batch-size N        Batch size (default: 32)
 #   --learning-rate RATE  Learning rate (default: 1e-4)
 #   --backend TYPE        Training backend: lightning or custom (default: lightning)
+#   --data-dir PATH       Processed data directory override
 #   --max-train-batches N Optional limit for train batches per epoch
 #   --max-val-batches N   Optional limit for validation batches per epoch
 #   --device DEV          Device to use: cuda or cpu (default: auto-detect)
@@ -26,20 +27,23 @@ set -e
 CONTAINER_NAME="crnn_predictor"
 ORIGINAL_ARGS=("$@")
 # bilstm4_attention_best_lightning.pth
-MODEL_TYPE="chronos2"
-EPOCHS=10
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
+MODEL_TYPE=""
+EPOCHS=50
 BATCH_SIZE=128
-LEARNING_RATE=0.0001
+LEARNING_RATE=0.00001
 BACKEND="lightning"
 STOCKS=""
 FINE_TUNE=""
 FREEZE_EMBEDDINGS=""
+DATA_DIR=""
 DEVICE=""
 FORCE_CPU=""
 MAX_TRAIN_BATCHES=""
 MAX_VAL_BATCHES=""
-START_TENSORBOARD=1
-START_MLFLOW=1
+START_TENSORBOARD=0
+START_MLFLOW=0
 TENSORBOARD_PORT=6006
 MLFLOW_PORT=5000
 
@@ -76,6 +80,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --backend)
             BACKEND="$2"
+            shift 2
+            ;;
+        --data-dir)
+            DATA_DIR="$2"
             shift 2
             ;;
         --max-train-batches)
@@ -141,6 +149,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --batch-size N        Batch size (default: 32)"
             echo "  --learning-rate RATE  Learning rate (default: 1e-4)"
             echo "  --backend TYPE        Training backend: lightning or custom (default: lightning)"
+            echo "  --data-dir PATH       Processed data directory override"
             echo "  --max-train-batches N Optional limit for train batches per epoch"
             echo "  --max-val-batches N   Optional limit for validation batches per epoch"
             echo "  --device DEV          Device to use: cuda or cpu (default: auto-detect)"
@@ -163,6 +172,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
 
 start_tensorboard() {
     if ! command -v tensorboard >/dev/null 2>&1; then
@@ -218,6 +233,36 @@ ensure_mlflow_installed() {
     fi
 }
 
+ensure_python_module_installed() {
+    local module_name="$1"
+    local package_spec="${2:-$1}"
+    local install_log="/tmp/research_02_${module_name}_install.log"
+
+    if python - "$module_name" <<'PY' >/dev/null 2>&1
+import importlib.util
+import sys
+
+raise SystemExit(0 if importlib.util.find_spec(sys.argv[1]) else 1)
+PY
+    then
+        return
+    fi
+
+    echo "Python module '$module_name' not found. Installing $package_spec for the current container user..."
+    python -m pip install --user "$package_spec" >"$install_log" 2>&1
+
+    if ! python - "$module_name" <<'PY' >/dev/null 2>&1
+import importlib.util
+import sys
+
+raise SystemExit(0 if importlib.util.find_spec(sys.argv[1]) else 1)
+PY
+    then
+        echo "Installation of Python module '$module_name' failed. See $install_log"
+        exit 1
+    fi
+}
+
 is_local_port_open() {
     python - "$1" <<'PY'
 import socket
@@ -238,6 +283,7 @@ PY
 }
 
 CMD=(python scripts/train.py --backend "$BACKEND" --epochs "$EPOCHS" --batch-size "$BATCH_SIZE" --lr "$LEARNING_RATE")
+CMD+=(--data-dir "$DATA_DIR")
 
 if [ -n "$FORCE_CPU" ]; then
     CMD+=(--force-cpu)
@@ -275,15 +321,12 @@ fi
 echo "=========================================="
 echo "TRAINING MODEL (IN CONTAINER)"
 echo "=========================================="
-if [ -n "$MODEL_TYPE" ]; then
-    echo "Model type override: $MODEL_TYPE"
-else
-    echo "Model type: from config/model.json"
-fi
+echo "Model type: $MODEL_TYPE"
 echo "Epochs: $EPOCHS"
 echo "Batch size: $BATCH_SIZE"
 echo "Learning rate: $LEARNING_RATE"
 echo "Backend: $BACKEND"
+echo "Data dir: $DATA_DIR"
 if [ -n "$DEVICE" ]; then
     echo "Device: $DEVICE"
 fi
@@ -324,6 +367,8 @@ fi
 if [ "$START_MLFLOW" -eq 1 ]; then
     start_mlflow_ui
 fi
+
+ensure_python_module_installed "einops" "einops>=0.8.1"
 
 "${CMD[@]}"
 

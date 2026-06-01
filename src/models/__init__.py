@@ -32,12 +32,20 @@ except ImportError:  # pragma: no cover
     Chronos2ForecastModel = None
     create_chronos2 = None
 try:
+    from .chronos_rich_model import ChronosRichModel, create_model as create_chronos_rich
+except ImportError:  # pragma: no cover
+    ChronosRichModel = None
+    create_chronos_rich = None
+try:
     from .kronos_model import (
         Kronos,
         KronosPredictor,
         KronosTokenizer,
         create_kronos_model,
         create_kronos_predictor,
+        create_kronos_rich_model,
+        create_kronos_rich_predictor,
+        create_kronos_rich_tokenizer,
         create_kronos_tokenizer,
     )
 except ImportError:  # pragma: no cover
@@ -46,6 +54,9 @@ except ImportError:  # pragma: no cover
     KronosTokenizer = None
     create_kronos_model = None
     create_kronos_predictor = None
+    create_kronos_rich_model = None
+    create_kronos_rich_predictor = None
+    create_kronos_rich_tokenizer = None
     create_kronos_tokenizer = None
 
 # Map model types to their create functions
@@ -63,6 +74,8 @@ _MODEL_REGISTRY = {
 
 if Chronos2ForecastModel is not None and create_chronos2 is not None:
     _MODEL_REGISTRY['chronos2'] = (Chronos2ForecastModel, create_chronos2)
+if ChronosRichModel is not None and create_chronos_rich is not None:
+    _MODEL_REGISTRY['chronos_rich'] = (ChronosRichModel, create_chronos_rich)
 
 __all__ = [
     'CRNNModel',
@@ -75,12 +88,16 @@ __all__ = [
     'BiLSTM4AttentionModel',
     'MultiBranchBiLSTMModel',
     'Chronos2ForecastModel',
+    'ChronosRichModel',
     'Kronos',
     'KronosTokenizer',
     'KronosPredictor',
     'create_kronos_tokenizer',
     'create_kronos_model',
     'create_kronos_predictor',
+    'create_kronos_rich_tokenizer',
+    'create_kronos_rich_model',
+    'create_kronos_rich_predictor',
     'create_model',
     'get_model_class',
     'list_available_models',
@@ -125,7 +142,7 @@ def create_model(
         'num_groups': num_groups,
         'config': config,
     }
-    if model_type in {'multi_branch_bilstm', 'chronos2'}:
+    if model_type in {'multi_branch_bilstm', 'chronos2', 'chronos_rich'}:
         kwargs['feature_cols'] = feature_cols
 
     return create_fn(**kwargs)

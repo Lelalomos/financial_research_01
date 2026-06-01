@@ -16,6 +16,7 @@ from pathlib import Path
 import warnings
 
 from src.data.prediction_prep import PredictionPreparator, create_prediction_preparator
+from src.models.model_output import get_output_components, get_prediction_tensor
 from src.utils.logger import get_logger
 
 
@@ -155,8 +156,9 @@ class Predictor:
     def predict(
         self,
         data: Union[pd.DataFrame, List[Dict], Dict[str, np.ndarray]],
-        return_raw: bool = False
-    ) -> Union[np.ndarray, Tuple[np.ndarray, Dict]]:
+        return_raw: bool = False,
+        return_components: bool = False,
+    ) -> Union[np.ndarray, Dict[str, np.ndarray], Tuple[np.ndarray, Dict]]:
         """
         Make predictions on prepared data.
 
@@ -188,7 +190,7 @@ class Predictor:
 
         # Make predictions
         with torch.no_grad():
-            predictions = self.model(
+            output = self.model(
                 features=features,
                 stock_id=stock_id,
                 group_id=group_id,
@@ -197,7 +199,11 @@ class Predictor:
                 dividend_flag=dividend_flag
             )
 
-        predictions = predictions.cpu().numpy()
+        components = {
+            key: value.detach().cpu().numpy() if isinstance(value, torch.Tensor) else value
+            for key, value in get_output_components(output).items()
+        }
+        predictions = get_prediction_tensor(output).detach().cpu().numpy()
 
         # Apply inverse tanh transform if target was normalized
         if not return_raw and self.data_config.data.sequences.NORMALIZE_TARGET:
@@ -207,6 +213,10 @@ class Predictor:
             # Clamp to valid range for atanh
             predictions = np.clip(predictions, -0.99, 0.99)
             predictions = threshold * np.arctanh(predictions)
+            components["prediction"] = predictions
+
+        if return_components:
+            return components
 
         return predictions
 
@@ -252,9 +262,9 @@ class Predictor:
             }
 
         # Make prediction
-        predictions = self.predict(sequences, return_raw=return_raw)
-
-        return {
+        components = self.predict(sequences, return_raw=return_raw, return_components=True)
+        predictions = components["prediction"]
+        result = {
             'stock_ticker': stock_ticker,
             'date': str(date),
             'prediction': float(predictions[0][0]) if len(predictions) > 0 else None,
@@ -262,6 +272,13 @@ class Predictor:
             'num_sequences': len(predictions),
             'metadata': self.model_metadata
         }
+        if "future_return_path" in components:
+            result["future_return_path"] = components["future_return_path"][0].tolist()
+        if "future_regime" in components:
+            result["future_regime"] = int(components["future_regime"][0])
+        if "future_ohlcv" in components:
+            result["future_ohlcv"] = components["future_ohlcv"][0].tolist()
+        return result
 
     def predict_batch(
         self,
@@ -300,7 +317,8 @@ class Predictor:
             }
 
         # Make predictions
-        predictions = self.predict(sequences, return_raw=return_raw)
+        components = self.predict(sequences, return_raw=return_raw, return_components=True)
+        predictions = components["prediction"]
 
         if return_dataframe:
             # Create result DataFrame
@@ -326,10 +344,18 @@ class Predictor:
                         'date': str(date),
                         'prediction': float(predictions[seq_idx][0])
                     })
+                    if "future_regime" in components:
+                        results[-1]["future_regime"] = int(components["future_regime"][seq_idx])
+                    if "future_return_path" in components:
+                        results[-1]["future_return_path"] = components["future_return_path"][seq_idx].tolist()
+                    if "future_ohlcv" in components:
+                        results[-1]["future_ohlcv"] = components["future_ohlcv"][seq_idx].tolist()
                     seq_idx += 1
 
             return pd.DataFrame(results)
 
+        if return_raw and len(components) > 1:
+            return components
         return predictions
 
     def predict_from_file(
@@ -391,6 +417,7 @@ class Predictor:
             'training_epochs': metadata.get('epoch'),
             'best_val_loss': metadata.get('best_val_loss'),
             'feature_cols': self.preparator.feature_cols,
+            'supports_rich_output': metadata.get('model_type') == 'chronos_rich',
         }
 
 

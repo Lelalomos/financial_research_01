@@ -136,6 +136,318 @@ class FeatureEngineer:
 
         return result
 
+    @staticmethod
+    def _rolling_zscore(series: pd.Series, window: int, min_periods: Optional[int] = None) -> pd.Series:
+        """Compute past-only rolling z-score."""
+        if min_periods is None:
+            min_periods = window
+        rolling_mean = series.rolling(window=window, min_periods=min_periods).mean()
+        rolling_std = series.rolling(window=window, min_periods=min_periods).std(ddof=0)
+        safe_std = rolling_std.replace(0.0, np.nan)
+        return (series - rolling_mean) / safe_std
+
+    @staticmethod
+    def _rolling_ols_beta(y: np.ndarray, x: np.ndarray) -> float:
+        """Estimate hedge ratio beta from rolling OLS with intercept."""
+        design = np.column_stack([x, np.ones(len(x), dtype=np.float64)])
+        beta, _intercept = np.linalg.lstsq(design, y, rcond=None)[0]
+        return float(beta)
+
+    @staticmethod
+    def _safe_adf(series: np.ndarray) -> Tuple[float, float]:
+        """Run ADF safely and return (stat, pvalue)."""
+        try:
+            from statsmodels.tsa.stattools import adfuller
+        except ImportError as exc:
+            raise ImportError(
+                "statsmodels is required for cointegration ADF features. "
+                "Install statsmodels>=0.14.0."
+            ) from exc
+
+        clean = np.asarray(series, dtype=np.float64)
+        clean = clean[np.isfinite(clean)]
+        if clean.size < 10 or np.allclose(clean, clean[0]):
+            return np.nan, np.nan
+
+        maxlag = min(1, clean.size // 2 - 1)
+        if maxlag < 0:
+            return np.nan, np.nan
+
+        try:
+            stat, pvalue, *_ = adfuller(clean, maxlag=maxlag, autolag=None)
+            return float(stat), float(pvalue)
+        except Exception:
+            return np.nan, np.nan
+
+    @staticmethod
+    def _select_pair_peer(
+        target_ticker: str,
+        window_returns: pd.DataFrame,
+    ) -> Optional[str]:
+        """Pick the same-sector peer with highest absolute return correlation."""
+        if target_ticker not in window_returns.columns:
+            return None
+
+        target_returns = window_returns[target_ticker]
+        correlations = {}
+        for candidate in window_returns.columns:
+            if candidate == target_ticker:
+                continue
+            candidate_returns = window_returns[candidate]
+            valid_mask = target_returns.notna() & candidate_returns.notna()
+            if valid_mask.sum() < 10:
+                continue
+            corr = target_returns[valid_mask].corr(candidate_returns[valid_mask])
+            if pd.notna(corr):
+                correlations[candidate] = abs(float(corr))
+
+        if not correlations:
+            return None
+        return max(correlations, key=correlations.get)
+
+    def _compute_pair_cointegration_features(
+        self,
+        df: pd.DataFrame,
+        window: int,
+        normalization_window: int,
+    ) -> pd.DataFrame:
+        """Create rolling pair spread features within each sector."""
+        result = df.copy()
+        result["pair_beta"] = np.nan
+        result["spread"] = np.nan
+        result["rolling_mean_spread"] = np.nan
+        result["rolling_std_spread"] = np.nan
+        result["spread_zscore"] = np.nan
+        result["spread_norm"] = np.nan
+        result["spread_adf_stat"] = np.nan
+        result["spread_adf_pvalue"] = np.nan
+
+        for group_name, group_df in result.groupby("group", sort=False):
+            tickers = sorted(group_df["tic"].dropna().unique())
+            if len(tickers) < 2:
+                continue
+
+            sector_df = group_df.sort_values(["date", "tic"])
+            close_pivot = sector_df.pivot(index="date", columns="tic", values="close").sort_index()
+            return_pivot = close_pivot.pct_change(fill_method=None)
+
+            for ticker in tickers:
+                if ticker not in close_pivot.columns:
+                    continue
+
+                pair_beta = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+                spread = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+                rolling_mean_spread = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+                rolling_std_spread = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+                spread_zscore = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+                spread_adf_stat = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+                spread_adf_pvalue = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+
+                for end_idx in range(window - 1, len(close_pivot)):
+                    window_slice = close_pivot.iloc[end_idx - window + 1:end_idx + 1]
+                    window_returns = return_pivot.iloc[end_idx - window + 1:end_idx + 1]
+                    if window_slice[ticker].isna().any():
+                        continue
+
+                    complete_window = window_slice.loc[:, window_slice.notna().all(axis=0)]
+                    if ticker not in complete_window.columns or complete_window.shape[1] < 2:
+                        continue
+
+                    peer = self._select_pair_peer(ticker, window_returns[complete_window.columns])
+                    if peer is None:
+                        continue
+
+                    y = complete_window[ticker].to_numpy(dtype=np.float64, copy=False)
+                    x = complete_window[peer].to_numpy(dtype=np.float64, copy=False)
+                    if np.nanstd(x) == 0.0:
+                        continue
+
+                    beta = self._rolling_ols_beta(y, x)
+                    spread_window = y - beta * x
+                    mean_spread = float(np.mean(spread_window))
+                    std_spread = float(np.std(spread_window, ddof=0))
+                    if std_spread == 0.0:
+                        std_spread = np.nan
+
+                    current_date = close_pivot.index[end_idx]
+                    current_spread = float(spread_window[-1])
+
+                    pair_beta.loc[current_date] = beta
+                    spread.loc[current_date] = current_spread
+                    rolling_mean_spread.loc[current_date] = mean_spread
+                    rolling_std_spread.loc[current_date] = std_spread
+                    if np.isfinite(std_spread):
+                        spread_zscore.loc[current_date] = (current_spread - mean_spread) / std_spread
+
+                    adf_stat, adf_pvalue = self._safe_adf(spread_window)
+                    spread_adf_stat.loc[current_date] = adf_stat
+                    spread_adf_pvalue.loc[current_date] = adf_pvalue
+
+                spread_norm = self._rolling_zscore(spread, window=normalization_window)
+
+                ticker_mask = (result["group"] == group_name) & (result["tic"] == ticker)
+                ticker_dates = pd.to_datetime(result.loc[ticker_mask, "date"])
+                result.loc[ticker_mask, "pair_beta"] = ticker_dates.map(pair_beta).to_numpy(dtype=float)
+                result.loc[ticker_mask, "spread"] = ticker_dates.map(spread).to_numpy(dtype=float)
+                result.loc[ticker_mask, "rolling_mean_spread"] = ticker_dates.map(rolling_mean_spread).to_numpy(dtype=float)
+                result.loc[ticker_mask, "rolling_std_spread"] = ticker_dates.map(rolling_std_spread).to_numpy(dtype=float)
+                result.loc[ticker_mask, "spread_zscore"] = ticker_dates.map(spread_zscore).to_numpy(dtype=float)
+                result.loc[ticker_mask, "spread_norm"] = ticker_dates.map(spread_norm).to_numpy(dtype=float)
+                result.loc[ticker_mask, "spread_adf_stat"] = ticker_dates.map(spread_adf_stat).to_numpy(dtype=float)
+                result.loc[ticker_mask, "spread_adf_pvalue"] = ticker_dates.map(spread_adf_pvalue).to_numpy(dtype=float)
+        return result
+
+    def _compute_sector_relative_features(
+        self,
+        df: pd.DataFrame,
+        normalization_window: int,
+    ) -> pd.DataFrame:
+        """Create sector-relative price and return features."""
+        result = df.copy()
+        result = result.sort_values(["date", "tic"]).reset_index(drop=True)
+
+        result["stock_return_1d"] = result.groupby("tic", sort=False)["close"].pct_change(fill_method=None)
+
+        sector_close_sum = result.groupby(["group", "date"])["close"].transform("sum")
+        sector_close_count = result.groupby(["group", "date"])["close"].transform("count")
+        peer_close_mean = (sector_close_sum - result["close"]) / (sector_close_count - 1).where(sector_close_count > 1, np.nan)
+        result["relative_price_vs_sector"] = (result["close"] - peer_close_mean) / peer_close_mean.abs().replace(0.0, np.nan)
+
+        sector_return_sum = result.groupby(["group", "date"])["stock_return_1d"].transform("sum")
+        sector_return_count = result.groupby(["group", "date"])["stock_return_1d"].transform("count")
+        peer_return_mean = (sector_return_sum - result["stock_return_1d"]) / (sector_return_count - 1).where(sector_return_count > 1, np.nan)
+        result["relative_return_vs_sector"] = result["stock_return_1d"] - peer_return_mean
+
+        result["relative_price_vs_sector_norm"] = np.nan
+        for ticker, ticker_df in result.groupby("tic", sort=False):
+            zscore = self._rolling_zscore(ticker_df["relative_price_vs_sector"], window=normalization_window)
+            result.loc[ticker_df.index, "relative_price_vs_sector_norm"] = zscore.to_numpy(dtype=float)
+
+        return result
+
+    def _compute_johansen_sector_features(
+        self,
+        df: pd.DataFrame,
+        window: int,
+        normalization_window: int,
+        det_order: int,
+        k_ar_diff: int,
+    ) -> pd.DataFrame:
+        """Create sector equilibrium features with rolling Johansen vectors."""
+        try:
+            from statsmodels.tsa.vector_ar.vecm import coint_johansen
+        except ImportError as exc:
+            raise ImportError(
+                "statsmodels is required for Johansen cointegration features. "
+                "Install statsmodels>=0.14.0."
+            ) from exc
+
+        result = df.copy()
+        result["equilibrium_gap"] = np.nan
+        result["equilibrium_zscore"] = np.nan
+        result["equilibrium_gap_norm"] = np.nan
+        result["equilibrium_adf_stat"] = np.nan
+        result["equilibrium_adf_pvalue"] = np.nan
+
+        for group_name, group_df in result.groupby("group", sort=False):
+            tickers = sorted(group_df["tic"].dropna().unique())
+            if len(tickers) < 2:
+                continue
+
+            sector_df = group_df.sort_values(["date", "tic"])
+            close_pivot = sector_df.pivot(index="date", columns="tic", values="close").sort_index()
+            log_close_pivot = np.log(close_pivot.where(close_pivot > 0))
+
+            equilibrium_gap = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+            equilibrium_zscore = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+            equilibrium_gap_norm = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+            equilibrium_adf_stat = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+            equilibrium_adf_pvalue = pd.Series(np.nan, index=close_pivot.index, dtype=np.float64)
+
+            for end_idx in range(window - 1, len(log_close_pivot)):
+                window_slice = log_close_pivot.iloc[end_idx - window + 1:end_idx + 1]
+                complete_window = window_slice.loc[:, window_slice.notna().all(axis=0)]
+                if complete_window.shape[1] < 2:
+                    continue
+
+                try:
+                    johansen_result = coint_johansen(
+                        complete_window.to_numpy(dtype=np.float64, copy=False),
+                        det_order=det_order,
+                        k_ar_diff=k_ar_diff,
+                    )
+                except Exception:
+                    continue
+
+                beta_vector = johansen_result.evec[:, 0]
+                equilibrium_series = complete_window.to_numpy(dtype=np.float64, copy=False) @ beta_vector
+                current_date = log_close_pivot.index[end_idx]
+                current_gap = float(equilibrium_series[-1])
+                equilibrium_gap.loc[current_date] = current_gap
+
+                norm_window = equilibrium_series[-min(len(equilibrium_series), normalization_window):]
+                mean_gap = float(np.mean(norm_window))
+                std_gap = float(np.std(norm_window, ddof=0))
+                if std_gap != 0.0:
+                    equilibrium_zscore.loc[current_date] = (current_gap - mean_gap) / std_gap
+
+                adf_stat, adf_pvalue = self._safe_adf(equilibrium_series)
+                equilibrium_adf_stat.loc[current_date] = adf_stat
+                equilibrium_adf_pvalue.loc[current_date] = adf_pvalue
+
+            equilibrium_gap_norm = self._rolling_zscore(
+                equilibrium_gap,
+                window=normalization_window,
+            )
+
+            sector_mask = result["group"] == group_name
+            sector_dates = pd.to_datetime(result.loc[sector_mask, "date"])
+            result.loc[sector_mask, "equilibrium_gap"] = sector_dates.map(equilibrium_gap).to_numpy(dtype=float)
+            result.loc[sector_mask, "equilibrium_zscore"] = sector_dates.map(equilibrium_zscore).to_numpy(dtype=float)
+            result.loc[sector_mask, "equilibrium_gap_norm"] = sector_dates.map(equilibrium_gap_norm).to_numpy(dtype=float)
+            result.loc[sector_mask, "equilibrium_adf_stat"] = sector_dates.map(equilibrium_adf_stat).to_numpy(dtype=float)
+            result.loc[sector_mask, "equilibrium_adf_pvalue"] = sector_dates.map(equilibrium_adf_pvalue).to_numpy(dtype=float)
+        return result
+
+    def add_cointegration_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add pair-spread and sector-equilibrium features with rolling windows.
+
+        All calculations use only data up to the current timestamp.
+        """
+        if not self.config.data.features.FEATURE_FLAGS.get("cointegration_features", False):
+            self.logger.info("Skipping cointegration features (disabled in config)")
+            return df
+
+        self.logger.info("Adding rolling cointegration features...")
+        result = df.copy().sort_values(["tic", "date"]).reset_index(drop=True)
+
+        cointegration_cfg = getattr(self.config.data, "cointegration", None)
+        window = int(getattr(cointegration_cfg, "ROLLING_WINDOW", 252))
+        normalization_window = int(getattr(cointegration_cfg, "NORMALIZATION_WINDOW", window))
+        det_order = int(getattr(cointegration_cfg, "JOHANSEN_DET_ORDER", 0))
+        k_ar_diff = int(getattr(cointegration_cfg, "JOHANSEN_K_AR_DIFF", 1))
+
+        result = self._compute_sector_relative_features(
+            result,
+            normalization_window=normalization_window,
+        )
+        result = self._compute_pair_cointegration_features(
+            result,
+            window=window,
+            normalization_window=normalization_window,
+        )
+        result = self._compute_johansen_sector_features(
+            result,
+            window=window,
+            normalization_window=normalization_window,
+            det_order=det_order,
+            k_ar_diff=k_ar_diff,
+        )
+
+        self.logger.info("Added cointegration features")
+        return result
+
     def add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Add technical indicators to DataFrame.
@@ -903,7 +1215,10 @@ class FeatureEngineer:
         # 5. Add group (sector) information
         result = self.add_group_from_sector(result)
 
-        # 6. Merge external data
+        # 6. Add rolling cointegration and equilibrium features
+        result = self.add_cointegration_features(result)
+
+        # 7. Merge external data
         result = self.merge_external_data(
             result,
             vix_df=vix_df,
@@ -911,7 +1226,7 @@ class FeatureEngineer:
             treasury_df=treasury_df
         )
 
-        # 7. Calculate target
+        # 8. Calculate target
         if calculate_target:
             result = self.calculate_target(result)
 
@@ -974,6 +1289,25 @@ class FeatureEngineer:
         fibonacci_features = ['swing_high', 'swing_low', 'fib_range', 'fib_38', 'fib_50',
                                'fib_61', 'dist_fib_38', 'dist_fib_50', 'dist_fib_61', 'break_fib_61']
         regime_features = ['regime_id']
+        cointegration_features = [
+            'stock_return_1d',
+            'relative_price_vs_sector',
+            'relative_return_vs_sector',
+            'relative_price_vs_sector_norm',
+            'pair_beta',
+            'spread',
+            'rolling_mean_spread',
+            'rolling_std_spread',
+            'spread_zscore',
+            'spread_norm',
+            'spread_adf_stat',
+            'spread_adf_pvalue',
+            'equilibrium_gap',
+            'equilibrium_zscore',
+            'equilibrium_gap_norm',
+            'equilibrium_adf_stat',
+            'equilibrium_adf_pvalue',
+        ]
 
         info = {
             'total_features': len(feature_cols),
@@ -988,6 +1322,7 @@ class FeatureEngineer:
             'financial_metrics': len([f for f in financial_metrics_features if f in feature_cols]),
             'fibonacci_features': len([f for f in fibonacci_features if f in feature_cols]),
             'regime_features': len([f for f in regime_features if f in feature_cols]),
+            'cointegration_features': len([f for f in cointegration_features if f in feature_cols]),
             'feature_list': feature_cols
         }
 

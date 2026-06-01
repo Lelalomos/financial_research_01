@@ -14,8 +14,10 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 # Default values
-MODEL_TYPE="chronos2"
+MODEL_TYPE=""
 N_TRIALS=50
 STOCKS=20
 YEARS=""
@@ -55,6 +57,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
 
 # Build command
 CMD="python scripts/optuna_tune.py"

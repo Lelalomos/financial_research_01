@@ -17,6 +17,7 @@ from typing import Dict, Optional, List
 from pathlib import Path
 
 from src.config import load_config
+from src.models.model_output import get_prediction_tensor
 from src.utils.logger import EvaluationLogger
 from .metrics import (
     evaluate_model,
@@ -105,7 +106,9 @@ class Backtester:
                     dividend_flag = torch.ones(features.shape[0], features.shape[1],
                                                   dtype=torch.long, device=self.device)
 
-                output = self.model(features, stock_id, group_id, day, month, dividend_flag)
+                output = get_prediction_tensor(
+                    self.model(features, stock_id, group_id, day, month, dividend_flag)
+                )
 
                 all_predictions.extend(output.cpu().numpy().flatten())
                 all_targets.extend(target.cpu().numpy().flatten())

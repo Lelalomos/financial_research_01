@@ -6,6 +6,7 @@ import pytest
 import numpy as np
 import pandas as pd
 import sys
+import json
 from pathlib import Path
 
 # Add parent directory to path
@@ -68,6 +69,49 @@ def imbalanced_data():
             data.append({'tic': f'STOCK_2_{i}', 'date': date, 'group_id': 2})
 
     return pd.DataFrame(data)
+
+
+@pytest.fixture
+def market_cap_metadata_dir(tmp_path):
+    """Create synthetic per-ticker metadata files with market caps."""
+    caps = {
+        "STOCK_0_0": 1000,
+        "STOCK_0_1": 900,
+        "STOCK_0_2": 800,
+        "STOCK_0_3": 700,
+        "STOCK_0_4": 600,
+        "STOCK_0_5": 500,
+        "STOCK_1_0": 2000,
+        "STOCK_1_1": 1900,
+        "STOCK_1_2": 1800,
+        "STOCK_1_3": 1700,
+        "STOCK_1_4": 1600,
+        "STOCK_1_5": 1500,
+        "STOCK_2_0": 3000,
+        "STOCK_2_1": 2900,
+        "STOCK_2_2": 2800,
+        "STOCK_2_3": 2700,
+        "STOCK_2_4": 2600,
+        "STOCK_2_5": 2500,
+        "STOCK_3_0": 4000,
+        "STOCK_3_1": 3900,
+        "STOCK_3_2": 3800,
+        "STOCK_3_3": 3700,
+        "STOCK_3_4": 3600,
+        "STOCK_3_5": 3500,
+        "STOCK_4_0": 5000,
+        "STOCK_4_1": 4900,
+        "STOCK_4_2": 4800,
+        "STOCK_4_3": 4700,
+        "STOCK_4_4": 4600,
+        "STOCK_4_5": 4500,
+    }
+
+    for ticker, market_cap in caps.items():
+        payload = {"Highlights": {"MarketCapitalization": market_cap}}
+        (tmp_path / f"{ticker}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    return tmp_path
 
 
 class TestSampleStocksByGroup:
@@ -193,6 +237,61 @@ class TestSampleStocksByGroup:
 
         # Results should be different (very unlikely to be same)
         assert set(selected1) != set(selected2)
+
+    def test_sorted_mode_prefers_largest_market_caps(self, sample_data, market_cap_metadata_dir):
+        """Test deterministic top-market-cap selection inside each group."""
+        selected = sample_stocks_by_group(
+            sample_data,
+            n_stocks=10,
+            seed=42,
+            selection_mode='sorted',
+            market_cap_metadata_dir=str(market_cap_metadata_dir),
+        )
+
+        expected = {
+            "STOCK_0_0", "STOCK_0_1",
+            "STOCK_1_0", "STOCK_1_1",
+            "STOCK_2_0", "STOCK_2_1",
+            "STOCK_3_0", "STOCK_3_1",
+            "STOCK_4_0", "STOCK_4_1",
+        }
+        assert set(selected) == expected
+
+    def test_sorted_mode_with_remainder_uses_highest_remaining_market_caps(self, sample_data, market_cap_metadata_dir):
+        """Test sorted remainder handling stays market-cap ordered."""
+        selected = sample_stocks_by_group(
+            sample_data,
+            n_stocks=12,
+            seed=42,
+            selection_mode='sorted',
+            market_cap_metadata_dir=str(market_cap_metadata_dir),
+        )
+
+        expected = {
+            "STOCK_0_0", "STOCK_0_1",
+            "STOCK_1_0", "STOCK_1_1",
+            "STOCK_2_0", "STOCK_2_1",
+            "STOCK_3_0", "STOCK_3_1",
+            "STOCK_4_0", "STOCK_4_1",
+            "STOCK_4_2", "STOCK_4_3",
+        }
+        assert set(selected) == expected
+
+    def test_sorted_mode_handles_missing_market_cap_with_ticker_fallback(self, sample_data, tmp_path):
+        """Test missing market-cap metadata falls back deterministically."""
+        payload = {"Highlights": {"MarketCapitalization": 1000}}
+        for ticker in ["STOCK_0_1", "STOCK_0_2", "STOCK_0_3", "STOCK_0_4", "STOCK_0_5"]:
+            (tmp_path / f"{ticker}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        selected = sample_stocks_by_group(
+            sample_data[sample_data["group_id"] == 0],
+            n_stocks=2,
+            seed=42,
+            selection_mode='sorted',
+            market_cap_metadata_dir=str(tmp_path),
+        )
+
+        assert selected == ["STOCK_0_1", "STOCK_0_2"]
 
     def test_imbalanced_groups(self, imbalanced_data):
         """Test sampling from imbalanced groups."""

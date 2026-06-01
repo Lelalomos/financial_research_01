@@ -35,8 +35,8 @@
     },
     "technical_indicators": {
       "EMA_PERIODS": [50, 200],
-      "RSI_PERIOD": 14,
-      "STOCHRSI_PERIOD": 14,
+      "RSI_PERIOD": 7,
+      "STOCHRSI_PERIOD": 7,
       "MACD_PARAMS": [12, 26, 9]
     },
     "fibonacci": {
@@ -114,10 +114,17 @@
         "time_features": true,
         "financial_metrics": true,
         "market_regime": true,
+        "cointegration_features": true,
         "polars_fibonacci_features": true,
         "polars_time_features": true,
         "polars_external_merges": true
       }
+    },
+    "cointegration": {
+      "ROLLING_WINDOW": 252,
+      "NORMALIZATION_WINDOW": 252,
+      "JOHANSEN_DET_ORDER": 0,
+      "JOHANSEN_K_AR_DIFF": 1
     },
     "regime": {
       "ENABLED": true,
@@ -135,6 +142,10 @@
     "filtering": {
       "MIN_TRADING_DAYS": 252,
       "MAX_MISSING_RATIO": 0.1
+    },
+    "sampling": {
+      "STOCK_SELECTION_MODE": "sorted",
+      "MARKET_CAP_METADATA_DIR": "raw_data/ticket_data/us"
     },
     "external_data": {
       "EXTERNAL_DATA_FILL_METHOD": "ffill",
@@ -159,6 +170,7 @@
         "financial_metrics": ["pe_ratio", "peg_ratio", "eps", "dividend_flag", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
         "geometric": ["atr_14_norm", "roc_10", "bb_width_20", "slope_sup_20", "slope_res_20", "channel_compression_20", "channel_position_20", "dist_to_swing_high_20", "dist_to_swing_low_20", "days_since_swing_high_20", "days_since_swing_low_20", "opt_slope_sup_30", "opt_slope_res_30", "opt_channel_width_30"],
         "fibonacci": ["swing_high", "swing_low", "fib_range", "fib_38", "fib_50", "fib_61", "dist_fib_38", "dist_fib_50", "dist_fib_61", "break_fib_61"],
+        "cointegration": ["stock_return_1d", "relative_price_vs_sector", "relative_return_vs_sector", "relative_price_vs_sector_norm", "pair_beta", "spread", "rolling_mean_spread", "rolling_std_spread", "spread_zscore", "spread_norm", "spread_adf_stat", "spread_adf_pvalue", "equilibrium_gap", "equilibrium_zscore", "equilibrium_gap_norm", "equilibrium_adf_stat", "equilibrium_adf_pvalue"],
         "time_features": ["day", "month", "dayofweek"],
         "external": ["vix", "bondyield"],
         "market_regime": ["regime_id"],
@@ -173,6 +185,34 @@
       "PROCESSED_DATA_PATH": "data/processed",
       "SPLITS_PATH": "data/splits",
       "EXTERNAL_DATA_PATH": "data/external"
+    },
+    "chronos2_preparation": {
+      "OUTPUT_DIR": "data/processed_chronos2",
+      "TARGET_COLUMN": "close",
+      "INCLUDE_SCALAR_TARGET": true,
+      "TARGET_MODE": "trend_extension",
+      "TREND_LOOKBACK": 7,
+      "TREND_METHOD": "mean_gap"
+    },
+    "chronos_rich_preparation": {
+      "OUTPUT_DIR": "data/processed_chronos_rich",
+      "OHLCV_COLUMNS": ["open", "high", "low", "close", "volume"],
+      "INCLUDE_SCALAR_TARGET": true,
+      "INCLUDE_RETURN_PATH": true,
+      "INCLUDE_REGIME_LABEL": true,
+      "REGIME_SOURCE": "column_or_realized_volatility",
+      "VOLATILITY_LOW_QUANTILE": 0.33,
+      "VOLATILITY_HIGH_QUANTILE": 0.66
+    },
+    "kronos_rich_preparation": {
+      "OUTPUT_DIR": "data/processed_kronos_rich",
+      "OHLCV_COLUMNS": ["open", "high", "low", "close", "volume"],
+      "INCLUDE_SCALAR_TARGET": true,
+      "INCLUDE_RETURN_PATH": true,
+      "INCLUDE_REGIME_LABEL": true,
+      "REGIME_SOURCE": "column_or_realized_volatility",
+      "VOLATILITY_LOW_QUANTILE": 0.33,
+      "VOLATILITY_HIGH_QUANTILE": 0.66
     }
   }
 }

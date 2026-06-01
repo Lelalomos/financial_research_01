@@ -36,6 +36,13 @@ data = downloader.download_all(save=True)
 data = downloader.load_saved_data()
 ```
 
+When preprocessing is run with `--stocks N`, the pipeline uses balanced
+sampling across all groups. The per-group stock choice can now be controlled by
+`data.sampling.STOCK_SELECTION_MODE`:
+
+- `random`: current random balanced sampling
+- `sorted`: largest market-cap stocks first inside each group
+
 ## Stage 2: Feature Engineering
 
 ### Technical Indicators
@@ -139,6 +146,41 @@ preprocessing, thresholds are fit on the training split only using the
 configured proxy column, then reused for validation and test rows. This avoids
 future-data leakage from validation/test market conditions.
 
+### Rolling Cointegration Features
+
+Rolling cointegration features are available but disabled by default. Set
+`data.features.FEATURE_FLAGS.cointegration_features` to `true` to include them.
+
+The feature engineering stage adds these continuous features:
+
+- `spread`
+- `rolling_mean_spread`
+- `rolling_std_spread`
+- `spread_zscore`
+- `spread_norm`
+- `equilibrium_gap`
+- `equilibrium_zscore`
+- `equilibrium_gap_norm`
+- `relative_price_vs_sector`
+- `relative_price_vs_sector_norm`
+- `relative_return_vs_sector`
+- `spread_adf_stat`
+- `spread_adf_pvalue`
+- `equilibrium_adf_stat`
+- `equilibrium_adf_pvalue`
+
+Current behavior:
+
+- pair spread features are built inside each sector using a rolling same-sector
+  peer selected by highest absolute return correlation in the rolling window
+- hedge ratio beta is estimated with rolling OLS
+- sector equilibrium features use
+  `statsmodels.tsa.vector_ar.vecm.coint_johansen` on same-sector log prices
+- all calculations are past-only rolling windows, so they do not use future
+  observations beyond the current timestamp
+- `feature_columns.txt` will include the new feature names automatically, which
+  keeps SHAP, attention maps, and attribution utilities aligned
+
 Default settings use `vix` as the proxy and produce three regimes:
 
 - `0`: lower proxy values
@@ -193,6 +235,11 @@ Sequence creation now supports two modes through `data.dataset.MODE`:
 
 - `precomputed_sequences`: preprocessing stops after normalized split parquet export, and training builds full in-memory sequence dictionaries from those normalized split caches before the first epoch
 - `on_the_fly_sequences`: preprocessing stops after normalized split parquet export, and training uses a lazy dataset that slices sliding windows from `data/processed/.cache/normalized_splits/*.parquet` as batches are requested
+
+Special prepared datasets such as `data/processed_chronos2` and
+`data/processed_kronos_rich` may also include extra `.npy` arrays beyond the
+base keys. The current dataset loader preserves these optional arrays and
+passes them through in each batch so model-specific training code can use them.
 
 ## Stage 4: Dataset
 

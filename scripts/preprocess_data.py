@@ -343,7 +343,17 @@ def main():
             treasury_df = existing_data.get('treasury_yields')
 
         if args.stocks:
-            logger.info(f"Sampling {args.stocks} stocks balanced across all group_ids...")
+            sampling_cfg = getattr(config.data, "sampling", None)
+            selection_mode = getattr(sampling_cfg, "STOCK_SELECTION_MODE", "random")
+            market_cap_metadata_dir = getattr(
+                sampling_cfg,
+                "MARKET_CAP_METADATA_DIR",
+                "raw_data/ticket_data/us",
+            )
+            logger.info(
+                f"Sampling {args.stocks} stocks balanced across all group_ids "
+                f"using selection mode '{selection_mode}'..."
+            )
             from src.data.sampling import sample_stocks_by_group, get_sampling_stats
 
             if 'group_id' not in stock_df.columns and 'group' in stock_df.columns:
@@ -354,7 +364,13 @@ def main():
                 logger.warning("No group_id column found, using single group")
                 stock_df['group_id'] = 0
 
-            selected_tickers = sample_stocks_by_group(stock_df, args.stocks, seed=42)
+            selected_tickers = sample_stocks_by_group(
+                stock_df,
+                args.stocks,
+                seed=42,
+                selection_mode=selection_mode,
+                market_cap_metadata_dir=market_cap_metadata_dir,
+            )
             stock_df = stock_df[stock_df['tic'].isin(selected_tickers)].copy()
 
             stats = get_sampling_stats(stock_df, selected_tickers)

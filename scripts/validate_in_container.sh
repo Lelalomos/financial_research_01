@@ -3,9 +3,11 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 MODEL_PATH="best"
 MODEL_TYPE=""
-DATA_DIR="data/processed"
+DATA_DIR=""
 SPLIT="val"
 DEVICE=""
 FORCE_CPU=false
@@ -64,6 +66,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
 
 CMD="python scripts/validate.py --model $MODEL_PATH --data-dir $DATA_DIR --split $SPLIT"
 

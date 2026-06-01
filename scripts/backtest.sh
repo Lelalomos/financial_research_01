@@ -9,10 +9,13 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
+
 # Default values
 MODEL_PATH="models/best_model.pth"
 OUTPUT_PATH="outputs/backtest_report.xlsx"
 MODEL_TYPE=""
+DATA_DIR=""
 DEVICE=""
 FORCE_CPU=false
 
@@ -31,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             MODEL_TYPE="$2"
             shift 2
             ;;
+        --data-dir)
+            DATA_DIR="$2"
+            shift 2
+            ;;
         --device)
             DEVICE="$2"
             shift 2
@@ -46,6 +53,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model PATH       Model checkpoint path (default: models/best_model.pth)"
             echo "  --output PATH      Output Excel file path (default: outputs/backtest_report.xlsx)"
             echo "  --model-type TYPE  Override model type from config/model.json"
+            echo "  --data-dir PATH    Processed data directory override"
             echo "  --device DEVICE    Device override (e.g. cuda, cuda:0, cpu)"
             echo "  --force-cpu        Force CPU usage"
             echo "  --help             Show this help message"
@@ -59,8 +67,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+MODEL_TYPE="$(resolve_model_type "$MODEL_TYPE")"
+
+if [ -z "$DATA_DIR" ]; then
+    DATA_DIR="$(resolve_data_dir_for_model_type "$MODEL_TYPE")"
+fi
+
 # Build command
-CMD="python scripts/backtest.py --model $MODEL_PATH --output $OUTPUT_PATH"
+CMD="python scripts/backtest.py --model $MODEL_PATH --output $OUTPUT_PATH --data-dir $DATA_DIR"
 
 if [ -n "$MODEL_TYPE" ]; then
     CMD="$CMD --model-type $MODEL_TYPE"

@@ -17,6 +17,18 @@ from src.config import load_config
 from src.utils.logger import get_logger
 
 
+def _to_tensor(array: np.ndarray) -> torch.Tensor:
+    """Convert numpy arrays to a sensible torch tensor dtype."""
+    array = np.asarray(array)
+    if np.issubdtype(array.dtype, np.floating):
+        return torch.as_tensor(array, dtype=torch.float32)
+    if np.issubdtype(array.dtype, np.integer):
+        return torch.as_tensor(array, dtype=torch.long)
+    if np.issubdtype(array.dtype, np.bool_):
+        return torch.as_tensor(array, dtype=torch.bool)
+    raise TypeError(f"Unsupported optional sequence dtype: {array.dtype}")
+
+
 class FinancialDataset(Dataset):
     """
     PyTorch Dataset for financial time series data.
@@ -80,8 +92,16 @@ class FinancialDataset(Dataset):
             raise ValueError("dividend_flag values must be 0, 1, or 2")
         self.dividend_flag = torch.LongTensor(dividend_flag)
         self.target = torch.FloatTensor(sequences['target']).unsqueeze(-1)  # (n_samples,) -> (n_samples, 1)
-
         self.num_samples = len(self.target)
+        base_keys = {'features', 'stock_id', 'group_id', 'day', 'month', 'dividend_flag', 'target'}
+        self.optional_tensors: Dict[str, torch.Tensor] = {}
+        for key, value in sequences.items():
+            if key in base_keys:
+                continue
+            if len(value) != self.num_samples:
+                raise ValueError(f"Optional sequence key '{key}' must match sample count {self.num_samples}")
+            self.optional_tensors[key] = _to_tensor(value)
+
         self.seq_len = self.features.shape[1]
         self.num_features = self.features.shape[2]
 
@@ -103,7 +123,7 @@ class FinancialDataset(Dataset):
         Returns:
             Dictionary with features, embeddings, and target
         """
-        return {
+        sample = {
             'features': self.features[idx],      # (seq_len, num_features)
             'stock_id': self.stock_id[idx],     # (seq_len,)
             'group_id': self.group_id[idx],     # (seq_len,)
@@ -112,6 +132,9 @@ class FinancialDataset(Dataset):
             'dividend_flag': self.dividend_flag[idx],  # (seq_len,)
             'target': self.target[idx]          # (1,)
         }
+        for key, tensor in self.optional_tensors.items():
+            sample[key] = tensor[idx]
+        return sample
 
     def get_embedding_sizes(self) -> Dict[str, int]:
         """
