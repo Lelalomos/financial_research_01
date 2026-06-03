@@ -1,13 +1,17 @@
 import copy
 
 import numpy as np
+import pytest
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from pathlib import Path
 
 from src.config import load_config
 from src.config.config_loader import Config
 from src.data.dataset import FinancialDataset
-from src.evaluation import evaluate_model
+from src.evaluation import evaluate_model, evaluate_model_with_report
 from src.evaluation.backtester import Backtester
 from src.models import create_model
 from src.training import Trainer
@@ -125,6 +129,169 @@ def test_chronos_rich_evaluate_and_backtest_use_scalar_prediction():
 
     assert "final_capital" in results
     assert len(results["predictions"]) == len(results["targets"])
+
+
+def test_chronos_rich_uses_configured_component_losses():
+    config = _small_model_config()
+    config.model.models.chronos_rich.SCALAR_LOSS_TYPE = "mae"
+    config.model.models.chronos_rich.SCALAR_LOSS_WEIGHT = 2.0
+    config.model.models.chronos_rich.OHLCV_LOSS_TYPE = "huber"
+    config.model.models.chronos_rich.OHLCV_HUBER_DELTA = 0.5
+    config.model.models.chronos_rich.OHLCV_LOSS_WEIGHT = 3.0
+    config.model.models.chronos_rich.RETURN_PATH_LOSS_TYPE = "pinball_loss"
+    config.model.models.chronos_rich.RETURN_PATH_QUANTILE = 0.8
+    config.model.models.chronos_rich.RETURN_PATH_LOSS_WEIGHT = 4.0
+    config.model.models.chronos_rich.REGIME_LOSS_TYPE = "cross_entropy"
+    config.model.models.chronos_rich.REGIME_LABEL_SMOOTHING = 0.1
+    config.model.models.chronos_rich.REGIME_LOSS_WEIGHT = 5.0
+
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+    output = {
+        "prediction": torch.tensor([[1.0]], dtype=torch.float32),
+        "future_ohlcv": torch.tensor([[[1.0, 2.0, 3.0, 4.0, 5.0]]], dtype=torch.float32),
+        "future_return_path": torch.tensor([[0.5, 1.5]], dtype=torch.float32),
+        "future_regime_logits": torch.tensor([[2.0, 0.0, -1.0]], dtype=torch.float32),
+    }
+    batch = {
+        "target": torch.tensor([[0.0]], dtype=torch.float32),
+        "future_ohlcv": torch.zeros((1, 1, 5), dtype=torch.float32),
+        "future_return_path": torch.zeros((1, 2), dtype=torch.float32),
+        "future_regime": torch.tensor([0], dtype=torch.long),
+    }
+
+    loss = model.compute_loss(output, batch, criterion=None)
+    expected = (
+        2.0 * F.l1_loss(output["prediction"], batch["target"])
+        + 3.0 * F.huber_loss(output["future_ohlcv"], batch["future_ohlcv"], delta=0.5)
+        + 4.0 * torch.maximum(
+            0.8 * (batch["future_return_path"] - output["future_return_path"]),
+            (0.8 - 1.0) * (batch["future_return_path"] - output["future_return_path"]),
+        ).mean()
+        + 5.0 * F.cross_entropy(output["future_regime_logits"], batch["future_regime"], label_smoothing=0.1)
+    )
+
+    assert torch.isclose(loss, expected)
+
+
+def test_chronos_rich_uses_configured_activation():
+    config = _small_model_config()
+    config.model.models.chronos_rich.ACTIVATION = "gelu"
+
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+
+    assert isinstance(model.encoder[0].feed_forward.ff.activation, nn.GELU)
+    assert isinstance(model.forecast_head.activation, nn.GELU)
+    assert isinstance(model.shared_head[0].activation, nn.GELU)
+
+
+def test_chronos_rich_uses_configured_geglu_activation():
+    config = _small_model_config()
+    config.model.models.chronos_rich.ACTIVATION = "geglu"
+
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+
+    assert model.encoder[0].feed_forward.ff.is_gated is True
+    assert isinstance(model.encoder[0].feed_forward.ff.activation, nn.GELU)
+    assert model.encoder[0].feed_forward.ff.input_projection.out_features == 128
+    assert model.forecast_head.is_gated is True
+    assert model.forecast_head.input_projection.out_features == 128
+
+
+def test_chronos_rich_uses_configured_swiglu_activation():
+    config = _small_model_config()
+    config.model.models.chronos_rich.ACTIVATION = "swiglu"
+
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+
+    assert model.encoder[0].feed_forward.ff.is_gated is True
+    assert isinstance(model.encoder[0].feed_forward.ff.activation, nn.SiLU)
+
+
+def test_chronos_rich_rejects_unknown_activation():
+    config = _small_model_config()
+    config.model.models.chronos_rich.ACTIVATION = "unknown_activation"
+
+    with torch.no_grad():
+        with pytest.raises(ValueError, match="Unsupported ChronosRich activation"):
+            create_model(
+                model_type="chronos_rich",
+                num_features=8,
+                num_stocks=4,
+                num_groups=3,
+                config=config,
+                feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+            )
+
+
+def test_chronos_rich_report_includes_rich_outputs(tmp_path: Path):
+    config = _small_model_config()
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+    dataset = FinancialDataset(_make_sequences(num_samples=6), config)
+    loader = DataLoader(dataset, batch_size=3, shuffle=False)
+    report_path = tmp_path / "chronos_rich_report.xlsx"
+
+    metrics, report_df, sector_stats = evaluate_model_with_report(
+        model,
+        loader,
+        device="cpu",
+        stock_id_to_ticker={idx: f"STOCK{idx}" for idx in range(4)},
+        group_id_to_sector={idx: f"SECTOR{idx}" for idx in range(3)},
+        output_path=str(report_path),
+    )
+
+    assert report_path.exists()
+    assert "mse" in metrics
+    assert sector_stats
+    expected_columns = [
+        "pred_future_return_path_t1",
+        "pred_future_return_path_t5",
+        "pred_future_regime",
+        "pred_future_regime_logit_t1",
+        "pred_future_regime_prob_t1",
+        "pred_future_ohlcv_open_t1",
+        "pred_future_ohlcv_close_t5",
+        "real_future_return_path_t1",
+        "real_future_regime",
+        "real_future_ohlcv_open_t1",
+        "real_future_ohlcv_close_t5",
+    ]
+    for column in expected_columns:
+        assert column in report_df.columns
 
 
 def test_chronos_rich_group_attention_changes_output_when_groups_change():

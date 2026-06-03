@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+import torch.nn as nn
 
 from src.evaluation.kronos import (
     _infer_feature_inverse_transform,
@@ -12,7 +13,7 @@ from src.evaluation.kronos import (
     load_kronos_checkpoint,
     resolve_kronos_embedding_sizes,
 )
-from src.models.kronos_model import create_kronos_model, create_kronos_rich_model
+from src.models.kronos_model import create_kronos_model, create_kronos_rich_model, create_kronos_tokenizer
 from src.config.config_loader import Config
 
 
@@ -259,6 +260,7 @@ def test_create_kronos_rich_model_uses_upstream_style_without_repo_embeddings():
                             "FFN_DROPOUT_P": 0.0,
                             "ATTN_DROPOUT_P": 0.0,
                             "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
                             "TOKEN_DROPOUT_P": 0.0,
                             "LEARN_TE": True,
                             "USE_STOCK_EMBEDDING": True,
@@ -287,7 +289,7 @@ def test_create_kronos_model_keeps_repo_embeddings_when_enabled():
             "model": {
                 "models": {
                     "kronos": {
-                        "tokenizer": {"D_IN": 6},
+                        "tokenizer": {"D_IN": 6, "ACTIVATION": "silu"},
                         "network": {
                             "S1_BITS": 2,
                             "S2_BITS": 2,
@@ -298,6 +300,7 @@ def test_create_kronos_model_keeps_repo_embeddings_when_enabled():
                             "FFN_DROPOUT_P": 0.0,
                             "ATTN_DROPOUT_P": 0.0,
                             "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
                             "TOKEN_DROPOUT_P": 0.0,
                             "LEARN_TE": True,
                             "USE_STOCK_EMBEDDING": True,
@@ -318,3 +321,172 @@ def test_create_kronos_model_keeps_repo_embeddings_when_enabled():
     assert model.use_group_embedding is True
     assert model.stock_embedding is not None
     assert model.group_embedding is not None
+
+
+def test_create_kronos_uses_configured_activations():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {
+                            "D_IN": 6,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "N_ENC_LAYERS": 2,
+                            "N_DEC_LAYERS": 2,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "gelu",
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "BETA": 0.25,
+                            "GAMMA0": 1.0,
+                            "GAMMA": 1.0,
+                            "ZETA": 1.0,
+                            "GROUP_SIZE": 2,
+                        },
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "relu",
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": False,
+                            "USE_GROUP_EMBEDDING": False,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    tokenizer = create_kronos_tokenizer(config=model_config, model_key="kronos")
+    model = create_kronos_model(config=model_config, num_stocks=10, num_groups=3, model_key="kronos")
+
+    assert isinstance(tokenizer.encoder[0].ffn.activation, nn.GELU)
+    assert isinstance(model.transformer[0].ffn.activation, nn.ReLU)
+
+
+def test_create_kronos_uses_configured_geglu_activation():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {
+                            "D_IN": 6,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "N_ENC_LAYERS": 2,
+                            "N_DEC_LAYERS": 2,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "geglu",
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "BETA": 0.25,
+                            "GAMMA0": 1.0,
+                            "GAMMA": 1.0,
+                            "ZETA": 1.0,
+                            "GROUP_SIZE": 2,
+                        },
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "swiglu",
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": False,
+                            "USE_GROUP_EMBEDDING": False,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    tokenizer = create_kronos_tokenizer(config=model_config, model_key="kronos")
+    model = create_kronos_model(config=model_config, num_stocks=10, num_groups=3, model_key="kronos")
+
+    assert tokenizer.encoder[0].ffn.is_gated is True
+    assert isinstance(tokenizer.encoder[0].ffn.activation, nn.GELU)
+    assert isinstance(model.transformer[0].ffn.activation, nn.SiLU)
+
+
+def test_create_kronos_rejects_unknown_activation():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {
+                            "D_IN": 6,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "N_ENC_LAYERS": 2,
+                            "N_DEC_LAYERS": 2,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "bad_activation",
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "BETA": 0.25,
+                            "GAMMA0": 1.0,
+                            "GAMMA": 1.0,
+                            "ZETA": 1.0,
+                            "GROUP_SIZE": 2,
+                        },
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": False,
+                            "USE_GROUP_EMBEDDING": False,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="Unsupported Kronos activation"):
+        create_kronos_tokenizer(config=model_config, model_key="kronos")

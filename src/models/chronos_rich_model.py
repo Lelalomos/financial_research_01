@@ -17,11 +17,44 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from einops import rearrange
 
 from src.config import load_config
+from src.training.losses import create_loss_module
 from .chronos2_model import Chronos2EmbeddingLayer, Patchify
+
+
+class ChronosRichMLP(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        dropout_rate: float,
+        activation_name: str,
+    ):
+        super().__init__()
+        self.activation_name = activation_name.strip().lower()
+        self.is_gated = self.activation_name in {"geglu", "swiglu"}
+        self.input_projection = nn.Linear(input_dim, hidden_dim * 2 if self.is_gated else hidden_dim)
+        self.output_projection = nn.Linear(hidden_dim, output_dim)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        if self.activation_name == "geglu":
+            self.activation = nn.GELU()
+        elif self.activation_name == "swiglu":
+            self.activation = nn.SiLU()
+        else:
+            self.activation = ChronosRichModel._build_activation(self.activation_name)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        projected = self.input_projection(hidden_states)
+        if self.is_gated:
+            value, gate = projected.chunk(2, dim=-1)
+            activated = value * self.activation(gate)
+        else:
+            activated = self.activation(projected)
+        return self.output_projection(self.dropout(activated))
 
 
 class ChronosRichTimeSelfAttention(nn.Module):
@@ -108,14 +141,15 @@ class ChronosRichGroupSelfAttention(nn.Module):
 
 
 class ChronosRichFeedForward(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, dropout_rate: float):
+    def __init__(self, d_model: int, d_ff: int, dropout_rate: float, activation_name: str):
         super().__init__()
         self.norm = nn.LayerNorm(d_model)
-        self.ff = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(d_ff, d_model),
+        self.ff = ChronosRichMLP(
+            input_dim=d_model,
+            hidden_dim=d_ff,
+            output_dim=d_model,
+            dropout_rate=dropout_rate,
+            activation_name=activation_name,
         )
         self.dropout = nn.Dropout(dropout_rate)
 
@@ -126,11 +160,16 @@ class ChronosRichFeedForward(nn.Module):
 
 
 class ChronosRichEncoderBlock(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, num_heads: int, dropout_rate: float):
+    def __init__(self, d_model: int, d_ff: int, num_heads: int, dropout_rate: float, activation_name: str):
         super().__init__()
         self.time_attention = ChronosRichTimeSelfAttention(d_model=d_model, num_heads=num_heads, dropout_rate=dropout_rate)
         self.group_attention = ChronosRichGroupSelfAttention(d_model=d_model, num_heads=num_heads, dropout_rate=dropout_rate)
-        self.feed_forward = ChronosRichFeedForward(d_model=d_model, d_ff=d_ff, dropout_rate=dropout_rate)
+        self.feed_forward = ChronosRichFeedForward(
+            d_model=d_model,
+            d_ff=d_ff,
+            dropout_rate=dropout_rate,
+            activation_name=activation_name,
+        )
 
     def forward(self, hidden_states: torch.Tensor, group_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         hidden_states = self.time_attention(hidden_states, attention_mask)
@@ -159,6 +198,7 @@ class ChronosRichModel(nn.Module):
         self.num_regimes = 3
 
         chronos_cfg = config.model.models.chronos_rich
+        activation_name = str(getattr(chronos_cfg, "ACTIVATION", "relu"))
         self.quantiles = [float(q) for q in chronos_cfg.QUANTILES]
         self.num_quantiles = len(self.quantiles)
         self.median_quantile_index = min(
@@ -170,6 +210,28 @@ class ChronosRichModel(nn.Module):
         self.return_path_loss_weight = float(getattr(chronos_cfg, "RETURN_PATH_LOSS_WEIGHT", 1.0))
         self.regime_loss_weight = float(getattr(chronos_cfg, "REGIME_LOSS_WEIGHT", 0.5))
         self.scalar_loss_weight = float(getattr(chronos_cfg, "SCALAR_LOSS_WEIGHT", 1.0))
+        self.scalar_loss_fn = self._build_regression_loss(
+            loss_type=str(getattr(chronos_cfg, "SCALAR_LOSS_TYPE", "directional_huber")),
+            huber_delta=float(getattr(chronos_cfg, "SCALAR_HUBER_DELTA", 0.5)),
+            directional_alpha=float(getattr(chronos_cfg, "SCALAR_DIRECTIONAL_ALPHA", 0.1)),
+            quantile=float(getattr(chronos_cfg, "SCALAR_QUANTILE", 0.5)),
+        )
+        self.ohlcv_loss_fn = self._build_regression_loss(
+            loss_type=str(getattr(chronos_cfg, "OHLCV_LOSS_TYPE", "mse")),
+            huber_delta=float(getattr(chronos_cfg, "OHLCV_HUBER_DELTA", 1.0)),
+            directional_alpha=float(getattr(chronos_cfg, "OHLCV_DIRECTIONAL_ALPHA", 0.1)),
+            quantile=float(getattr(chronos_cfg, "OHLCV_QUANTILE", 0.5)),
+        )
+        self.return_path_loss_fn = self._build_regression_loss(
+            loss_type=str(getattr(chronos_cfg, "RETURN_PATH_LOSS_TYPE", "mse")),
+            huber_delta=float(getattr(chronos_cfg, "RETURN_PATH_HUBER_DELTA", 1.0)),
+            directional_alpha=float(getattr(chronos_cfg, "RETURN_PATH_DIRECTIONAL_ALPHA", 0.1)),
+            quantile=float(getattr(chronos_cfg, "RETURN_PATH_QUANTILE", 0.5)),
+        )
+        self.regime_loss_fn = self._build_classification_loss(
+            loss_type=str(getattr(chronos_cfg, "REGIME_LOSS_TYPE", "cross_entropy")),
+            label_smoothing=float(getattr(chronos_cfg, "REGIME_LABEL_SMOOTHING", 0.0)),
+        )
 
         self.embeddings = Chronos2EmbeddingLayer(
             num_stocks=num_stocks,
@@ -191,17 +253,19 @@ class ChronosRichModel(nn.Module):
                     d_ff=int(chronos_cfg.D_FF),
                     num_heads=int(chronos_cfg.NUM_HEADS),
                     dropout_rate=float(chronos_cfg.DROPOUT_RATE),
+                    activation_name=activation_name,
                 )
                 for _ in range(int(chronos_cfg.NUM_LAYERS))
             ]
         )
         self.encoder_norm = nn.LayerNorm(int(chronos_cfg.D_MODEL))
 
-        self.forecast_head = nn.Sequential(
-            nn.Linear(int(chronos_cfg.D_MODEL), int(chronos_cfg.D_FF)),
-            nn.ReLU(),
-            nn.Dropout(float(chronos_cfg.DROPOUT_RATE)),
-            nn.Linear(int(chronos_cfg.D_FF), self.num_quantiles * self.prediction_horizon),
+        self.forecast_head = ChronosRichMLP(
+            input_dim=int(chronos_cfg.D_MODEL),
+            hidden_dim=int(chronos_cfg.D_FF),
+            output_dim=self.num_quantiles * self.prediction_horizon,
+            dropout_rate=float(chronos_cfg.DROPOUT_RATE),
+            activation_name=activation_name,
         )
 
         shared_input_dim = (num_features * 2) + self.embeddings.output_dim + (self.prediction_horizon * 3)
@@ -212,9 +276,13 @@ class ChronosRichModel(nn.Module):
         for hidden_dim in hidden_sizes:
             shared_layers.extend(
                 [
-                    nn.Linear(in_dim, int(hidden_dim)),
-                    nn.ReLU(),
-                    nn.Dropout(head_dropout),
+                    ChronosRichMLP(
+                        input_dim=in_dim,
+                        hidden_dim=int(hidden_dim),
+                        output_dim=int(hidden_dim),
+                        dropout_rate=head_dropout,
+                        activation_name=activation_name,
+                    ),
                 ]
             )
             in_dim = int(hidden_dim)
@@ -228,6 +296,46 @@ class ChronosRichModel(nn.Module):
         self.future_regime_head = nn.Linear(self.shared_output_dim, self.num_regimes)
 
         self._init_weights()
+
+    @staticmethod
+    def _build_regression_loss(
+        *,
+        loss_type: str,
+        huber_delta: float,
+        directional_alpha: float,
+        quantile: float,
+    ) -> nn.Module:
+        if loss_type == "cross_entropy":
+            raise ValueError("cross_entropy is not valid for ChronosRich regression targets")
+        return create_loss_module(
+            loss_type,
+            huber_delta=huber_delta,
+            directional_alpha=directional_alpha,
+            quantile=quantile,
+        )
+
+    @staticmethod
+    def _build_classification_loss(*, loss_type: str, label_smoothing: float) -> nn.Module:
+        if loss_type != "cross_entropy":
+            raise ValueError("ChronosRich regime loss must use cross_entropy")
+        return create_loss_module(loss_type, label_smoothing=label_smoothing)
+
+    @staticmethod
+    def _build_activation(activation_name: str) -> nn.Module:
+        normalized = activation_name.strip().lower()
+        activations = {
+            "relu": nn.ReLU,
+            "gelu": nn.GELU,
+            "silu": nn.SiLU,
+            "leaky_relu": nn.LeakyReLU,
+            "geglu": nn.GELU,
+            "swiglu": nn.SiLU,
+        }
+        activation_cls = activations.get(normalized)
+        if activation_cls is None:
+            allowed = ", ".join(sorted(activations))
+            raise ValueError(f"Unsupported ChronosRich activation '{activation_name}'. Allowed: {allowed}")
+        return activation_cls()
 
     def _init_weights(self) -> None:
         for module in self.modules():
@@ -343,19 +451,22 @@ class ChronosRichModel(nn.Module):
         }
 
     def compute_loss(self, output: dict[str, torch.Tensor], batch: dict[str, torch.Tensor], criterion) -> torch.Tensor:
-        loss = self.scalar_loss_weight * criterion(output["prediction"], batch["target"])
+        if getattr(criterion, "expects_structured_output", False):
+            return criterion(output, batch)
+
+        loss = self.scalar_loss_weight * self.scalar_loss_fn(output["prediction"], batch["target"])
 
         if "future_ohlcv" in batch:
-            loss = loss + self.ohlcv_loss_weight * F.mse_loss(output["future_ohlcv"], batch["future_ohlcv"])
+            loss = loss + self.ohlcv_loss_weight * self.ohlcv_loss_fn(output["future_ohlcv"], batch["future_ohlcv"])
 
         if "future_return_path" in batch:
-            loss = loss + self.return_path_loss_weight * F.mse_loss(
+            loss = loss + self.return_path_loss_weight * self.return_path_loss_fn(
                 output["future_return_path"],
                 batch["future_return_path"],
             )
 
         if "future_regime" in batch:
-            loss = loss + self.regime_loss_weight * F.cross_entropy(
+            loss = loss + self.regime_loss_weight * self.regime_loss_fn(
                 output["future_regime_logits"],
                 batch["future_regime"],
             )

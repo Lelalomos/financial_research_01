@@ -751,7 +751,7 @@ def test_kronos_epoch_loops_update_progress_bar(monkeypatch):
             return zeros, zeros
 
     class DummyHead:
-        def compute_loss(self, s1_logits, s2_logits, target_s1, target_s2):
+        def compute_loss(self, s1_logits, s2_logits, target_s1, target_s2, loss_fn=None):
             loss = s1_logits.mean() + s2_logits.mean()
             return loss, None, None
 
@@ -797,6 +797,7 @@ def test_kronos_epoch_loops_update_progress_bar(monkeypatch):
         device=torch.device("cpu"),
         config=config,
         max_batches=2,
+        model_type="kronos",
     )
 
     val_loss = module._validate_kronos_epoch(
@@ -804,7 +805,9 @@ def test_kronos_epoch_loops_update_progress_bar(monkeypatch):
         model=model,
         val_loader=loader,
         device=torch.device("cpu"),
+        config=config,
         max_batches=2,
+        model_type="kronos",
     )
 
     assert train_loss > 0.0
@@ -814,3 +817,28 @@ def test_kronos_epoch_loops_update_progress_bar(monkeypatch):
     assert ProgressStub.instances[1].desc == "Kronos val"
     assert len(ProgressStub.instances[0].postfixes) == 2
     assert len(ProgressStub.instances[1].postfixes) == 2
+
+
+def test_kronos_rich_uses_own_configured_loss_modules(tmp_path):
+    module = _load_train_script()
+    config = Config(copy.deepcopy(load_config("model").to_dict()))
+    config.model.models.kronos_rich.RECON_LOSS_TYPE = "mae"
+    config.model.models.kronos_rich.RECON_LOSS_WEIGHT = 2.0
+    config.model.models.kronos_rich.PRE_LOSS_TYPE = "huber"
+    config.model.models.kronos_rich.PRE_HUBER_DELTA = 0.25
+    config.model.models.kronos_rich.PRE_LOSS_WEIGHT = 3.0
+    config.model.models.kronos_rich.TOKEN_LOSS_TYPE = "cross_entropy"
+    config.model.models.kronos_rich.TOKEN_LABEL_SMOOTHING = 0.2
+    config.model.models.kronos_rich.TOKEN_LOSS_WEIGHT = 4.0
+    config.model.models.kronos_rich.BSQ_LOSS_WEIGHT = 5.0
+
+    loss_spec = module._build_kronos_loss_modules(config, "kronos_rich")
+
+    assert loss_spec["recon_loss_fn"].__class__.__name__ == "L1Loss"
+    assert loss_spec["pre_loss_fn"].__class__.__name__ == "HuberLoss"
+    assert loss_spec["token_loss_fn"].__class__.__name__ == "CrossEntropyLossModule"
+    assert loss_spec["token_loss_fn"].label_smoothing == 0.2
+    assert loss_spec["recon_loss_weight"] == 2.0
+    assert loss_spec["pre_loss_weight"] == 3.0
+    assert loss_spec["token_loss_weight"] == 4.0
+    assert loss_spec["bsq_loss_weight"] == 5.0

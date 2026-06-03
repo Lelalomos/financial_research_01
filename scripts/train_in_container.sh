@@ -29,9 +29,9 @@ ORIGINAL_ARGS=("$@")
 # bilstm4_attention_best_lightning.pth
 source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
 
-MODEL_TYPE=""
-EPOCHS=50
-BATCH_SIZE=128
+MODEL_TYPE="chronos_rich"
+EPOCHS=100
+BATCH_SIZE=512
 LEARNING_RATE=0.00001
 BACKEND="lightning"
 STOCKS=""

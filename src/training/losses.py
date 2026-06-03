@@ -2,7 +2,8 @@
 Financially oriented loss functions.
 
 These losses complement standard regression losses by optimizing properties
-that matter for trading: direction correctness and risk-adjusted returns.
+that matter for trading: direction correctness, distribution asymmetry,
+multi-target supervision, and risk-adjusted returns.
 """
 
 from typing import Optional
@@ -57,6 +58,32 @@ def sharpe_ratio_loss(
     return_std = strategy_returns.std(unbiased=False)
     sharpe = mean_return / (return_std + epsilon)
     return -sharpe
+
+
+def quantile_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    quantile: float = 0.5,
+) -> torch.Tensor:
+    """
+    Quantile regression loss.
+
+    This is also known as pinball loss.
+    """
+    if not 0.0 < quantile < 1.0:
+        raise ValueError("quantile must be between 0 and 1")
+
+    error = target - pred
+    return torch.maximum(quantile * error, (quantile - 1.0) * error).mean()
+
+
+def pinball_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    quantile: float = 0.5,
+) -> torch.Tensor:
+    """Alias of quantile loss."""
+    return quantile_loss(pred=pred, target=target, quantile=quantile)
 
 
 def transaction_cost_adjusted_loss(
@@ -143,11 +170,105 @@ class SharpeRatioLoss(nn.Module):
         return sharpe_ratio_loss(pred, target, epsilon=self.epsilon)
 
 
+class CrossEntropyLossModule(nn.Module):
+    """Cross-entropy classification loss wrapper."""
+
+    def __init__(self, label_smoothing: float = 0.0):
+        super().__init__()
+        if not 0.0 <= label_smoothing < 1.0:
+            raise ValueError("label_smoothing must be in [0, 1)")
+        self.label_smoothing = label_smoothing
+        self.loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return self.loss_fn(logits, target)
+
+
+class QuantileLoss(nn.Module):
+    """Quantile regression loss."""
+
+    def __init__(self, quantile: float = 0.5):
+        super().__init__()
+        if not 0.0 < quantile < 1.0:
+            raise ValueError("quantile must be between 0 and 1")
+        self.quantile = quantile
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return quantile_loss(pred=pred, target=target, quantile=self.quantile)
+
+
+class PinballLoss(nn.Module):
+    """Pinball loss, equivalent to quantile regression loss."""
+
+    def __init__(self, quantile: float = 0.5):
+        super().__init__()
+        if not 0.0 < quantile < 1.0:
+            raise ValueError("quantile must be between 0 and 1")
+        self.quantile = quantile
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return pinball_loss(pred=pred, target=target, quantile=self.quantile)
+
+
 class DirectionalLoss(nn.Module):
     """Wrong-direction penalty without a regression term."""
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return F.relu(-torch.sign(target) * pred).mean()
+
+
+class MultiPartRichLoss(nn.Module):
+    """
+    Weighted rich-output loss for structured future-market targets.
+
+    Expects:
+    - output["prediction"], batch["target"]
+    - optional future OHLCV tensors
+    - optional future return path tensors
+    - optional future regime labels/logits
+    """
+
+    expects_structured_output = True
+
+    def __init__(
+        self,
+        scalar_loss_weight: float = 1.0,
+        ohlcv_loss_weight: float = 1.0,
+        return_path_loss_weight: float = 1.0,
+        regime_loss_weight: float = 0.5,
+    ):
+        super().__init__()
+        self.scalar_loss_weight = scalar_loss_weight
+        self.ohlcv_loss_weight = ohlcv_loss_weight
+        self.return_path_loss_weight = return_path_loss_weight
+        self.regime_loss_weight = regime_loss_weight
+        self.scalar_loss = nn.MSELoss()
+        self.ohlcv_loss = nn.MSELoss()
+        self.return_path_loss = nn.MSELoss()
+        self.regime_loss = nn.CrossEntropyLoss()
+
+    def forward(self, output: dict[str, torch.Tensor], batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        loss = self.scalar_loss_weight * self.scalar_loss(output["prediction"], batch["target"])
+
+        if "future_ohlcv" in output and "future_ohlcv" in batch:
+            loss = loss + self.ohlcv_loss_weight * self.ohlcv_loss(
+                output["future_ohlcv"],
+                batch["future_ohlcv"],
+            )
+
+        if "future_return_path" in output and "future_return_path" in batch:
+            loss = loss + self.return_path_loss_weight * self.return_path_loss(
+                output["future_return_path"],
+                batch["future_return_path"],
+            )
+
+        if "future_regime_logits" in output and "future_regime" in batch:
+            loss = loss + self.regime_loss_weight * self.regime_loss(
+                output["future_regime_logits"],
+                batch["future_regime"],
+            )
+
+        return loss
 
 
 class TransactionCostAdjustedLoss(nn.Module):
@@ -174,3 +295,38 @@ class TransactionCostAdjustedLoss(nn.Module):
             return_weight=self.return_weight,
             base_loss=self.base_loss,
         )
+
+
+def create_loss_module(
+    loss_type: str,
+    *,
+    huber_delta: float = 1.0,
+    directional_alpha: float = 0.1,
+    sharpe_epsilon: float = 1e-6,
+    quantile: float = 0.5,
+    label_smoothing: float = 0.0,
+) -> nn.Module:
+    """Create a loss module from a simple typed spec."""
+    if loss_type == "mse":
+        return nn.MSELoss()
+    if loss_type == "mae":
+        return nn.L1Loss()
+    if loss_type == "smooth_l1":
+        return nn.SmoothL1Loss()
+    if loss_type == "huber":
+        return nn.HuberLoss(delta=huber_delta)
+    if loss_type == "directional":
+        return DirectionalLoss()
+    if loss_type == "directional_mse":
+        return DirectionalMSELoss(alpha=directional_alpha)
+    if loss_type == "directional_huber":
+        return DirectionalHuberLoss(alpha=directional_alpha, delta=huber_delta)
+    if loss_type == "sharpe":
+        return SharpeRatioLoss(epsilon=sharpe_epsilon)
+    if loss_type == "quantile_loss":
+        return QuantileLoss(quantile=quantile)
+    if loss_type == "pinball_loss":
+        return PinballLoss(quantile=quantile)
+    if loss_type == "cross_entropy":
+        return CrossEntropyLossModule(label_smoothing=label_smoothing)
+    raise ValueError(f"Unknown loss type: {loss_type}")

@@ -368,16 +368,23 @@ experiment tracking.
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
-| `DEFAULT_MODEL_TYPE` | Default model family when CLI does not specify one. This fallback is used by training, test, validation, and backtest scripts. | Must match a key under `model.models`. | Set to your most trusted baseline. In the current repo, the default is `chronos2`; switch it if you want another model family to drive the default runtime path. |
+| `DEFAULT_MODEL_TYPE` | Default model family when CLI does not specify one. This fallback is used by training, test, validation, and backtest scripts. | Must match a key under `model.models`. | Set to your most trusted baseline. In the current repo, the default is `chronos_rich`; switch it if you want another model family to drive the default runtime path. |
 
 ### `model.loss`
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
-| `LOSS_TYPE` | Training loss function. | One of `mse`, `mae`, `smooth_l1`, `huber`, `directional`, `sharpe`, `directional_mse`, `directional_huber`. | Use `directional_mse` or `directional_huber` when sign accuracy matters. |
+| `LOSS_TYPE` | Training loss function. | One of `mse`, `mae`, `smooth_l1`, `huber`, `directional`, `sharpe`, `directional_mse`, `directional_huber`, `quantile_loss`, `pinball_loss`, `multi_part_rich_loss`. | Use `directional_mse` or `directional_huber` when sign accuracy matters, `quantile_loss` or `pinball_loss` for asymmetric quantile regression, and `multi_part_rich_loss` for `chronos_rich`. |
 | `HUBER_DELTA` | Delta threshold for Huber loss. | Positive float. | Relevant when `LOSS_TYPE = "huber"` or `LOSS_TYPE = "directional_huber"`. |
 | `DIRECTIONAL_ALPHA` | Weight of wrong-direction penalty inside directional hybrid losses. `directional_mse` uses `MSE + alpha * mean(relu(-pred * sign(target)))`; `directional_huber` uses `Huber + alpha * mean(relu(-pred * sign(target)))`. | Non-negative float. `0.0` behaves like plain base regression loss; `0.1` to `0.5` is mild; `1.0` is strong. | Increase when direction matters more than exact return magnitude. |
 | `SHARPE_EPSILON` | Stability epsilon in Sharpe-style loss denominator. | Positive float. | Change only if numerical stability requires it. |
+| `QUANTILE` | Quantile used by `quantile_loss` and `pinball_loss`. | Float in `(0, 1)`, such as `0.1`, `0.5`, or `0.9`. | Change when you want the model to penalize under-prediction or over-prediction asymmetrically. |
+
+Loss notes:
+
+- `quantile_loss` and `pinball_loss` use the same formula in this repo
+- `multi_part_rich_loss` is a structured rich-output loss, not a plain scalar loss
+- `multi_part_rich_loss` should be used with `chronos_rich`
 
 ### `model.device`
 
@@ -652,18 +659,45 @@ The core architecture fields have the same meaning as `model.models.chronos2`:
 - `MONTH_EMB_DIM`
 - `DIVIDEND_FLAG_EMB_DIM`
 - `DROPOUT_EMBEDDING`
+- `ACTIVATION`
 - `QUANTILES`
 - `HEAD_HIDDEN_SIZES`
 - `HEAD_DROPOUT`
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `ACTIVATION` | Activation function used in the Chronos-rich feed-forward blocks and MLP heads. `geglu` and `swiglu` use gated feed-forward behavior instead of a plain pointwise nonlinearity. | One of `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`. | Change when you want a different nonlinearity for training behavior or forecast smoothness. |
 
 Additional Chronos-rich loss-balance fields:
 
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
+| `SCALAR_LOSS_TYPE` | Loss used for the scalar `prediction` output. | Regression loss name such as `directional_huber`, `directional_mse`, `mse`, `mae`, `huber`, `quantile_loss`, or `pinball_loss`. | Change when you want the final scalar target to optimize a different objective from other models. |
+| `SCALAR_HUBER_DELTA` | Huber delta for `SCALAR_LOSS_TYPE` when it uses Huber. | Positive float. | Change only when `SCALAR_LOSS_TYPE` is `huber` or `directional_huber`. |
+| `SCALAR_DIRECTIONAL_ALPHA` | Direction penalty weight for scalar directional losses. | Non-negative float. | Change when scalar sign accuracy matters more or less. |
+| `SCALAR_QUANTILE` | Quantile used by scalar quantile or pinball loss. | Float in `(0, 1)`. | Change when you want asymmetric scalar regression. |
 | `SCALAR_LOSS_WEIGHT` | Weight on the scalar horizon-return loss. | Non-negative float. | Increase when the final return matters more than the richer side targets. |
+| `OHLCV_LOSS_TYPE` | Loss used for `future_ohlcv`. | Regression loss name such as `mse`, `mae`, `smooth_l1`, `huber`, `quantile_loss`, or `pinball_loss`. | Change when full path reconstruction should use a different regression objective. |
+| `OHLCV_HUBER_DELTA` | Huber delta for `OHLCV_LOSS_TYPE` when it uses Huber. | Positive float. | Change only when `OHLCV_LOSS_TYPE = "huber"`. |
+| `OHLCV_DIRECTIONAL_ALPHA` | Direction penalty weight for OHLCV directional losses if you intentionally use them. | Non-negative float. | Usually leave at default unless you deliberately want a directional hybrid loss on OHLCV. |
+| `OHLCV_QUANTILE` | Quantile used by OHLCV quantile or pinball loss. | Float in `(0, 1)`. | Change when you want asymmetric OHLCV regression. |
 | `OHLCV_LOSS_WEIGHT` | Weight on the `future_ohlcv` regression loss. | Non-negative float. | Increase when full path reconstruction matters more. |
+| `RETURN_PATH_LOSS_TYPE` | Loss used for `future_return_path`. | Regression loss name such as `mse`, `mae`, `directional_mse`, `directional_huber`, `huber`, `quantile_loss`, or `pinball_loss`. | Change when the return path should optimize a different shape or directional objective. |
+| `RETURN_PATH_HUBER_DELTA` | Huber delta for `RETURN_PATH_LOSS_TYPE` when it uses Huber. | Positive float. | Change only when `RETURN_PATH_LOSS_TYPE` is `huber` or `directional_huber`. |
+| `RETURN_PATH_DIRECTIONAL_ALPHA` | Direction penalty weight for directional return-path losses. | Non-negative float. | Increase when return-path sign accuracy matters more. |
+| `RETURN_PATH_QUANTILE` | Quantile used by return-path quantile or pinball loss. | Float in `(0, 1)`. | Change when you want asymmetric return-path regression. |
 | `RETURN_PATH_LOSS_WEIGHT` | Weight on the `future_return_path` regression loss. | Non-negative float. | Increase when the shape of the return path matters more. |
+| `REGIME_LOSS_TYPE` | Loss used for `future_regime`. | Currently `cross_entropy`. | Keep as `cross_entropy` unless regime-head training is redesigned. |
+| `REGIME_LABEL_SMOOTHING` | Label smoothing used by the regime classifier loss. | Float in `[0, 1)`. | Increase slightly if regime classification is overconfident. |
 | `REGIME_LOSS_WEIGHT` | Weight on the `future_regime` classification loss. | Non-negative float. | Increase when regime prediction matters more. |
+
+Chronos-rich training now builds its component losses from the `chronos_rich`
+config block itself. The total loss is the weighted sum of:
+
+- scalar target loss from `SCALAR_LOSS_TYPE`
+- `future_ohlcv` loss from `OHLCV_LOSS_TYPE`
+- `future_return_path` loss from `RETURN_PATH_LOSS_TYPE`
+- `future_regime` loss from `REGIME_LOSS_TYPE`
 
 ### `model.models.kronos`
 
@@ -711,6 +745,7 @@ Reference / credit:
 | `FFN_DROPOUT_P` | Dropout in tokenizer feed-forward blocks. | Float in `[0, 1)`. | Increase if tokenizer overfits. |
 | `ATTN_DROPOUT_P` | Dropout inside tokenizer attention blocks. | Float in `[0, 1)`. | Increase for stronger regularization. |
 | `RESID_DROPOUT_P` | Dropout on tokenizer residual outputs. | Float in `[0, 1)`. | Increase when deeper tokenizer stacks overfit. |
+| `ACTIVATION` | Activation function used inside tokenizer feed-forward blocks. `geglu` and `swiglu` use gated feed-forward behavior. | One of `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`. | Change when you want a different tokenizer nonlinearity. |
 | `S1_BITS` | Number of bits used for the coarse token. This sets coarse token vocabulary size to `2 ** S1_BITS`. | Positive integer. | Increase if the coarse code is too small to represent the data well. |
 | `S2_BITS` | Number of bits used for the fine token. This sets fine token vocabulary size to `2 ** S2_BITS`. | Positive integer. | Increase if the fine code needs more detail. |
 | `BETA` | Commitment-loss weight in the binary spherical quantizer. | Non-negative float. | Increase when token assignments drift too much from pre-quantized activations. |
@@ -732,6 +767,7 @@ Reference / credit:
 | `FFN_DROPOUT_P` | Feed-forward dropout in the generator blocks. | Float in `[0, 1)`. | Increase if the generator overfits. |
 | `ATTN_DROPOUT_P` | Attention dropout in the generator blocks. | Float in `[0, 1)`. | Increase for stronger regularization. |
 | `RESID_DROPOUT_P` | Residual dropout in the generator blocks. | Float in `[0, 1)`. | Adjust if deep-token modeling overfits. |
+| `ACTIVATION` | Activation function used inside generator feed-forward blocks. `geglu` and `swiglu` use gated feed-forward behavior. | One of `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`. | Change when you want a different generator nonlinearity. |
 | `TOKEN_DROPOUT_P` | Dropout applied after token and time embeddings are added. | Float in `[0, 1)`. | Increase to regularize token embeddings. |
 | `LEARN_TE` | Whether time embeddings are learned instead of fixed sinusoidal-style embeddings. | `true` or `false`. | Set `true` to let the model learn calendar embeddings; set `false` for fixed embeddings. |
 | `USE_STOCK_EMBEDDING` | Whether Kronos adds `stock_id` embeddings from prepared data. | `true` or `false`. | Enable when stock identity is useful to the model. |
@@ -758,6 +794,31 @@ important runtime rule:
 - `kronos_rich` uses the upstream-style generator path and does not apply those extra repo embeddings even if the config fields are present
 
 Use this block when running `--model-type kronos_rich`.
+
+Additional Kronos-rich training-loss fields:
+
+| Field | Meaning | How to set | When to change |
+|---|---|---|---|
+| `RECON_LOSS_TYPE` | Loss used for tokenizer reconstruction output `z_full -> features`. | Regression loss name such as `mse`, `mae`, `smooth_l1`, `huber`, `quantile_loss`, or `pinball_loss`. | Change when full reconstruction should use a different regression objective. |
+| `RECON_HUBER_DELTA` | Huber delta for `RECON_LOSS_TYPE` when it uses Huber. | Positive float. | Change only when `RECON_LOSS_TYPE = "huber"`. |
+| `RECON_QUANTILE` | Quantile used by reconstruction quantile or pinball loss. | Float in `(0, 1)`. | Change when you want asymmetric reconstruction regression. |
+| `RECON_LOSS_WEIGHT` | Weight on reconstruction loss. | Non-negative float. | Increase when exact reconstruction matters more. |
+| `PRE_LOSS_TYPE` | Loss used for the pre-quantized reconstruction output `z_pre -> features`. | Regression loss name such as `mse`, `mae`, `smooth_l1`, `huber`, `quantile_loss`, or `pinball_loss`. | Change when the pre-quantized path needs a different objective. |
+| `PRE_HUBER_DELTA` | Huber delta for `PRE_LOSS_TYPE` when it uses Huber. | Positive float. | Change only when `PRE_LOSS_TYPE = "huber"`. |
+| `PRE_QUANTILE` | Quantile used by pre-reconstruction quantile or pinball loss. | Float in `(0, 1)`. | Change when you want asymmetric pre-reconstruction regression. |
+| `PRE_LOSS_WEIGHT` | Weight on pre-reconstruction loss. | Non-negative float. | Increase when the coarse reconstruction path matters more. |
+| `TOKEN_LOSS_TYPE` | Loss used for the token prediction head. | Currently `cross_entropy`. | Keep as `cross_entropy` unless token-head training is redesigned. |
+| `TOKEN_LABEL_SMOOTHING` | Label smoothing used in token cross-entropy. | Float in `[0, 1)`. | Increase slightly if token logits are too overconfident. |
+| `TOKEN_LOSS_WEIGHT` | Weight on token prediction loss. | Non-negative float. | Increase when token prediction matters more than reconstruction. |
+| `BSQ_LOSS_WEIGHT` | Weight on the quantizer BSQ loss returned by the tokenizer. | Non-negative float. | Increase when codebook commitment and quantizer regularization need stronger pressure. |
+
+Kronos-rich does not share the same outputs as `chronos_rich`. Its train loss is
+the weighted sum of:
+
+- reconstruction loss from `RECON_LOSS_TYPE`
+- pre-reconstruction loss from `PRE_LOSS_TYPE`
+- quantizer `bsq_loss`
+- token loss from `TOKEN_LOSS_TYPE`
 
 Kronos derives stock/group vocabulary sizes from dataset metadata at runtime.
 `NUM_STOCKS` and `NUM_GROUPS` are intentionally not stored in
@@ -912,7 +973,7 @@ Focus on:
 
 ### If you want a safer baseline
 
-- Keep `LOSS_TYPE = "directional_mse"`
+- Keep `LOSS_TYPE = "directional_huber"` for the current default baseline
 - Start `DIRECTIONAL_ALPHA` around `0.1` to `0.25`
 - Keep `NORMALIZE_TARGET = true`
 - Keep `DEFAULT = "lightning"`

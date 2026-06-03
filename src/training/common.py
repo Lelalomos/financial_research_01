@@ -8,7 +8,16 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Iterable, Optional
 
-from .losses import DirectionalHuberLoss, DirectionalLoss, DirectionalMSELoss, SharpeRatioLoss
+from .losses import (
+    create_loss_module,
+    DirectionalHuberLoss,
+    DirectionalLoss,
+    DirectionalMSELoss,
+    MultiPartRichLoss,
+    PinballLoss,
+    QuantileLoss,
+    SharpeRatioLoss,
+)
 
 
 def create_optimizer_for_params(
@@ -60,27 +69,28 @@ def create_scheduler(
 def create_loss_function(config) -> nn.Module:
     """Create the configured loss function."""
     loss_type = config.model.loss.LOSS_TYPE
-    if loss_type == 'mse':
-        return nn.MSELoss()
-    if loss_type == 'mae':
-        return nn.L1Loss()
-    if loss_type == 'smooth_l1':
-        return nn.SmoothL1Loss()
-    if loss_type == 'huber':
-        return nn.HuberLoss(delta=config.model.loss.HUBER_DELTA)
-    if loss_type == 'directional':
-        return DirectionalLoss()
-    if loss_type == 'directional_mse':
-        alpha = config.model.loss.get('DIRECTIONAL_ALPHA', 0.1)
-        return DirectionalMSELoss(alpha=alpha)
-    if loss_type == 'directional_huber':
-        alpha = config.model.loss.get('DIRECTIONAL_ALPHA', 0.1)
-        delta = config.model.loss.get('HUBER_DELTA', 1.0)
-        return DirectionalHuberLoss(alpha=alpha, delta=delta)
-    if loss_type == 'sharpe':
-        epsilon = config.model.loss.get('SHARPE_EPSILON', 1e-6)
-        return SharpeRatioLoss(epsilon=epsilon)
-    raise ValueError(f"Unknown loss type: {loss_type}")
+    if loss_type == 'quantile_loss':
+        quantile = config.model.loss.get('QUANTILE', 0.5)
+        return QuantileLoss(quantile=quantile)
+    if loss_type == 'pinball_loss':
+        quantile = config.model.loss.get('QUANTILE', 0.5)
+        return PinballLoss(quantile=quantile)
+    if loss_type == 'multi_part_rich_loss':
+        rich_cfg = config.model.models.chronos_rich
+        return MultiPartRichLoss(
+            scalar_loss_weight=float(getattr(rich_cfg, 'SCALAR_LOSS_WEIGHT', 1.0)),
+            ohlcv_loss_weight=float(getattr(rich_cfg, 'OHLCV_LOSS_WEIGHT', 1.0)),
+            return_path_loss_weight=float(getattr(rich_cfg, 'RETURN_PATH_LOSS_WEIGHT', 1.0)),
+            regime_loss_weight=float(getattr(rich_cfg, 'REGIME_LOSS_WEIGHT', 0.5)),
+        )
+    return create_loss_module(
+        loss_type,
+        huber_delta=config.model.loss.get('HUBER_DELTA', 1.0),
+        directional_alpha=config.model.loss.get('DIRECTIONAL_ALPHA', 0.1),
+        sharpe_epsilon=config.model.loss.get('SHARPE_EPSILON', 1e-6),
+        quantile=config.model.loss.get('QUANTILE', 0.5),
+        label_smoothing=config.model.loss.get('LABEL_SMOOTHING', 0.0),
+    )
 
 
 def calculate_prediction_health(predictions, targets=None) -> dict:

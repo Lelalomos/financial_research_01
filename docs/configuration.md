@@ -89,7 +89,7 @@ config.data.technical_indicators.EMA_PERIODS.append(20)
 {
   "data": {
     "sampling": {
-      "STOCK_SELECTION_MODE": "random",
+      "STOCK_SELECTION_MODE": "sorted",
       "MARKET_CAP_METADATA_DIR": "raw_data/ticket_data/us"
     }
   }
@@ -410,9 +410,11 @@ The model config has separate sections for each model type:
       "SCHEDULER": "reduce_on_plateau"
     },
     "loss": {
-      "LOSS_TYPE": "directional_mse",
-      "HUBER_DELTA": 1.0,
-      "DIRECTIONAL_ALPHA": 0.1
+      "LOSS_TYPE": "directional_huber",
+      "HUBER_DELTA": 0.5,
+      "DIRECTIONAL_ALPHA": 0.1,
+      "SHARPE_EPSILON": 0.000001,
+      "QUANTILE": 0.5
     },
     "models": {
       "lstm3_attention": {
@@ -572,10 +574,34 @@ Semantics:
 ### Loss Function
 
 ```python
-config.model.loss.LOSS_TYPE = "directional_mse"  # e.g. 'directional_mse', 'directional_huber', 'huber', 'mse', 'mae', 'smooth_l1'
+config.model.loss.LOSS_TYPE = "directional_huber"  # e.g. 'directional_huber', 'directional_mse', 'quantile_loss', 'pinball_loss', 'multi_part_rich_loss', 'huber', 'mse', 'mae', 'smooth_l1'
 config.model.loss.DIRECTIONAL_ALPHA = 0.1
-config.model.loss.HUBER_DELTA = 1.0  # used when LOSS_TYPE == "huber" or "directional_huber"
+config.model.loss.HUBER_DELTA = 0.5  # used when LOSS_TYPE == "huber" or "directional_huber"
+config.model.loss.QUANTILE = 0.5  # used when LOSS_TYPE == "quantile_loss" or "pinball_loss"
 ```
+
+Loss selection notes:
+
+- `quantile_loss` and `pinball_loss` are equivalent in this repo
+- `multi_part_rich_loss` is intended for `chronos_rich`
+- `multi_part_rich_loss` uses the `chronos_rich` component settings and weights:
+  - `SCALAR_LOSS_TYPE`
+  - `SCALAR_LOSS_WEIGHT`
+  - `OHLCV_LOSS_TYPE`
+  - `OHLCV_LOSS_WEIGHT`
+  - `RETURN_PATH_LOSS_TYPE`
+  - `RETURN_PATH_LOSS_WEIGHT`
+  - `REGIME_LOSS_TYPE`
+  - `REGIME_LOSS_WEIGHT`
+- `kronos_rich` has its own loss config and does not follow `chronos_rich`
+- `kronos_rich` uses:
+  - `RECON_LOSS_TYPE`
+  - `PRE_LOSS_TYPE`
+  - `TOKEN_LOSS_TYPE`
+  - `RECON_LOSS_WEIGHT`
+  - `PRE_LOSS_WEIGHT`
+  - `TOKEN_LOSS_WEIGHT`
+  - `BSQ_LOSS_WEIGHT`
 
 ### Local MLflow Experiment Tracking
 

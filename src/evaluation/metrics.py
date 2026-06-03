@@ -18,7 +18,40 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from pathlib import Path
 import pandas as pd
 
-from src.models.model_output import get_prediction_tensor
+from src.models.model_output import get_output_components, get_prediction_tensor
+
+
+_OHLCV_NAMES = ["open", "high", "low", "close", "volume"]
+
+
+def _append_flattened_columns(
+    report_df: pd.DataFrame,
+    prefix: str,
+    values: np.ndarray,
+    *,
+    feature_names: Optional[List[str]] = None,
+) -> None:
+    """Expand 1D/2D/3D arrays into flat report columns."""
+    array = np.asarray(values)
+
+    if array.ndim == 1:
+        report_df[prefix] = array
+        return
+
+    if array.ndim == 2:
+        for idx in range(array.shape[1]):
+            report_df[f"{prefix}_t{idx + 1}"] = array[:, idx]
+        return
+
+    if array.ndim == 3:
+        names = feature_names or [f"dim{idx}" for idx in range(array.shape[2])]
+        for step_idx in range(array.shape[1]):
+            for feature_idx in range(array.shape[2]):
+                feature_name = names[feature_idx] if feature_idx < len(names) else f"dim{feature_idx}"
+                report_df[f"{prefix}_{feature_name}_t{step_idx + 1}"] = array[:, step_idx, feature_idx]
+        return
+
+    raise ValueError(f"Unsupported array rank for report expansion: {array.ndim}")
 
 
 def calculate_metrics(
@@ -319,6 +352,8 @@ def evaluate_model_with_report(
     all_targets = []
     all_stock_ids = []
     all_group_ids = []
+    predicted_components: Dict[str, List[np.ndarray]] = {}
+    target_components: Dict[str, List[np.ndarray]] = {}
 
     with torch.no_grad():
         for batch in data_loader:
@@ -336,7 +371,13 @@ def evaluate_model_with_report(
                 dividend_flag = torch.ones(features.shape[0], features.shape[1],
                                               dtype=torch.long, device=device)
 
-            output = get_prediction_tensor(model(features, stock_id, group_id, day, month, dividend_flag))
+            raw_output = model(features, stock_id, group_id, day, month, dividend_flag)
+            output = get_prediction_tensor(raw_output)
+            output_components = {
+                key: value.detach().cpu().numpy()
+                for key, value in get_output_components(raw_output).items()
+                if isinstance(value, torch.Tensor)
+            }
 
             all_predictions.extend(output.cpu().numpy().flatten())
             all_targets.extend(target.cpu().numpy().flatten())
@@ -344,6 +385,13 @@ def evaluate_model_with_report(
             # Get the first stock_id and group_id from the sequence (representative)
             all_stock_ids.extend(stock_id[:, 0].cpu().numpy().flatten())
             all_group_ids.extend(group_id[:, 0].cpu().numpy().flatten())
+
+            for key, value in output_components.items():
+                predicted_components.setdefault(key, []).append(value)
+
+            for key in ("future_ohlcv", "future_return_path", "future_regime"):
+                if key in batch:
+                    target_components.setdefault(key, []).append(batch[key].detach().cpu().numpy())
 
     predictions = np.array(all_predictions)
     targets = np.array(all_targets)
@@ -378,6 +426,38 @@ def evaluate_model_with_report(
         report_data['sector'] = [f"sector_{gid}" for gid in group_ids]
 
     report_df = pd.DataFrame(report_data)
+
+    for key, chunks in predicted_components.items():
+        combined = np.concatenate(chunks, axis=0)
+        if key == "prediction":
+            continue
+        if key == "future_ohlcv":
+            _append_flattened_columns(report_df, "pred_future_ohlcv", combined, feature_names=_OHLCV_NAMES)
+            continue
+        if key == "future_return_path":
+            _append_flattened_columns(report_df, "pred_future_return_path", combined)
+            continue
+        if key == "future_regime":
+            _append_flattened_columns(report_df, "pred_future_regime", combined)
+            continue
+        if key == "future_regime_logits":
+            _append_flattened_columns(report_df, "pred_future_regime_logit", combined)
+            probs = torch.softmax(torch.from_numpy(combined), dim=-1).numpy()
+            _append_flattened_columns(report_df, "pred_future_regime_prob", probs)
+            continue
+        _append_flattened_columns(report_df, f"pred_{key}", combined)
+
+    for key, chunks in target_components.items():
+        combined = np.concatenate(chunks, axis=0)
+        if key == "future_ohlcv":
+            _append_flattened_columns(report_df, "real_future_ohlcv", combined, feature_names=_OHLCV_NAMES)
+            continue
+        if key == "future_return_path":
+            _append_flattened_columns(report_df, "real_future_return_path", combined)
+            continue
+        if key == "future_regime":
+            _append_flattened_columns(report_df, "real_future_regime", combined)
+            continue
 
     # Calculate distance (predict - real)
     report_df['distance'] = report_df['predict_target'] - report_df['real_target']

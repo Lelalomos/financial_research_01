@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
 MODEL_PATH="best"
 REPORTS_DIR="outputs"
 CLEANUP_OLD_FILES=true
-MODEL_TYPE=""
+MODEL_TYPE="chronos_rich"
 DATA_DIR=""
 DEVICE=""
 FORCE_CPU=false

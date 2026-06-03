@@ -7,6 +7,23 @@ from torch.autograd import Function
 import torch.nn.functional as F
 
 
+def build_kronos_activation(activation_name: str) -> nn.Module:
+    normalized = activation_name.strip().lower()
+    activations = {
+        "relu": nn.ReLU,
+        "gelu": nn.GELU,
+        "silu": nn.SiLU,
+        "leaky_relu": nn.LeakyReLU,
+        "geglu": nn.GELU,
+        "swiglu": nn.SiLU,
+    }
+    activation_cls = activations.get(normalized)
+    if activation_cls is None:
+        allowed = ", ".join(sorted(activations))
+        raise ValueError(f"Unsupported Kronos activation '{activation_name}'. Allowed: {allowed}")
+    return activation_cls()
+
+
 class DifferentiableEntropyFunction(Function):
     @staticmethod
     def forward(ctx, zq, basis, K, eps):
@@ -259,16 +276,23 @@ class RMSNorm(torch.nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, d_model, ff_dim, ffn_dropout_p=0.0):
+    def __init__(self, d_model, ff_dim, ffn_dropout_p=0.0, activation_name="silu"):
         super().__init__()
 
+        self.activation_name = activation_name.strip().lower()
         self.w1 = nn.Linear(d_model, ff_dim, bias=False)
         self.w3 = nn.Linear(d_model, ff_dim, bias=False)
         self.w2 = nn.Linear(ff_dim, d_model, bias=False)
         self.ffn_dropout = nn.Dropout(ffn_dropout_p)
+        self.activation = build_kronos_activation(activation_name)
+        self.is_gated = self.activation_name in {"relu", "gelu", "silu", "leaky_relu", "geglu", "swiglu"}
 
     def forward(self, x):
-        return self.ffn_dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
+        if self.is_gated:
+            hidden = self.activation(self.w1(x)) * self.w3(x)
+        else:
+            hidden = self.activation(self.w1(x))
+        return self.ffn_dropout(self.w2(hidden))
 
 
 class RotaryPositionalEmbedding(nn.Module):
@@ -452,12 +476,13 @@ class TransformerBlock(nn.Module):
         ffn_dropout_p=0.0,
         attn_dropout_p=0.0,
         resid_dropout_p=0.0,
+        activation_name="silu",
     ):
         super().__init__()
         self.norm1 = RMSNorm(d_model)
         self.self_attn = MultiHeadAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout_p)
         self.norm2 = RMSNorm(d_model)
-        self.ffn = FeedForward(d_model, ff_dim, ffn_dropout_p)
+        self.ffn = FeedForward(d_model, ff_dim, ffn_dropout_p, activation_name=activation_name)
 
     def forward(self, x, key_padding_mask=None):
         residual = x
@@ -480,18 +505,20 @@ class DualHead(nn.Module):
         self.proj_s1 = nn.Linear(d_model, self.vocab_s1)
         self.proj_s2 = nn.Linear(d_model, self.vocab_s2)
 
-    def compute_loss(self, s1_logits, s2_logits, s1_targets, s2_targets, padding_mask=None):
+    def compute_loss(self, s1_logits, s2_logits, s1_targets, s2_targets, padding_mask=None, loss_fn=None):
+        if loss_fn is None:
+            loss_fn = F.cross_entropy
         if padding_mask is not None:
             valid_mask = padding_mask == 0
             s1_logits = s1_logits[valid_mask]
             s2_logits = s2_logits[valid_mask]
             s1_targets = s1_targets[valid_mask]
             s2_targets = s2_targets[valid_mask]
-            ce_s1 = F.cross_entropy(s1_logits, s1_targets)
-            ce_s2 = F.cross_entropy(s2_logits, s2_targets)
+            ce_s1 = loss_fn(s1_logits, s1_targets)
+            ce_s2 = loss_fn(s2_logits, s2_targets)
         else:
-            ce_s1 = F.cross_entropy(s1_logits.reshape(-1, self.vocab_s1), s1_targets.reshape(-1))
-            ce_s2 = F.cross_entropy(s2_logits.reshape(-1, self.vocab_s2), s2_targets.reshape(-1))
+            ce_s1 = loss_fn(s1_logits.reshape(-1, self.vocab_s1), s1_targets.reshape(-1))
+            ce_s2 = loss_fn(s2_logits.reshape(-1, self.vocab_s2), s2_targets.reshape(-1))
         ce_loss = (ce_s1 + ce_s2) / 2
         return ce_loss, ce_s1, ce_s2
 

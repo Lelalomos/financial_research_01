@@ -9,7 +9,6 @@ from pathlib import Path
 import json
 import numpy as np
 import torch
-import torch.nn.functional as F
 from typing import Optional, List, Dict
 from sklearn.preprocessing import LabelEncoder
 from tqdm import tqdm
@@ -36,6 +35,7 @@ from src.training import (
 )
 from src.training.common import create_optimizer_for_params, create_scheduler
 from src.training.early_stopping import EarlyStopping, atomic_torch_save, make_weights_only_safe
+from src.training.losses import create_loss_module
 from src.utils.data_preview import load_ticker_mapping, log_sequence_preview
 from src.utils.logger import get_logger, get_training_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
@@ -62,6 +62,78 @@ class LimitedLoader:
         if self.limit is None:
             return len(self.loader)
         return min(len(self.loader), self.limit)
+
+
+def _build_kronos_loss_modules(config, model_type: str):
+    model_cfg = getattr(config.model.models, model_type)
+    return {
+        "recon_loss_fn": create_loss_module(
+            getattr(model_cfg, "RECON_LOSS_TYPE", "mse"),
+            huber_delta=float(getattr(model_cfg, "RECON_HUBER_DELTA", 1.0)),
+            quantile=float(getattr(model_cfg, "RECON_QUANTILE", 0.5)),
+        ),
+        "pre_loss_fn": create_loss_module(
+            getattr(model_cfg, "PRE_LOSS_TYPE", "mse"),
+            huber_delta=float(getattr(model_cfg, "PRE_HUBER_DELTA", 1.0)),
+            quantile=float(getattr(model_cfg, "PRE_QUANTILE", 0.5)),
+        ),
+        "token_loss_fn": create_loss_module(
+            getattr(model_cfg, "TOKEN_LOSS_TYPE", "cross_entropy"),
+            label_smoothing=float(getattr(model_cfg, "TOKEN_LABEL_SMOOTHING", 0.0)),
+        ),
+        "recon_loss_weight": float(getattr(model_cfg, "RECON_LOSS_WEIGHT", 1.0)),
+        "pre_loss_weight": float(getattr(model_cfg, "PRE_LOSS_WEIGHT", 1.0)),
+        "bsq_loss_weight": float(getattr(model_cfg, "BSQ_LOSS_WEIGHT", 1.0)),
+        "token_loss_weight": float(getattr(model_cfg, "TOKEN_LOSS_WEIGHT", 1.0)),
+    }
+
+
+def _compute_kronos_batch_loss(tokenizer, model, batch, device, config, model_type: str = "kronos"):
+    features = batch['features'].to(device)
+    stock_id = batch['stock_id'].to(device)
+    group_id = batch['group_id'].to(device)
+    day = batch['day'].to(device)
+    month = batch['month'].to(device)
+    dividend_flag = batch['dividend_flag'].to(device)
+    loss_spec = _build_kronos_loss_modules(config, model_type)
+
+    (z_pre, z_full), bsq_loss, _, _ = tokenizer(features)
+    recon_loss = loss_spec["recon_loss_fn"](z_full, features)
+    pre_loss = loss_spec["pre_loss_fn"](z_pre, features)
+
+    with torch.no_grad():
+        s1_ids, s2_ids = tokenizer.encode(features, half=True)
+
+    input_s1 = s1_ids[:, :-1]
+    input_s2 = s2_ids[:, :-1]
+    target_s1 = s1_ids[:, 1:]
+    target_s2 = s2_ids[:, 1:]
+
+    s1_logits, s2_logits = model(
+        input_s1,
+        input_s2,
+        stock_id=stock_id[:, :-1],
+        group_id=group_id[:, :-1],
+        day=day[:, :-1],
+        month=month[:, :-1],
+        dividend_flag=dividend_flag[:, :-1],
+        use_teacher_forcing=True,
+        s1_targets=target_s1,
+    )
+    token_loss, _, _ = model.head.compute_loss(
+        s1_logits,
+        s2_logits,
+        target_s1,
+        target_s2,
+        loss_fn=loss_spec["token_loss_fn"],
+    )
+    total_loss = (
+        loss_spec["recon_loss_weight"] * recon_loss
+        + loss_spec["pre_loss_weight"] * pre_loss
+        + loss_spec["bsq_loss_weight"] * bsq_loss
+        + loss_spec["token_loss_weight"] * token_loss
+    )
+    return total_loss
 
 
 def parse_args():
@@ -345,7 +417,7 @@ def _load_kronos_checkpoint(tokenizer, model, checkpoint_path: str, device, opti
     return checkpoint
 
 
-def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, config, max_batches=None):
+def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, config, max_batches=None, model_type="kronos"):
     tokenizer.train()
     model.train()
     total_loss = 0.0
@@ -356,40 +428,15 @@ def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, confi
     for batch_idx, batch in enumerate(progress_bar):
         if max_batches is not None and batch_idx >= max_batches:
             break
-        features = batch['features'].to(device)
-        stock_id = batch['stock_id'].to(device)
-        group_id = batch['group_id'].to(device)
-        day = batch['day'].to(device)
-        month = batch['month'].to(device)
-        dividend_flag = batch['dividend_flag'].to(device)
-
         optimizer.zero_grad()
-
-        (z_pre, z_full), bsq_loss, _, _ = tokenizer(features)
-        recon_loss = F.mse_loss(z_full, features)
-        pre_loss = F.mse_loss(z_pre, features)
-
-        with torch.no_grad():
-            s1_ids, s2_ids = tokenizer.encode(features, half=True)
-
-        input_s1 = s1_ids[:, :-1]
-        input_s2 = s2_ids[:, :-1]
-        target_s1 = s1_ids[:, 1:]
-        target_s2 = s2_ids[:, 1:]
-
-        s1_logits, s2_logits = model(
-            input_s1,
-            input_s2,
-            stock_id=stock_id[:, :-1],
-            group_id=group_id[:, :-1],
-            day=day[:, :-1],
-            month=month[:, :-1],
-            dividend_flag=dividend_flag[:, :-1],
-            use_teacher_forcing=True,
-            s1_targets=target_s1,
+        loss = _compute_kronos_batch_loss(
+            tokenizer=tokenizer,
+            model=model,
+            batch=batch,
+            device=device,
+            config=config,
+            model_type=model_type,
         )
-        token_loss, _, _ = model.head.compute_loss(s1_logits, s2_logits, target_s1, target_s2)
-        loss = recon_loss + pre_loss + bsq_loss + token_loss
         loss.backward()
 
         if config.model.training.GRADIENT_CLIP_VALUE > 0:
@@ -411,7 +458,7 @@ def _train_kronos_epoch(tokenizer, model, train_loader, optimizer, device, confi
     return total_loss / total_batches
 
 
-def _validate_kronos_epoch(tokenizer, model, val_loader, device, max_batches=None):
+def _validate_kronos_epoch(tokenizer, model, val_loader, device, config=None, max_batches=None, model_type="kronos"):
     tokenizer.eval()
     model.eval()
     total_loss = 0.0
@@ -423,36 +470,16 @@ def _validate_kronos_epoch(tokenizer, model, val_loader, device, max_batches=Non
         for batch_idx, batch in enumerate(progress_bar):
             if max_batches is not None and batch_idx >= max_batches:
                 break
-            features = batch['features'].to(device)
-            stock_id = batch['stock_id'].to(device)
-            group_id = batch['group_id'].to(device)
-            day = batch['day'].to(device)
-            month = batch['month'].to(device)
-            dividend_flag = batch['dividend_flag'].to(device)
-
-            (z_pre, z_full), bsq_loss, _, _ = tokenizer(features)
-            recon_loss = F.mse_loss(z_full, features)
-            pre_loss = F.mse_loss(z_pre, features)
-            s1_ids, s2_ids = tokenizer.encode(features, half=True)
-
-            input_s1 = s1_ids[:, :-1]
-            input_s2 = s2_ids[:, :-1]
-            target_s1 = s1_ids[:, 1:]
-            target_s2 = s2_ids[:, 1:]
-
-            s1_logits, s2_logits = model(
-                input_s1,
-                input_s2,
-                stock_id=stock_id[:, :-1],
-                group_id=group_id[:, :-1],
-                day=day[:, :-1],
-                month=month[:, :-1],
-                dividend_flag=dividend_flag[:, :-1],
-                use_teacher_forcing=True,
-                s1_targets=target_s1,
+            if config is None:
+                raise ValueError("config is required for Kronos validation loss computation")
+            loss = _compute_kronos_batch_loss(
+                tokenizer=tokenizer,
+                model=model,
+                batch=batch,
+                device=device,
+                config=config,
+                model_type=model_type,
             )
-            token_loss, _, _ = model.head.compute_loss(s1_logits, s2_logits, target_s1, target_s2)
-            loss = recon_loss + pre_loss + bsq_loss + token_loss
             total_loss += float(loss.cpu().item())
             total_batches += 1
             progress_bar.set_postfix({
@@ -526,6 +553,7 @@ def train_kronos(
             device,
             config,
             max_batches=args.max_train_batches,
+            model_type=model_type,
         )
         history['train_loss'].append(train_loss)
 
@@ -535,7 +563,9 @@ def train_kronos(
                 model,
                 loaders['val'],
                 device,
+                config=config,
                 max_batches=args.max_val_batches,
+                model_type=model_type,
             )
         else:
             val_loss = train_loss

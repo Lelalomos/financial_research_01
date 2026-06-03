@@ -174,10 +174,11 @@ class ModelSelectionConfig(StrictBaseModel):
 
 
 class LossConfig(StrictBaseModel):
-    LOSS_TYPE: Literal['mse', 'mae', 'smooth_l1', 'huber', 'directional', 'sharpe', 'directional_mse', 'directional_huber']
+    LOSS_TYPE: Literal['mse', 'mae', 'smooth_l1', 'huber', 'directional', 'sharpe', 'directional_mse', 'directional_huber', 'quantile_loss', 'pinball_loss', 'multi_part_rich_loss']
     HUBER_DELTA: float = Field(gt=0.0)
     DIRECTIONAL_ALPHA: float = Field(default=0.1, ge=0.0)
     SHARPE_EPSILON: float = Field(default=1e-6, gt=0.0)
+    QUANTILE: float = Field(default=0.5, gt=0.0, lt=1.0)
 
 
 class DeviceConfig(StrictBaseModel):

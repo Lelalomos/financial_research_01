@@ -100,7 +100,7 @@ Important defaults:
 - `model.training.NUM_EPOCHS = 30`
 - `model.training.OPTIMIZER = "adam"`
 - `model.training.SCHEDULER = "reduce_on_plateau"`
-- `model.loss.LOSS_TYPE = "directional_mse"`
+- `model.loss.LOSS_TYPE = "directional_huber"`
 - `model.training_backend.DEFAULT = "lightning"`
 
 
@@ -241,8 +241,24 @@ Recommended training settings in `config/model.json`:
 - `NUM_EPOCHS = 30`
 - `BATCH_SIZE = 64` or `128`
 - `LEARNING_RATE = 0.0001`
-- `LOSS_TYPE = "directional_mse"`
+- `LOSS_TYPE = "directional_huber"`
 - keep backend as `lightning`
+
+Additional loss options:
+
+- `quantile_loss` and `pinball_loss` use `model.loss.QUANTILE`
+- `multi_part_rich_loss` is for `chronos_rich` and uses the rich target weights
+  from `model.models.chronos_rich`
+- `chronos_rich` now lets you set separate loss types for:
+  - scalar prediction
+  - `future_ohlcv`
+  - `future_return_path`
+  - `future_regime`
+- `kronos_rich` has its own separate loss config for:
+  - reconstruction
+  - pre-reconstruction
+  - token prediction
+  - BSQ weighting
 
 
 ## Real Data Preprocessing

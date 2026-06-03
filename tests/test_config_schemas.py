@@ -94,7 +94,7 @@ def test_main_config_includes_sampling_settings():
     data = _load_raw_config("main")
     sampling = data["data"]["sampling"]
 
-    assert sampling["STOCK_SELECTION_MODE"] == "random"
+    assert sampling["STOCK_SELECTION_MODE"] == "sorted"
     assert sampling["MARKET_CAP_METADATA_DIR"] == "raw_data/ticket_data/us"
 
 
@@ -126,6 +126,32 @@ def test_model_config_accepts_directional_huber_loss():
     valid["model"]["loss"]["LOSS_TYPE"] = "directional_huber"
     valid["model"]["loss"]["HUBER_DELTA"] = 1.5
     valid["model"]["loss"]["DIRECTIONAL_ALPHA"] = 0.4
+
+    validate_config_data("model", valid)
+
+
+def test_model_config_accepts_quantile_loss():
+    data = _load_raw_config("model")
+    valid = copy.deepcopy(data)
+    valid["model"]["loss"]["LOSS_TYPE"] = "quantile_loss"
+    valid["model"]["loss"]["QUANTILE"] = 0.2
+
+    validate_config_data("model", valid)
+
+
+def test_model_config_accepts_pinball_loss():
+    data = _load_raw_config("model")
+    valid = copy.deepcopy(data)
+    valid["model"]["loss"]["LOSS_TYPE"] = "pinball_loss"
+    valid["model"]["loss"]["QUANTILE"] = 0.8
+
+    validate_config_data("model", valid)
+
+
+def test_model_config_accepts_multi_part_rich_loss():
+    data = _load_raw_config("model")
+    valid = copy.deepcopy(data)
+    valid["model"]["loss"]["LOSS_TYPE"] = "multi_part_rich_loss"
 
     validate_config_data("model", valid)
 
@@ -197,10 +223,10 @@ def test_load_config_still_returns_attribute_config():
     assert config.model.training.BATCH_SIZE > 0
 
 
-def test_model_config_default_model_type_is_chronos2():
+def test_model_config_default_model_type_is_current_default():
     data = _load_raw_config("model")
-    assert data["model"]["selection"]["DEFAULT_MODEL_TYPE"] == "chronos2"
-    assert "chronos2" in data["model"]["models"]
+    assert data["model"]["selection"]["DEFAULT_MODEL_TYPE"] == "chronos_rich"
+    assert "chronos_rich" in data["model"]["models"]
 
 
 def test_model_config_includes_chronos2_embedding_fields():
@@ -223,5 +249,23 @@ def test_model_config_includes_separate_kronos_rich_block():
     assert kronos_rich["tokenizer"]["D_MODEL"] == kronos["tokenizer"]["D_MODEL"]
     assert kronos_rich["network"]["D_MODEL"] == kronos["network"]["D_MODEL"]
     assert kronos_rich["predictor"]["MAX_CONTEXT"] == kronos["predictor"]["MAX_CONTEXT"]
-    assert kronos_rich["network"]["USE_STOCK_EMBEDDING"] is False
-    assert kronos_rich["network"]["USE_GROUP_EMBEDDING"] is False
+    assert kronos["tokenizer"]["ACTIVATION"] == "silu"
+    assert kronos["network"]["ACTIVATION"] == "silu"
+    assert kronos_rich["tokenizer"]["ACTIVATION"] == "silu"
+    assert kronos_rich["network"]["ACTIVATION"] == "silu"
+    assert kronos_rich["network"]["USE_STOCK_EMBEDDING"] is True
+    assert kronos_rich["network"]["USE_GROUP_EMBEDDING"] is True
+    assert kronos_rich["RECON_LOSS_TYPE"] == "mse"
+    assert kronos_rich["PRE_LOSS_TYPE"] == "mse"
+    assert kronos_rich["TOKEN_LOSS_TYPE"] == "cross_entropy"
+
+
+def test_model_config_includes_chronos_rich_component_loss_settings():
+    data = _load_raw_config("model")
+    chronos_rich = data["model"]["models"]["chronos_rich"]
+
+    assert chronos_rich["ACTIVATION"] == "relu"
+    assert chronos_rich["SCALAR_LOSS_TYPE"] == "quantile_loss"
+    assert chronos_rich["OHLCV_LOSS_TYPE"] == "quantile_loss"
+    assert chronos_rich["RETURN_PATH_LOSS_TYPE"] == "quantile_loss"
+    assert chronos_rich["REGIME_LOSS_TYPE"] == "cross_entropy"

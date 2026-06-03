@@ -56,6 +56,7 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
         gamma,
         zeta,
         group_size,
+        activation_name="silu",
     ):
         super().__init__()
         self.d_in = d_in
@@ -83,6 +84,7 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
                     self.ffn_dropout_p,
                     self.attn_dropout_p,
                     self.resid_dropout_p,
+                    activation_name=activation_name,
                 )
                 for _ in range(self.enc_layers - 1)
             ]
@@ -96,6 +98,7 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
                     self.ffn_dropout_p,
                     self.attn_dropout_p,
                     self.resid_dropout_p,
+                    activation_name=activation_name,
                 )
                 for _ in range(self.dec_layers - 1)
             ]
@@ -185,6 +188,7 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
         use_group_embedding=False,
         stock_emb_dim=0,
         group_emb_dim=0,
+        activation_name="silu",
     ):
         super().__init__()
         self.s1_bits = s1_bits
@@ -226,6 +230,7 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
                     self.ffn_dropout_p,
                     self.attn_dropout_p,
                     self.resid_dropout_p,
+                    activation_name=activation_name,
                 )
                 for _ in range(self.n_layers)
             ]
@@ -791,6 +796,7 @@ def create_kronos_tokenizer(config=None, model_key: str = "kronos") -> KronosTok
         gamma=tokenizer_cfg.GAMMA,
         zeta=tokenizer_cfg.ZETA,
         group_size=tokenizer_cfg.GROUP_SIZE,
+        activation_name=getattr(tokenizer_cfg, "ACTIVATION", "silu"),
     )
 
 
@@ -832,6 +838,7 @@ def create_kronos_model(config=None, num_stocks=None, num_groups=None, model_key
         use_group_embedding=use_group_embedding,
         stock_emb_dim=getattr(network_cfg, "STOCK_EMB_DIM", 0),
         group_emb_dim=getattr(network_cfg, "GROUP_EMB_DIM", 0),
+        activation_name=getattr(network_cfg, "ACTIVATION", "silu"),
     )
 
 
