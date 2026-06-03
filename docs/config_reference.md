@@ -660,6 +660,8 @@ The core architecture fields have the same meaning as `model.models.chronos2`:
 - `DIVIDEND_FLAG_EMB_DIM`
 - `DROPOUT_EMBEDDING`
 - `ACTIVATION`
+- `NORM_TYPE`
+- `USE_BIAS`
 - `QUANTILES`
 - `HEAD_HIDDEN_SIZES`
 - `HEAD_DROPOUT`
@@ -667,6 +669,8 @@ The core architecture fields have the same meaning as `model.models.chronos2`:
 | Field | Meaning | How to set | When to change |
 |---|---|---|---|
 | `ACTIVATION` | Activation function used in the Chronos-rich feed-forward blocks and MLP heads. `geglu` and `swiglu` use gated feed-forward behavior instead of a plain pointwise nonlinearity. | One of `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`. | Change when you want a different nonlinearity for training behavior or forecast smoothness. |
+| `NORM_TYPE` | Normalization layer used in the Chronos-rich attention blocks, feed-forward blocks, and final encoder norm. | One of `layernorm`, `rmsnorm`. | Change when you want to compare standard LayerNorm against RMSNorm-style scaling. |
+| `USE_BIAS` | Whether Chronos-rich linear layers and attention projections use bias terms. | `true` or `false`. | Disable when you want a bias-free variant for ablations or to match another architecture more closely. |
 
 Additional Chronos-rich loss-balance fields:
 
@@ -746,6 +750,8 @@ Reference / credit:
 | `ATTN_DROPOUT_P` | Dropout inside tokenizer attention blocks. | Float in `[0, 1)`. | Increase for stronger regularization. |
 | `RESID_DROPOUT_P` | Dropout on tokenizer residual outputs. | Float in `[0, 1)`. | Increase when deeper tokenizer stacks overfit. |
 | `ACTIVATION` | Activation function used inside tokenizer feed-forward blocks. `geglu` and `swiglu` use gated feed-forward behavior. | One of `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`. | Change when you want a different tokenizer nonlinearity. |
+| `NORM_TYPE` | Normalization layer used inside tokenizer transformer blocks. | One of `layernorm`, `rmsnorm`. | Change when you want to compare tokenizer normalization behavior. |
+| `USE_BIAS` | Whether tokenizer linear layers and attention projections use bias terms. | `true` or `false`. | Disable when you want a bias-free tokenizer variant. |
 | `S1_BITS` | Number of bits used for the coarse token. This sets coarse token vocabulary size to `2 ** S1_BITS`. | Positive integer. | Increase if the coarse code is too small to represent the data well. |
 | `S2_BITS` | Number of bits used for the fine token. This sets fine token vocabulary size to `2 ** S2_BITS`. | Positive integer. | Increase if the fine code needs more detail. |
 | `BETA` | Commitment-loss weight in the binary spherical quantizer. | Non-negative float. | Increase when token assignments drift too much from pre-quantized activations. |
@@ -768,6 +774,8 @@ Reference / credit:
 | `ATTN_DROPOUT_P` | Attention dropout in the generator blocks. | Float in `[0, 1)`. | Increase for stronger regularization. |
 | `RESID_DROPOUT_P` | Residual dropout in the generator blocks. | Float in `[0, 1)`. | Adjust if deep-token modeling overfits. |
 | `ACTIVATION` | Activation function used inside generator feed-forward blocks. `geglu` and `swiglu` use gated feed-forward behavior. | One of `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`. | Change when you want a different generator nonlinearity. |
+| `NORM_TYPE` | Normalization layer used inside generator transformer blocks, dependency layer, and final generator norm. | One of `layernorm`, `rmsnorm`. | Change when you want to compare generator normalization behavior. |
+| `USE_BIAS` | Whether generator linear layers and attention projections use bias terms. | `true` or `false`. | Disable when you want a bias-free generator variant. |
 | `TOKEN_DROPOUT_P` | Dropout applied after token and time embeddings are added. | Float in `[0, 1)`. | Increase to regularize token embeddings. |
 | `LEARN_TE` | Whether time embeddings are learned instead of fixed sinusoidal-style embeddings. | `true` or `false`. | Set `true` to let the model learn calendar embeddings; set `false` for fixed embeddings. |
 | `USE_STOCK_EMBEDDING` | Whether Kronos adds `stock_id` embeddings from prepared data. | `true` or `false`. | Enable when stock identity is useful to the model. |

@@ -30,7 +30,7 @@ The development process follows a human-AI collaborative approach:
 
 ## Features
 
-- **Multiple Model Architectures**: CRNN, RNN, RNN+Attention, CRNN+Attention, Transformer, LSTM3, LSTM3+Attention, **BiLSTM4+Attention**
+- **Multiple Model Architectures**: CRNN, RNN, RNN+Attention, CRNN+Attention, Transformer, LSTM3, LSTM3+Attention, **BiLSTM4+Attention**, **Multi-Branch BiLSTM**, **Chronos-Rich**, **Kronos**, **Kronos-Rich**
 - **Comprehensive Feature Engineering**:
   - Technical indicators (EMA, RSI, StochRSI, MACD)
   - Geometric / structural features (normalized ATR, ROC, Bollinger Band width, support/resistance slopes)
@@ -58,6 +58,40 @@ The development process follows a human-AI collaborative approach:
 - **Backtesting** with performance metrics, turnover, and transaction-cost reporting
 - **Prediction System** with support for single/batch/interactive prediction
 - **Hyperparameter Tuning** with Optuna (automated search for best parameters)
+- **Configurable Model Internals** for selected model families:
+  - activation: `relu`, `gelu`, `silu`, `leaky_relu`, `geglu`, `swiglu`
+  - normalization: `layernorm`, `rmsnorm`
+  - bias usage: configurable for `chronos_rich`, `kronos`, and `kronos_rich`
+
+## Model Overview
+
+| Model | Family | Output Style | Main Idea | Notes |
+|--------|--------|-------------|-----------|-------|
+| `crnn` | Direct | Scalar return | CNN + BiLSTM | Simple convolution + recurrent baseline |
+| `rnn` | Direct | Scalar return | BiLSTM only | Smallest direct baseline |
+| `rnn_attention` | Direct | Scalar return | BiLSTM + attention | Adds sequence weighting |
+| `crnn_attention` | Direct | Scalar return | CNN + BiLSTM + attention | Strong classic baseline |
+| `transformer` | Direct | Scalar return | BiLSTM front-end + transformer | Heavier direct model |
+| `lstm3` | Direct | Scalar return | 3-layer BiLSTM | Deeper recurrent baseline |
+| `lstm3_attention` | Direct | Scalar return | 3-layer BiLSTM + attention | Common direct model choice |
+| `bilstm4_attention` | Direct | Scalar return | 4-layer BiLSTM + attention | Larger recurrent-attention model |
+| `multi_branch_bilstm` | Direct | Scalar return | Separate technical / geometric / macro branches | Better feature-family separation |
+| `chronos2` | Direct | Scalar return from quantile path | Patch-based Chronos-style adapter | Uses quantile forecast summary |
+| `chronos_rich` | Direct rich | Scalar + rich future targets | Patch encoder + time attention + group attention | Predicts `future_ohlcv`, `future_return_path`, `future_regime` |
+| `kronos` | Generative | Tokenized future sequence | Tokenizer + causal transformer generator | Can use repo `stock_id` / `group_id` generator context |
+| `kronos_rich` | Generative rich | Tokenized future sequence | Kronos-family rich training branch | Closer to upstream Kronos generator behavior |
+
+### Current Defaults
+
+- Default model family in current config: `chronos_rich`
+- Current `chronos_rich` config defaults include:
+  - `ACTIVATION = "geglu"`
+  - `NORM_TYPE = "rmsnorm"`
+  - `USE_BIAS = true`
+- Current `kronos` / `kronos_rich` tokenizer and network defaults include:
+  - `ACTIVATION = "silu"`
+  - `NORM_TYPE = "rmsnorm"`
+  - `USE_BIAS = true`
 
 ## Quick Start
 
@@ -81,6 +115,13 @@ pip install -e .
 # Run full pipeline (preprocess -> train -> validate -> test -> backtest)
 python scripts/run_all.py --model-type lstm3_attention --epochs 100
 
+# Current rich direct default in config
+python scripts/train.py --model-type chronos_rich
+
+# Kronos-family examples
+python scripts/train.py --model-type kronos
+python scripts/train.py --model-type kronos_rich
+
 # Or run individual steps
 
 # 1. Preprocess data (with --stocks option for balanced sampling)
@@ -89,6 +130,7 @@ python scripts/preprocess_data.py --stocks 50  # Sample 50 stocks balanced acros
 
 # 2. Train model
 python scripts/train.py --model-type lstm3_attention --epochs 100
+python scripts/train.py --model-type chronos_rich --epochs 30
 
 # 3. Validate
 python scripts/validate.py --model best
@@ -197,7 +239,11 @@ research_02/
 │   │   ├── lstm3_model.py    # 3-layer BiLSTM
 │   │   ├── lstm3_attn_model.py # 3-layer BiLSTM + Attention
 │   │   ├── bilstm4_attn_model.py # 4-layer BiLSTM + Attention
-│   │   └── transformer_model.py  # Transformer
+│   │   ├── transformer_model.py  # Transformer
+│   │   ├── chronos2_model.py     # Patch-based Chronos2-style adapter
+│   │   ├── chronos_rich_model.py # Multi-target Chronos-rich direct model
+│   │   ├── kronos_model.py       # Kronos / Kronos-rich factories and runtime
+│   │   └── kronos_module.py      # Shared Kronos transformer components
 │   ├── hyperparameter/       # Hyperparameter tuning
 │   │   └── optimizer.py       # Optuna optimizer
 │   ├── training/
@@ -353,6 +399,23 @@ Fully Connected Layers
     ↓
 Output (batch, 1) - Percent change prediction
 ```
+
+This diagram describes the classic direct-model path only. The repo now also
+contains:
+
+- `chronos_rich`: patch-based direct rich model with time attention, group
+  attention, rich future heads, configurable activation, normalization, and
+  bias usage
+- `kronos`: tokenized autoregressive generator with configurable activation,
+  normalization, and bias usage
+- `kronos_rich`: separate Kronos-family rich branch that keeps the generator
+  path closer to upstream Kronos
+
+See:
+
+- [docs/model_architecture.md](docs/model_architecture.md)
+- [docs/config_reference.md](docs/config_reference.md)
+- [docs/run_guide.md](docs/run_guide.md)
 
 ### Embedding Features
 

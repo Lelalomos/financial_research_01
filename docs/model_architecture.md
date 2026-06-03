@@ -197,6 +197,9 @@ model = create_kronos_model(config, num_stocks=num_stocks, num_groups=num_groups
 - Tokenizer stage:
   - takes continuous market rows such as `open, high, low, close, volume, amount`
   - projects them into a Transformer latent space
+  - uses configurable feed-forward activation from `config/model.json`
+  - uses configurable transformer normalization from `config/model.json`
+  - can enable or disable linear/attention bias terms from `config/model.json`
   - compresses the latent vectors with binary spherical quantization
   - splits each token into two parts:
     - `s1`: coarse token
@@ -206,6 +209,9 @@ model = create_kronos_model(config, num_stocks=num_stocks, num_groups=num_groups
   - adds calendar/time embeddings
   - can also add `stock_id` and `group_id` embeddings from the prepared-data pipeline
   - runs stacked causal Transformer blocks
+  - uses configurable feed-forward activation from `config/model.json`
+  - uses configurable transformer normalization from `config/model.json`
+  - can enable or disable linear/attention bias terms from `config/model.json`
   - predicts `s1` first, then predicts `s2` conditioned on `s1`
 - Predictor stage:
   - normalizes input history
@@ -231,6 +237,123 @@ model = create_kronos_model(config, num_stocks=num_stocks, num_groups=num_groups
 
 **Use case**: Experimental tokenized time-series generation model for
 autoregressive multi-feature forecasting
+
+**Important configurable behavior in the current repo**:
+- tokenizer and generator each have their own `ACTIVATION`
+- tokenizer and generator each have their own `NORM_TYPE`
+- tokenizer and generator each have their own `USE_BIAS`
+- supported activations are:
+  - `relu`
+  - `gelu`
+  - `silu`
+  - `leaky_relu`
+  - `geglu`
+  - `swiglu`
+- supported normalization types are:
+  - `layernorm`
+  - `rmsnorm`
+
+### 9. Chronos-Rich
+
+```python
+from src.models import create_model
+
+model = create_model(
+    model_type="chronos_rich",
+    num_features=num_features,
+    num_stocks=num_stocks,
+    num_groups=num_groups,
+    config=config,
+    feature_cols=feature_cols,
+)
+```
+
+**Architecture**:
+- Input path:
+  - reads the prepared continuous feature sequence
+  - uses the `close` feature to build Chronos-style patches
+  - concatenates patch values, patch mask, and time encoding
+- Encoder path:
+  - projects each patch into `D_MODEL`
+  - runs time self-attention across the sequence
+  - runs group self-attention across same-`group_id` samples in the batch
+  - runs a feed-forward block after attention
+  - applies a final encoder normalization layer
+- Metadata + summary path:
+  - builds metadata embeddings from `stock_id`, `group_id`, `day`, `month`, and `dividend_flag`
+  - summarizes quantile forecasts into:
+    - median path
+    - mean path
+    - standard-deviation path
+  - concatenates:
+    - last feature row
+    - mean feature row
+    - metadata summary
+    - forecast summary
+- Output heads:
+  - `future_ohlcv`
+  - `future_return_path`
+  - `future_regime`
+  - scalar `prediction` taken from the final step of `future_return_path`
+
+**Current configurable behavior**:
+- `ACTIVATION` controls Chronos-rich MLP and feed-forward behavior
+- `NORM_TYPE` controls attention-block norm, feed-forward norm, and final encoder norm
+- `USE_BIAS` controls linear layers and attention projections
+- supported activations are:
+  - `relu`
+  - `gelu`
+  - `silu`
+  - `leaky_relu`
+  - `geglu`
+  - `swiglu`
+- supported normalization types are:
+  - `layernorm`
+  - `rmsnorm`
+
+**How Chronos-Rich is different from Chronos2-style direct models**:
+- it predicts multiple future targets instead of only one scalar target
+- it adds explicit same-group attention across batch elements
+- it keeps the repo metadata embedding path active
+- it supports separate loss types and weights for:
+  - scalar prediction
+  - `future_ohlcv`
+  - `future_return_path`
+  - `future_regime`
+
+**Use case**: Direct multi-target market forecasting when you want both a scalar
+return prediction and richer future-path / regime outputs from the same model
+
+### 10. Kronos-Rich
+
+```python
+from src.models import create_kronos_rich_model, create_kronos_rich_tokenizer
+
+tokenizer = create_kronos_rich_tokenizer(config)
+model = create_kronos_rich_model(config, num_stocks=num_stocks, num_groups=num_groups)
+```
+
+**Architecture**:
+- uses the same tokenizer / generator structure as the local Kronos integration
+- keeps the same configurable activation, normalization, and bias controls
+- uses the separate `kronos_rich` config block
+- keeps the generator path closer to upstream Kronos behavior than local `kronos`
+
+**Key runtime difference from `kronos`**:
+- `kronos` can use repo `stock_id` and `group_id` generator context embeddings
+- `kronos_rich` disables those extra repo generator embeddings, even if the
+  config fields are present
+
+**Training difference**:
+- `kronos_rich` uses its own rich loss settings:
+  - reconstruction loss
+  - pre-reconstruction loss
+  - token loss
+  - BSQ loss
+- it is not the same output structure as `chronos_rich`
+
+**Use case**: Kronos-family experiments where you want a richer training setup
+while staying closer to the upstream token-generation design
 
 **Reference / credit**:
 - Original project: `Kronos`
@@ -266,6 +389,13 @@ lstm3_heads = config.model.models.lstm3_attention.LSTM3_ATTENTION_HEADS  # 8
 # Access Kronos parameters
 kronos_d_model = config.model.models.kronos.network.D_MODEL  # 256
 kronos_max_context = config.model.models.kronos.predictor.MAX_CONTEXT  # 512
+kronos_activation = config.model.models.kronos.network.ACTIVATION  # "silu"
+kronos_norm = config.model.models.kronos.network.NORM_TYPE  # "rmsnorm"
+
+# Access Chronos-rich parameters
+chronos_rich_activation = config.model.models.chronos_rich.ACTIVATION  # "geglu"
+chronos_rich_norm = config.model.models.chronos_rich.NORM_TYPE  # "rmsnorm"
+chronos_rich_use_bias = config.model.models.chronos_rich.USE_BIAS  # True
 
 # Access training parameters (shared)
 learning_rate = config.model.training.LEARNING_RATE  # 0.0001
