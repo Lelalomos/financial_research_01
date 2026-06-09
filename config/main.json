@@ -3,8 +3,6 @@
     "sources": {
       "START_DATE": "2000-01-01",
       "END_DATE": null,
-      "SP500_TICKER_SOURCE": "wikipedia",
-      "USE_YFINANCE_LIVE": true,
       "INDEX_FILE": "GSPC.json",
       "RAW_DATA_INDEX_PATH": "raw_data/index",
       "VIX_SYMBOL": "^VIX",
@@ -48,6 +46,15 @@
       "TRENDLINE_WINDOW": 15,
       "TRENDLINE_TOLERANCE": 0.0001,
       "TRENDLINE_MAX_ITERATIONS": 100,
+      "ENABLE_MARKET_STRUCTURE_FEATURES": true,
+      "MARKET_STRUCTURE_WINDOWS": [20, 60, 120, 252],
+      "BREAKOUT_WINDOWS": [20, 60, 120],
+      "MARKET_STRUCTURE_COUNT_WINDOW": 20,
+      "NEAR_52W_THRESHOLD": 0.05,
+      "VOLUME_CONFIRMATION_WINDOW": 20,
+      "ATR_WINDOWS": [14, 20],
+      "TREND_WINDOWS": [20, 60],
+      "MARKET_STRUCTURE_LAGS": [1, 3, 5, 10, 20],
       "ENABLE_ATR_FEATURE": true,
       "ENABLE_ROC_FEATURE": true,
       "ENABLE_BB_WIDTH_FEATURE": true,
@@ -60,43 +67,10 @@
       "ENABLE_OPTIMIZED_CHANNEL_WIDTH": true
     },
     "candlestick": {
-      "USE_CANDLESTICK_PATTERNS": true,
-      "EXCLUDE_PATTERNS": [
-        "CDL3STARSINSOUTH",
-        "CDLKICKING",
-        "CDLKICKINGBYLENGTH",
-        "CDLCONCEALBABYSWALL",
-        "CDLMATHOLD",
-        "CDLABANDONEDBABY",
-        "CDLIDENTICAL3CROWS",
-        "CDLBREAKAWAY",
-        "CDL3BLACKCROWS",
-        "CDLRISEFALL3METHODS",
-        "CDLUPSIDEGAP2CROWS",
-        "CDL2CROWS",
-        "CDL3WHITESOLDIERS",
-        "CDLCOUNTERATTACK",
-        "CDL3LINESTRIKE",
-        "CDLINNECK",
-        "CDLTRISTAR",
-        "CDLLADDERBOTTOM",
-        "CDLSTICKSANDWICH",
-        "CDLHIKKAKEMOD",
-        "CDLUNIQUE3RIVER",
-        "CDLMORNINGDOJISTAR",
-        "CDLEVENINGDOJISTAR",
-        "CDLONNECK",
-        "CDLSTALLEDPATTERN",
-        "CDLGAPSIDESIDEWHITE",
-        "CDLPIERCING",
-        "CDLDARKCLOUDCOVER",
-        "CDLSEPARATINGLINES"
-      ]
+      "USE_CANDLESTICK_PATTERNS": true
     },
     "sector": {
-      "SECTOR_MAPPING_SOURCE": "default",
-      "USE_SECTOR_EMBEDDING": true,
-      "DEFAULT_SECTOR_MAPPING": {}
+      "USE_SECTOR_EMBEDDING": true
     },
     "features": {
       "FEATURE_FLAGS": {
@@ -168,7 +142,7 @@
       },
       "OPTIONAL_COLUMNS": {
         "financial_metrics": ["pe_ratio", "peg_ratio", "eps", "dividend_flag", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
-        "geometric": ["atr_14_norm", "roc_10", "bb_width_20", "slope_sup_20", "slope_res_20", "channel_compression_20", "channel_position_20", "dist_to_swing_high_20", "dist_to_swing_low_20", "days_since_swing_high_20", "days_since_swing_low_20", "opt_slope_sup_30", "opt_slope_res_30", "opt_channel_width_30"],
+        "geometric": ["atr_14_norm", "roc_10", "bb_width_20", "slope_sup_20", "slope_res_20", "channel_compression_20", "channel_position_20", "dist_to_swing_high_20", "dist_to_swing_low_20", "days_since_swing_high_20", "days_since_swing_low_20", "opt_slope_sup_30", "opt_slope_res_30", "opt_channel_width_30", "distance_to_20d_high", "distance_to_60d_high", "distance_to_120d_high", "distance_to_252d_high", "distance_to_20d_low", "distance_to_60d_low", "distance_to_120d_low", "distance_to_252d_low", "breakout_20d", "breakout_60d", "breakout_120d", "breakdown_20d", "breakdown_60d", "breakdown_120d", "higher_high", "lower_high", "higher_low", "lower_low", "higher_high_count_20", "higher_low_count_20", "lower_high_count_20", "lower_low_count_20", "distance_to_52w_high", "distance_to_52w_low", "near_52w_high", "near_52w_low", "breakout_volume_ratio", "breakdown_volume_ratio", "volume_spike_ratio", "volume_momentum", "atr_14", "atr_20", "atr_ratio", "rolling_volatility_20", "rolling_volatility_60", "trend_strength_score", "trend_persistence_20", "trend_persistence_60"],
         "fibonacci": ["swing_high", "swing_low", "fib_range", "fib_38", "fib_50", "fib_61", "dist_fib_38", "dist_fib_50", "dist_fib_61", "break_fib_61"],
         "cointegration": ["stock_return_1d", "relative_price_vs_sector", "relative_return_vs_sector", "relative_price_vs_sector_norm", "pair_beta", "spread", "rolling_mean_spread", "rolling_std_spread", "spread_zscore", "spread_norm", "spread_adf_stat", "spread_adf_pvalue", "equilibrium_gap", "equilibrium_zscore", "equilibrium_gap_norm", "equilibrium_adf_stat", "equilibrium_adf_pvalue"],
         "time_features": ["day", "month", "dayofweek"],

@@ -22,6 +22,7 @@ from einops import rearrange
 from src.config import load_config
 from src.training.losses import create_loss_module
 from .chronos2_model import Chronos2EmbeddingLayer, Patchify
+from .kronos_module import RMSNorm
 
 
 class ChronosRichMLP(nn.Module):
@@ -32,12 +33,13 @@ class ChronosRichMLP(nn.Module):
         output_dim: int,
         dropout_rate: float,
         activation_name: str,
+        use_bias: bool,
     ):
         super().__init__()
         self.activation_name = activation_name.strip().lower()
         self.is_gated = self.activation_name in {"geglu", "swiglu"}
-        self.input_projection = nn.Linear(input_dim, hidden_dim * 2 if self.is_gated else hidden_dim)
-        self.output_projection = nn.Linear(hidden_dim, output_dim)
+        self.input_projection = nn.Linear(input_dim, hidden_dim * 2 if self.is_gated else hidden_dim, bias=use_bias)
+        self.output_projection = nn.Linear(hidden_dim, output_dim, bias=use_bias)
         self.dropout = nn.Dropout(dropout_rate)
 
         if self.activation_name == "geglu":
@@ -58,15 +60,16 @@ class ChronosRichMLP(nn.Module):
 
 
 class ChronosRichTimeSelfAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, dropout_rate: float):
+    def __init__(self, d_model: int, num_heads: int, dropout_rate: float, norm_type: str, use_bias: bool):
         super().__init__()
         self.attn = nn.MultiheadAttention(
             embed_dim=d_model,
             num_heads=num_heads,
             dropout=dropout_rate,
             batch_first=True,
+            bias=use_bias,
         )
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = ChronosRichModel._build_norm(norm_type, d_model)
         self.dropout = nn.Dropout(dropout_rate)
 
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -83,15 +86,16 @@ class ChronosRichTimeSelfAttention(nn.Module):
 
 
 class ChronosRichGroupSelfAttention(nn.Module):
-    def __init__(self, d_model: int, num_heads: int, dropout_rate: float):
+    def __init__(self, d_model: int, num_heads: int, dropout_rate: float, norm_type: str, use_bias: bool):
         super().__init__()
         self.attn = nn.MultiheadAttention(
             embed_dim=d_model,
             num_heads=num_heads,
             dropout=dropout_rate,
             batch_first=True,
+            bias=use_bias,
         )
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = ChronosRichModel._build_norm(norm_type, d_model)
         self.dropout = nn.Dropout(dropout_rate)
         self.num_heads = int(num_heads)
 
@@ -141,15 +145,16 @@ class ChronosRichGroupSelfAttention(nn.Module):
 
 
 class ChronosRichFeedForward(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, dropout_rate: float, activation_name: str):
+    def __init__(self, d_model: int, d_ff: int, dropout_rate: float, activation_name: str, norm_type: str, use_bias: bool):
         super().__init__()
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = ChronosRichModel._build_norm(norm_type, d_model)
         self.ff = ChronosRichMLP(
             input_dim=d_model,
             hidden_dim=d_ff,
             output_dim=d_model,
             dropout_rate=dropout_rate,
             activation_name=activation_name,
+            use_bias=use_bias,
         )
         self.dropout = nn.Dropout(dropout_rate)
 
@@ -160,15 +165,29 @@ class ChronosRichFeedForward(nn.Module):
 
 
 class ChronosRichEncoderBlock(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, num_heads: int, dropout_rate: float, activation_name: str):
+    def __init__(self, d_model: int, d_ff: int, num_heads: int, dropout_rate: float, activation_name: str, norm_type: str, use_bias: bool):
         super().__init__()
-        self.time_attention = ChronosRichTimeSelfAttention(d_model=d_model, num_heads=num_heads, dropout_rate=dropout_rate)
-        self.group_attention = ChronosRichGroupSelfAttention(d_model=d_model, num_heads=num_heads, dropout_rate=dropout_rate)
+        self.time_attention = ChronosRichTimeSelfAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            dropout_rate=dropout_rate,
+            norm_type=norm_type,
+            use_bias=use_bias,
+        )
+        self.group_attention = ChronosRichGroupSelfAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            dropout_rate=dropout_rate,
+            norm_type=norm_type,
+            use_bias=use_bias,
+        )
         self.feed_forward = ChronosRichFeedForward(
             d_model=d_model,
             d_ff=d_ff,
             dropout_rate=dropout_rate,
             activation_name=activation_name,
+            norm_type=norm_type,
+            use_bias=use_bias,
         )
 
     def forward(self, hidden_states: torch.Tensor, group_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -199,6 +218,8 @@ class ChronosRichModel(nn.Module):
 
         chronos_cfg = config.model.models.chronos_rich
         activation_name = str(getattr(chronos_cfg, "ACTIVATION", "relu"))
+        norm_type = str(getattr(chronos_cfg, "NORM_TYPE", "layernorm"))
+        use_bias = bool(getattr(chronos_cfg, "USE_BIAS", True))
         self.quantiles = [float(q) for q in chronos_cfg.QUANTILES]
         self.num_quantiles = len(self.quantiles)
         self.median_quantile_index = min(
@@ -244,7 +265,7 @@ class ChronosRichModel(nn.Module):
         )
 
         patch_size = int(chronos_cfg.INPUT_PATCH_SIZE)
-        self.patch_projection = nn.Linear(patch_size * 3, int(chronos_cfg.D_MODEL))
+        self.patch_projection = nn.Linear(patch_size * 3, int(chronos_cfg.D_MODEL), bias=use_bias)
         self.input_dropout = nn.Dropout(float(chronos_cfg.DROPOUT_RATE))
         self.encoder = nn.ModuleList(
             [
@@ -254,11 +275,13 @@ class ChronosRichModel(nn.Module):
                     num_heads=int(chronos_cfg.NUM_HEADS),
                     dropout_rate=float(chronos_cfg.DROPOUT_RATE),
                     activation_name=activation_name,
+                    norm_type=norm_type,
+                    use_bias=use_bias,
                 )
                 for _ in range(int(chronos_cfg.NUM_LAYERS))
             ]
         )
-        self.encoder_norm = nn.LayerNorm(int(chronos_cfg.D_MODEL))
+        self.encoder_norm = self._build_norm(norm_type, int(chronos_cfg.D_MODEL))
 
         self.forecast_head = ChronosRichMLP(
             input_dim=int(chronos_cfg.D_MODEL),
@@ -266,6 +289,7 @@ class ChronosRichModel(nn.Module):
             output_dim=self.num_quantiles * self.prediction_horizon,
             dropout_rate=float(chronos_cfg.DROPOUT_RATE),
             activation_name=activation_name,
+            use_bias=use_bias,
         )
 
         shared_input_dim = (num_features * 2) + self.embeddings.output_dim + (self.prediction_horizon * 3)
@@ -282,6 +306,7 @@ class ChronosRichModel(nn.Module):
                         output_dim=int(hidden_dim),
                         dropout_rate=head_dropout,
                         activation_name=activation_name,
+                        use_bias=use_bias,
                     ),
                 ]
             )
@@ -292,8 +317,9 @@ class ChronosRichModel(nn.Module):
         self.future_ohlcv_head = nn.Linear(
             self.shared_output_dim,
             self.prediction_horizon * self.ohlcv_output_dim,
+            bias=use_bias,
         )
-        self.future_regime_head = nn.Linear(self.shared_output_dim, self.num_regimes)
+        self.future_regime_head = nn.Linear(self.shared_output_dim, self.num_regimes, bias=use_bias)
 
         self._init_weights()
 
@@ -337,6 +363,15 @@ class ChronosRichModel(nn.Module):
             raise ValueError(f"Unsupported ChronosRich activation '{activation_name}'. Allowed: {allowed}")
         return activation_cls()
 
+    @staticmethod
+    def _build_norm(norm_type: str, dim: int) -> nn.Module:
+        normalized = norm_type.strip().lower()
+        if normalized == "layernorm":
+            return nn.LayerNorm(dim)
+        if normalized == "rmsnorm":
+            return RMSNorm(dim)
+        raise ValueError(f"Unsupported ChronosRich norm type '{norm_type}'. Allowed: layernorm, rmsnorm")
+
     def _init_weights(self) -> None:
         for module in self.modules():
             if isinstance(module, nn.Linear):
@@ -346,6 +381,8 @@ class ChronosRichModel(nn.Module):
             elif isinstance(module, nn.LayerNorm):
                 nn.init.ones_(module.weight)
                 nn.init.zeros_(module.bias)
+            elif isinstance(module, RMSNorm):
+                nn.init.ones_(module.weight)
 
     def _make_patch_inputs(self, close_context: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         patches, patch_mask = self.patchify(close_context)

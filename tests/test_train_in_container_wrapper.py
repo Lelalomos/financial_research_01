@@ -59,3 +59,9 @@ def test_train_in_container_installs_missing_einops_before_training(tmp_path):
     assert any(call == "- einops" for call in calls)
     assert any(call == "-m pip install --user einops>=0.8.1" for call in calls)
     assert any(call.startswith("scripts/train.py ") for call in calls)
+
+
+def test_train_in_container_allows_mlflow_file_store_by_default():
+    contents = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'export MLFLOW_ALLOW_FILE_STORE="${MLFLOW_ALLOW_FILE_STORE:-true}"' in contents

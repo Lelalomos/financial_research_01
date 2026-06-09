@@ -1,4 +1,10 @@
 #!/bin/bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "This script must be run with bash:" >&2
+    echo "bash $0 $*" >&2
+    exit 2
+fi
+
 # Run full pipeline script
 # Usage: ./scripts/run_all.sh [options]
 #

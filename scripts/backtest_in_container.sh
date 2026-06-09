@@ -1,4 +1,10 @@
 #!/bin/bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "This script must be run with bash:" >&2
+    echo "bash $0 $*" >&2
+    exit 2
+fi
+
 # Backtest model from inside the runtime container
 
 set -e

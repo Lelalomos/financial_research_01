@@ -1,7 +1,15 @@
 #!/bin/bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "This script must be run with bash:" >&2
+    echo "bash $0 $*" >&2
+    exit 2
+fi
+
 # Preprocess data script
 # Usage: ./scripts/preprocess.sh [options]
 #
+
+
 # Options:
 #   --start-date DATE    Start date for data download (default: 2000-01-01)
 #   --end-date DATE      End date for data download (default: current)

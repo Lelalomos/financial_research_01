@@ -39,6 +39,7 @@ setup(
         "einops>=0.8.1",
         "openpyxl>=3.1.2",
         "pydantic>=2.0.0",
+        "psycopg[binary]>=3.2.0",
     ],
     extras_require={
         "dev": [

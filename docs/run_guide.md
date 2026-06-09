@@ -230,7 +230,6 @@ For a first real-data run, keep the setup conservative.
 
 Recommended data settings in `config/main.json`:
 
-- keep `USE_YFINANCE_LIVE = true`
 - keep external features enabled only if your downloads are stable
 - keep `market_regime = false` at first
 - keep Polars flags disabled at first

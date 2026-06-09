@@ -14,6 +14,7 @@ from src.evaluation.kronos import (
     resolve_kronos_embedding_sizes,
 )
 from src.models.kronos_model import create_kronos_model, create_kronos_rich_model, create_kronos_tokenizer
+from src.models.kronos_module import RMSNorm
 from src.config.config_loader import Config
 
 
@@ -438,6 +439,138 @@ def test_create_kronos_uses_configured_geglu_activation():
     assert isinstance(model.transformer[0].ffn.activation, nn.SiLU)
 
 
+def test_create_kronos_uses_configured_layernorm():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {
+                            "D_IN": 6,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "N_ENC_LAYERS": 2,
+                            "N_DEC_LAYERS": 2,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "NORM_TYPE": "layernorm",
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "BETA": 0.25,
+                            "GAMMA0": 1.0,
+                            "GAMMA": 1.0,
+                            "ZETA": 1.0,
+                            "GROUP_SIZE": 2,
+                        },
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "NORM_TYPE": "layernorm",
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": False,
+                            "USE_GROUP_EMBEDDING": False,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    tokenizer = create_kronos_tokenizer(config=model_config, model_key="kronos")
+    model = create_kronos_model(config=model_config, num_stocks=10, num_groups=3, model_key="kronos")
+
+    assert isinstance(tokenizer.encoder[0].norm1, nn.LayerNorm)
+    assert isinstance(tokenizer.encoder[0].norm2, nn.LayerNorm)
+    assert isinstance(model.transformer[0].norm1, nn.LayerNorm)
+    assert isinstance(model.transformer[0].norm2, nn.LayerNorm)
+    assert isinstance(model.dep_layer.norm, nn.LayerNorm)
+    assert isinstance(model.norm, nn.LayerNorm)
+    assert not isinstance(model.norm, RMSNorm)
+
+
+def test_create_kronos_uses_configured_bias_flag():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {
+                            "D_IN": 6,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "N_ENC_LAYERS": 2,
+                            "N_DEC_LAYERS": 2,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "NORM_TYPE": "rmsnorm",
+                            "USE_BIAS": False,
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "BETA": 0.25,
+                            "GAMMA0": 1.0,
+                            "GAMMA": 1.0,
+                            "ZETA": 1.0,
+                            "GROUP_SIZE": 2,
+                        },
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "NORM_TYPE": "rmsnorm",
+                            "USE_BIAS": False,
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": True,
+                            "USE_GROUP_EMBEDDING": True,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    tokenizer = create_kronos_tokenizer(config=model_config, model_key="kronos")
+    model = create_kronos_model(config=model_config, num_stocks=10, num_groups=3, model_key="kronos")
+
+    assert tokenizer.embed.bias is None
+    assert tokenizer.quant_embed.bias is None
+    assert tokenizer.encoder[0].ffn.w1.bias is None
+    assert tokenizer.encoder[0].self_attn.q_proj.bias is None
+    assert model.transformer[0].ffn.w1.bias is None
+    assert model.transformer[0].self_attn.q_proj.bias is None
+    assert model.head.proj_s1.bias is None
+    assert model.stock_projection.bias is None
+    assert model.group_projection.bias is None
+
+
 def test_create_kronos_rejects_unknown_activation():
     model_config = Config(
         {
@@ -489,4 +622,60 @@ def test_create_kronos_rejects_unknown_activation():
     )
 
     with pytest.raises(ValueError, match="Unsupported Kronos activation"):
+        create_kronos_tokenizer(config=model_config, model_key="kronos")
+
+
+def test_create_kronos_rejects_unknown_norm_type():
+    model_config = Config(
+        {
+            "model": {
+                "models": {
+                    "kronos": {
+                        "tokenizer": {
+                            "D_IN": 6,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "N_ENC_LAYERS": 2,
+                            "N_DEC_LAYERS": 2,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "NORM_TYPE": "bad_norm",
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "BETA": 0.25,
+                            "GAMMA0": 1.0,
+                            "GAMMA": 1.0,
+                            "ZETA": 1.0,
+                            "GROUP_SIZE": 2,
+                        },
+                        "network": {
+                            "S1_BITS": 2,
+                            "S2_BITS": 2,
+                            "N_LAYERS": 1,
+                            "D_MODEL": 16,
+                            "N_HEADS": 4,
+                            "FF_DIM": 32,
+                            "FFN_DROPOUT_P": 0.0,
+                            "ATTN_DROPOUT_P": 0.0,
+                            "RESID_DROPOUT_P": 0.0,
+                            "ACTIVATION": "silu",
+                            "NORM_TYPE": "rmsnorm",
+                            "TOKEN_DROPOUT_P": 0.0,
+                            "LEARN_TE": True,
+                            "USE_STOCK_EMBEDDING": False,
+                            "USE_GROUP_EMBEDDING": False,
+                            "STOCK_EMB_DIM": 8,
+                            "GROUP_EMB_DIM": 4,
+                        },
+                        "predictor": {"MAX_CONTEXT": 16, "CLIP": 5.0},
+                    }
+                }
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="Unsupported Kronos norm type"):
         create_kronos_tokenizer(config=model_config, model_key="kronos")

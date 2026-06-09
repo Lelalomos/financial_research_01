@@ -1,4 +1,10 @@
 #!/bin/bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "This script must be run with bash:" >&2
+    echo "bash $0 $*" >&2
+    exit 2
+fi
+
 # Preprocess data from inside the runtime container
 
 set -e
@@ -9,7 +15,7 @@ START_DATE="2000-01-01"
 END_DATE=""
 MODEL_TYPE="chronos_rich"
 STOCK_LIMIT=""
-STOCKS="100"
+STOCKS="50"
 TICKERS=""
 EXPORT_PRE_NORMALIZE=""
 EXPORT_NORMALIZED=""

@@ -34,6 +34,7 @@ from .kronos_module import (
     RMSNorm,
     TemporalEmbedding,
     TransformerBlock,
+    build_kronos_norm,
 )
 
 
@@ -57,6 +58,8 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
         zeta,
         group_size,
         activation_name="silu",
+        norm_type="rmsnorm",
+        use_bias=True,
     ):
         super().__init__()
         self.d_in = d_in
@@ -72,8 +75,8 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
         self.s1_bits = s1_bits
         self.s2_bits = s2_bits
         self.codebook_dim = s1_bits + s2_bits
-        self.embed = nn.Linear(self.d_in, self.d_model)
-        self.head = nn.Linear(self.d_model, self.d_in)
+        self.embed = nn.Linear(self.d_in, self.d_model, bias=use_bias)
+        self.head = nn.Linear(self.d_model, self.d_in, bias=use_bias)
 
         self.encoder = nn.ModuleList(
             [
@@ -85,6 +88,8 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
                     self.attn_dropout_p,
                     self.resid_dropout_p,
                     activation_name=activation_name,
+                    norm_type=norm_type,
+                    use_bias=use_bias,
                 )
                 for _ in range(self.enc_layers - 1)
             ]
@@ -99,13 +104,15 @@ class KronosTokenizer(nn.Module, PyTorchModelHubMixin):
                     self.attn_dropout_p,
                     self.resid_dropout_p,
                     activation_name=activation_name,
+                    norm_type=norm_type,
+                    use_bias=use_bias,
                 )
                 for _ in range(self.dec_layers - 1)
             ]
         )
-        self.quant_embed = nn.Linear(self.d_model, self.codebook_dim)
-        self.post_quant_embed_pre = nn.Linear(self.s1_bits, self.d_model)
-        self.post_quant_embed = nn.Linear(self.codebook_dim, self.d_model)
+        self.quant_embed = nn.Linear(self.d_model, self.codebook_dim, bias=use_bias)
+        self.post_quant_embed_pre = nn.Linear(self.s1_bits, self.d_model, bias=use_bias)
+        self.post_quant_embed = nn.Linear(self.codebook_dim, self.d_model, bias=use_bias)
         self.tokenizer = BSQuantizer(self.s1_bits, self.s2_bits, beta, gamma0, gamma, zeta, group_size)
 
     def forward(self, x):
@@ -189,6 +196,8 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
         stock_emb_dim=0,
         group_emb_dim=0,
         activation_name="silu",
+        norm_type="rmsnorm",
+        use_bias=True,
     ):
         super().__init__()
         self.s1_bits = s1_bits
@@ -207,17 +216,17 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
 
         self.s1_vocab_size = 2 ** self.s1_bits
         self.token_drop = nn.Dropout(self.token_dropout_p)
-        self.embedding = HierarchicalEmbedding(self.s1_bits, self.s2_bits, self.d_model)
+        self.embedding = HierarchicalEmbedding(self.s1_bits, self.s2_bits, self.d_model, use_bias=use_bias)
         self.time_emb = TemporalEmbedding(self.d_model, self.learn_te)
         if self.use_stock_embedding:
             self.stock_embedding = nn.Embedding(max(int(num_stocks), 1), stock_emb_dim)
-            self.stock_projection = nn.Linear(stock_emb_dim, self.d_model)
+            self.stock_projection = nn.Linear(stock_emb_dim, self.d_model, bias=use_bias)
         else:
             self.stock_embedding = None
             self.stock_projection = None
         if self.use_group_embedding:
             self.group_embedding = nn.Embedding(max(int(num_groups), 1), group_emb_dim)
-            self.group_projection = nn.Linear(group_emb_dim, self.d_model)
+            self.group_projection = nn.Linear(group_emb_dim, self.d_model, bias=use_bias)
         else:
             self.group_embedding = None
             self.group_projection = None
@@ -231,13 +240,15 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
                     self.attn_dropout_p,
                     self.resid_dropout_p,
                     activation_name=activation_name,
+                    norm_type=norm_type,
+                    use_bias=use_bias,
                 )
                 for _ in range(self.n_layers)
             ]
         )
-        self.norm = RMSNorm(self.d_model)
-        self.dep_layer = DependencyAwareLayer(self.d_model)
-        self.head = DualHead(self.s1_bits, self.s2_bits, self.d_model)
+        self.norm = build_kronos_norm(norm_type, self.d_model)
+        self.dep_layer = DependencyAwareLayer(self.d_model, norm_type=norm_type, use_bias=use_bias)
+        self.head = DualHead(self.s1_bits, self.s2_bits, self.d_model, use_bias=use_bias)
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -797,6 +808,8 @@ def create_kronos_tokenizer(config=None, model_key: str = "kronos") -> KronosTok
         zeta=tokenizer_cfg.ZETA,
         group_size=tokenizer_cfg.GROUP_SIZE,
         activation_name=getattr(tokenizer_cfg, "ACTIVATION", "silu"),
+        norm_type=getattr(tokenizer_cfg, "NORM_TYPE", "rmsnorm"),
+        use_bias=bool(getattr(tokenizer_cfg, "USE_BIAS", True)),
     )
 
 
@@ -839,6 +852,8 @@ def create_kronos_model(config=None, num_stocks=None, num_groups=None, model_key
         stock_emb_dim=getattr(network_cfg, "STOCK_EMB_DIM", 0),
         group_emb_dim=getattr(network_cfg, "GROUP_EMB_DIM", 0),
         activation_name=getattr(network_cfg, "ACTIVATION", "silu"),
+        norm_type=getattr(network_cfg, "NORM_TYPE", "rmsnorm"),
+        use_bias=bool(getattr(network_cfg, "USE_BIAS", True)),
     )
 
 

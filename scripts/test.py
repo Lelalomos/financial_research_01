@@ -37,6 +37,7 @@ from src.evaluation.kronos import (
 )
 from src.utils.device import resolve_device, get_device_info
 from src.utils.logger import get_logger
+from src.utils.postgres_logging import make_run_logger, make_run_uuid
 from src.training import (
     find_checkpoint_path,
     get_eval_batch_size,
@@ -260,6 +261,31 @@ def main():
     args = parse_args()
 
     logger = get_logger("test", log_dir="logs")
+    config = load_config('model')
+    run_logger = make_run_logger(
+        logger,
+        enabled=bool(getattr(getattr(config.model, "postgres_logging", None), "ENABLED", True)),
+    )
+    run_uuid = make_run_uuid()
+    base_payload = {
+        "run_uuid": run_uuid,
+        "cli_args_json": vars(args),
+        "data_dir": args.data_dir,
+        "split": args.split,
+        "raw_data_dir": args.raw_data_dir,
+        "output_json_path": args.output,
+        "excel_report_path": args.excel_report,
+        "max_samples": args.max_samples,
+    }
+
+    def log_db(status, extra=None, error_message=None):
+        payload = dict(base_payload)
+        payload["status"] = status
+        if error_message is not None:
+            payload["error_message"] = error_message
+        if extra:
+            payload.update(extra)
+        run_logger.log_run("test_runs", payload)
 
     logger.info("=" * 60)
     logger.info("TESTING SCRIPT")
@@ -272,199 +298,218 @@ def main():
     if device_info.get('cuda_working'):
         logger.info(f"GPU: {device_info.get('gpu_name', 'Unknown')}")
 
-    # Load config
-    config = load_config('model')
-
-    # Load data
-    data_dir = Path(args.data_dir)
-    raw_data_dir = Path(args.raw_data_dir) if args.raw_data_dir else None
-
-    logger.info(f"Loading {args.split} data from {data_dir}...")
-
-    sequences = load_sequences(data_dir, args.split, max_samples=args.max_samples)
-
-    if sequences is None:
-        logger.error(f"No {args.split} data found")
-        return 1
-
-    logger.info(f"Loaded {len(sequences['target'])} samples")
-
-    # Load ID mappings for ticker names and sectors
-    stock_id_to_ticker, group_id_to_sector = load_id_mappings(data_dir, raw_data_dir)
-
-    if stock_id_to_ticker:
-        logger.info(f"Loaded {len(stock_id_to_ticker)} ticker mappings")
-    else:
-        logger.warning("No ticker mappings available, will use stock IDs")
-
-    if group_id_to_sector:
-        logger.info(f"Loaded {len(group_id_to_sector)} sector mappings")
-    else:
-        logger.warning("No sector mappings available, will use group IDs")
-
-    default_model_type = config.get_default_model_type()
-    model_type = args.model_type or default_model_type
-    available_model_types = config.get_available_model_types()
-    if model_type not in available_model_types:
-        raise ValueError(
-            f"Unknown model type: {model_type}. "
-            f"Available models: {available_model_types}"
+    try:
+        main_config = load_config('main')
+        base_payload.update(
+            {
+                "device": str(device),
+                "main_config_json": main_config.to_dict(),
+                "model_config_json": config.to_dict(),
+            }
         )
 
-    # Load info
-    info_path = data_dir / 'info.json'
-    with open(info_path, 'r') as f:
-        info = json.load(f)
+        data_dir = Path(args.data_dir)
+        raw_data_dir = Path(args.raw_data_dir) if args.raw_data_dir else None
 
-    # Create dataset
-    dataset = FinancialDataset(sequences, config)
-    loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=get_eval_batch_size(config),
-        shuffle=False,
-        num_workers=config.model.device.NUM_WORKERS
-    )
+        logger.info(f"Loading {args.split} data from {data_dir}...")
 
-    # Get embedding sizes
-    embedding_sizes = dataset.get_embedding_sizes()
-    resolved_num_stocks, resolved_num_groups = resolve_kronos_embedding_sizes(info, embedding_sizes)
+        sequences = load_sequences(data_dir, args.split, max_samples=args.max_samples)
 
-    # Auto-detect model type from checkpoint filename if not specified
-    checkpoint_path = find_checkpoint_path(
-        model_input=args.model,
-        checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
-        model_type=model_type,
-        num_features=dataset.num_features,
-        num_stocks=resolved_num_stocks,
-        num_groups=resolved_num_groups,
-    )
+        if sequences is None:
+            message = f"No {args.split} data found"
+            logger.error(message)
+            log_db("failed", error_message=message)
+            return 1
 
-    # If model_type came from config, allow checkpoint filename to refine it.
-    if args.model_type is None and checkpoint_path:
-        model_type = infer_model_type_from_checkpoint(
-            checkpoint_path,
-            available_model_types,
-            fallback_model_type=default_model_type,
+        sample_count = len(sequences['target'])
+        logger.info(f"Loaded {sample_count} samples")
+
+        stock_id_to_ticker, group_id_to_sector = load_id_mappings(data_dir, raw_data_dir)
+
+        if stock_id_to_ticker:
+            logger.info(f"Loaded {len(stock_id_to_ticker)} ticker mappings")
+        else:
+            logger.warning("No ticker mappings available, will use stock IDs")
+
+        if group_id_to_sector:
+            logger.info(f"Loaded {len(group_id_to_sector)} sector mappings")
+        else:
+            logger.warning("No sector mappings available, will use group IDs")
+
+        default_model_type = config.get_default_model_type()
+        model_type = args.model_type or default_model_type
+        available_model_types = config.get_available_model_types()
+        if model_type not in available_model_types:
+            raise ValueError(
+                f"Unknown model type: {model_type}. "
+                f"Available models: {available_model_types}"
+            )
+
+        info_path = data_dir / 'info.json'
+        with open(info_path, 'r') as f:
+            info = json.load(f)
+
+        dataset = FinancialDataset(sequences, config)
+        loader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=get_eval_batch_size(config),
+            shuffle=False,
+            num_workers=config.model.device.NUM_WORKERS
         )
-        logger.info(f"Auto-detected model type: {model_type}")
 
-    resolved_checkpoint = Path(checkpoint_path)
-    logger.info(f"Resolved model type: {model_type}")
-    logger.info(f"Selected checkpoint file: {resolved_checkpoint.name}")
-    logger.info(f"Selected checkpoint path: {resolved_checkpoint}")
+        embedding_sizes = dataset.get_embedding_sizes()
+        resolved_num_stocks, resolved_num_groups = resolve_kronos_embedding_sizes(info, embedding_sizes)
 
-    if is_kronos_family(model_type):
-        logger.info("Creating Kronos tokenizer/model for evaluation...")
-        tokenizer, model, checkpoint = load_kronos_checkpoint(
-            checkpoint_path=checkpoint_path,
-            config=config,
+        checkpoint_path = find_checkpoint_path(
+            model_input=args.model,
+            checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
+            model_type=model_type,
             num_features=dataset.num_features,
             num_stocks=resolved_num_stocks,
             num_groups=resolved_num_groups,
-            device=device,
-            model_type=model_type,
         )
-        logger.info(f"Checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
 
-        metadata = build_kronos_sequence_metadata(
-            data_dir=data_dir,
-            split=args.split,
-            feature_cols=info.get('feature_cols') or [],
-            sequence_length=info['sequence_length'],
-            prediction_horizon=info['prediction_horizon'],
-            normalize_target=bool(info.get('normalize_target', False)),
-            target_threshold=float(info.get('target_threshold', 1.0)),
-            expected_samples=len(sequences['target']),
-            max_samples=args.max_samples,
-        )
-        predictions, targets, sample_stock_ids, sample_group_ids, raw_predictions, raw_targets = generate_kronos_predictions(
-            sequences=sequences,
-            metadata=metadata,
-            data_dir=data_dir,
-            config=config,
-            tokenizer=tokenizer,
-            model=model,
-            device=device,
-            batch_size=get_eval_batch_size(config),
-            normalize_target=bool(info.get('normalize_target', False)),
-            target_threshold=float(info.get('target_threshold', 1.0)),
-            feature_cols=info.get('feature_cols') or [],
-            model_type=model_type,
-        )
-        metrics = compute_kronos_metrics(predictions, targets)
-        print_metrics(metrics, prefix=f"{args.split.upper()} - ")
+        if args.model_type is None and checkpoint_path:
+            model_type = infer_model_type_from_checkpoint(
+                checkpoint_path,
+                available_model_types,
+                fallback_model_type=default_model_type,
+            )
+            logger.info(f"Auto-detected model type: {model_type}")
 
-        if args.excel_report:
-            logger.info("Generating Kronos detailed report...")
-            report_df, sector_stats = build_kronos_report(
-                predictions,
-                targets,
-                sample_stock_ids,
-                sample_group_ids,
-                raw_predictions=raw_predictions,
-                raw_targets=raw_targets,
+        resolved_checkpoint = Path(checkpoint_path)
+        logger.info(f"Resolved model type: {model_type}")
+        logger.info(f"Selected checkpoint file: {resolved_checkpoint.name}")
+        logger.info(f"Selected checkpoint path: {resolved_checkpoint}")
+
+        db_extra = {
+            "model_type": model_type,
+            "checkpoint_path": str(resolved_checkpoint),
+            "dataset_info_json": info,
+            "feature_cols_json": info.get('feature_cols') or [],
+            "num_features": dataset.num_features,
+            "num_stocks": resolved_num_stocks,
+            "num_groups": resolved_num_groups,
+            "sequence_length": info.get('sequence_length'),
+            "prediction_horizon": info.get('prediction_horizon'),
+            "normalize_target": bool(info.get('normalize_target', False)),
+            "target_threshold": float(info.get('target_threshold', 1.0)),
+            "sample_count": sample_count,
+        }
+
+        if is_kronos_family(model_type):
+            logger.info("Creating Kronos tokenizer/model for evaluation...")
+            tokenizer, model, checkpoint = load_kronos_checkpoint(
+                checkpoint_path=checkpoint_path,
+                config=config,
+                num_features=dataset.num_features,
+                num_stocks=resolved_num_stocks,
+                num_groups=resolved_num_groups,
+                device=device,
+                model_type=model_type,
+            )
+            checkpoint_epoch = checkpoint.get('epoch')
+            logger.info(f"Checkpoint from epoch {checkpoint_epoch or 'unknown'}")
+
+            metadata = build_kronos_sequence_metadata(
+                data_dir=data_dir,
+                split=args.split,
+                feature_cols=info.get('feature_cols') or [],
+                sequence_length=info['sequence_length'],
+                prediction_horizon=info['prediction_horizon'],
                 normalize_target=bool(info.get('normalize_target', False)),
                 target_threshold=float(info.get('target_threshold', 1.0)),
-                stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
-                group_id_to_sector=group_id_to_sector if group_id_to_sector else None,
+                expected_samples=sample_count,
+                max_samples=args.max_samples,
             )
-            report_df.to_excel(args.excel_report, index=False)
-            print_sector_stats(sector_stats)
-            logger.info(f"Excel report saved to {args.excel_report}")
-    else:
-        # Create model
-        logger.info(f"Creating {model_type} model...")
-
-        model = create_model(
-            model_type=model_type,
-            num_features=dataset.num_features,
-            num_stocks=resolved_num_stocks,
-            num_groups=resolved_num_groups,
-            config=config,
-            feature_cols=info.get('feature_cols'),
-        )
-
-        # Load checkpoint
-        logger.info(f"Loading checkpoint from {checkpoint_path}")
-
-        checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(device)
-
-        logger.info(f"Checkpoint from epoch {checkpoint['epoch']}")
-
-        # Evaluate with report if excel-report is specified
-        if args.excel_report:
-            logger.info("Evaluating model with detailed report...")
-
-            metrics, report_df, sector_stats = evaluate_model_with_report(
-                model,
-                loader,
-                device=str(device),
-                stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
-                group_id_to_sector=group_id_to_sector if group_id_to_sector else None,
-                output_path=args.excel_report
+            predictions, targets, sample_stock_ids, sample_group_ids, raw_predictions, raw_targets = generate_kronos_predictions(
+                sequences=sequences,
+                metadata=metadata,
+                data_dir=data_dir,
+                config=config,
+                tokenizer=tokenizer,
+                model=model,
+                device=device,
+                batch_size=get_eval_batch_size(config),
+                normalize_target=bool(info.get('normalize_target', False)),
+                target_threshold=float(info.get('target_threshold', 1.0)),
+                feature_cols=info.get('feature_cols') or [],
+                model_type=model_type,
             )
-
+            metrics = compute_kronos_metrics(predictions, targets)
             print_metrics(metrics, prefix=f"{args.split.upper()} - ")
-            print_sector_stats(sector_stats)
 
-            logger.info(f"Excel report saved to {args.excel_report}")
+            if args.excel_report:
+                logger.info("Generating Kronos detailed report...")
+                report_df, sector_stats = build_kronos_report(
+                    predictions,
+                    targets,
+                    sample_stock_ids,
+                    sample_group_ids,
+                    raw_predictions=raw_predictions,
+                    raw_targets=raw_targets,
+                    normalize_target=bool(info.get('normalize_target', False)),
+                    target_threshold=float(info.get('target_threshold', 1.0)),
+                    stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
+                    group_id_to_sector=group_id_to_sector if group_id_to_sector else None,
+                )
+                report_df.to_excel(args.excel_report, index=False)
+                print_sector_stats(sector_stats)
+                logger.info(f"Excel report saved to {args.excel_report}")
         else:
-            # Standard evaluation
-            logger.info("Evaluating model...")
+            logger.info(f"Creating {model_type} model...")
 
-            metrics = evaluate_model(model, loader, device=str(device))
+            model = create_model(
+                model_type=model_type,
+                num_features=dataset.num_features,
+                num_stocks=resolved_num_stocks,
+                num_groups=resolved_num_groups,
+                config=config,
+                feature_cols=info.get('feature_cols'),
+            )
 
-            print_metrics(metrics, prefix=f"{args.split.upper()} - ")
+            logger.info(f"Loading checkpoint from {checkpoint_path}")
 
-    # Save results
-    if args.output:
-        with open(args.output, 'w') as f:
-            json.dump(metrics, f, indent=2)
-        logger.info(f"Results saved to {args.output}")
+            checkpoint = load_checkpoint_metadata(checkpoint_path, map_location=device)
+            checkpoint_epoch = checkpoint['epoch']
+            model.load_state_dict(checkpoint['model_state_dict'])
+            model = model.to(device)
 
-    return 0
+            logger.info(f"Checkpoint from epoch {checkpoint_epoch}")
+
+            if args.excel_report:
+                logger.info("Evaluating model with detailed report...")
+
+                metrics, report_df, sector_stats = evaluate_model_with_report(
+                    model,
+                    loader,
+                    device=str(device),
+                    stock_id_to_ticker=stock_id_to_ticker if stock_id_to_ticker else None,
+                    group_id_to_sector=group_id_to_sector if group_id_to_sector else None,
+                    output_path=args.excel_report
+                )
+
+                print_metrics(metrics, prefix=f"{args.split.upper()} - ")
+                print_sector_stats(sector_stats)
+
+                logger.info(f"Excel report saved to {args.excel_report}")
+            else:
+                logger.info("Evaluating model...")
+                metrics = evaluate_model(model, loader, device=str(device))
+                print_metrics(metrics, prefix=f"{args.split.upper()} - ")
+
+        if args.output:
+            with open(args.output, 'w') as f:
+                json.dump(metrics, f, indent=2)
+            logger.info(f"Results saved to {args.output}")
+
+        db_extra["checkpoint_epoch"] = checkpoint_epoch
+        db_extra.update(metrics)
+        log_db("completed", extra=db_extra)
+        return 0
+    except Exception as exc:
+        log_db("failed", error_message=str(exc))
+        raise
 
 
 if __name__ == '__main__':

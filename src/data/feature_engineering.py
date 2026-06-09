@@ -3,7 +3,7 @@ Feature engineering for Multi-Model Financial Forecasting.
 
 This module handles:
 - Technical indicator calculation (EMA, RSI, StochRSI, MACD)
-- Candlestick pattern recognition using TA-Lib
+- Custom candlestick feature engineering
 - Time-based features (day, month)
 - Target variable calculation (percent change with configurable horizon)
 - External data merging (VIX, commodities, treasury yields)
@@ -27,17 +27,34 @@ from src.data.feature_engineering_polars import (
 )
 from src.utils.logger import get_logger
 from src.data.financial_metrics_loader import FinancialMetricsLoader
+from src.data.market_structure_features import MarketStructureFeatureBuilder
+
+
+_CANDLESTICK_PATTERN_COLUMNS = [
+    "doji",
+    "hammer",
+    "inverted_hammer",
+    "shooting_star",
+    "bullish_engulfing",
+    "bearish_engulfing",
+    "morning_star",
+    "evening_star",
+]
+
+_CANDLESTICK_ROLLING_WINDOWS = [5, 10, 20, 60]
+_SEQUENCE_LAG_WINDOWS = [1, 3, 5, 10, 20]
+_SEQUENCE_ROLLING_WINDOWS = [5, 10, 20, 60]
 
 
 class FeatureEngineer:
     """
     Feature engineering for financial data.
 
-    Creates features for model training including:
-    - Technical indicators (EMA, RSI, StochRSI, MACD)
-    - Candlestick patterns (~100 patterns from TA-Lib)
-    - Time features (day of month, month)
-    - Target calculation (percent change)
+        Creates features for model training including:
+        - Technical indicators (EMA, RSI, StochRSI, MACD)
+        - Custom candlestick features and pattern flags
+        - Time features (day of month, month)
+        - Target calculation (percent change)
     """
 
     def __init__(self, config=None, sector_mapping: Optional[Dict[str, str]] = None):
@@ -842,15 +859,39 @@ class FeatureEngineer:
         self.logger.info(f"Added Fibonacci features. Shape: {result.shape}")
         return result
 
+    def add_market_structure_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add configurable market structure features.
+
+        Existing columns are preserved. Only missing columns are generated.
+        """
+        if not self.config.data.features.FEATURE_FLAGS.get('geometric_features', True):
+            return df
+
+        geometric_config = self.config.data.geometric
+        if not geometric_config.get("ENABLE_MARKET_STRUCTURE_FEATURES", True):
+            self.logger.info("Skipping market structure features (disabled in config)")
+            return df
+
+        self.logger.info("Adding market structure features...")
+        builder = MarketStructureFeatureBuilder.from_config(geometric_config)
+        feature_result = builder.transform(df)
+        self.logger.info(
+            f"Added {len(feature_result.metadata['generated_features'])} missing market structure features"
+        )
+        return feature_result.dataframe
+
     def add_candlestick_patterns(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add all TA-Lib candlestick patterns.
+        Add custom candlestick, lag, return, volume, and rolling features.
+
+        Existing columns are preserved as-is. Only missing features are added.
 
         Args:
             df: DataFrame with OHLCV data
 
         Returns:
-            DataFrame with added candlestick pattern columns
+            DataFrame with added candlestick feature columns and no NaN values
         """
         candlestick_cfg = self.config.data.candlestick if 'candlestick' in self.config.data else None
         use_candlestick = self.config.data.features.FEATURE_FLAGS.get('candlestick_patterns', True)
@@ -861,63 +902,262 @@ class FeatureEngineer:
             self.logger.info("Skipping candlestick patterns (disabled in config)")
             return df
 
-        self.logger.info("Adding candlestick patterns...")
+        self.logger.info("Adding custom candlestick and sequence features...")
 
         result = df.copy()
-        excluded_patterns = set()
-        if candlestick_cfg is not None:
-            excluded_patterns = set(candlestick_cfg.get('EXCLUDE_PATTERNS', []))
+        ordered = result.sort_values(["tic", "date"]).copy()
+        eps = 1e-8
 
-        # Get all candlestick pattern functions from TA-Lib
-        pattern_functions = [
-            name for name in dir(talib)
-            if name.startswith('CDL') and callable(getattr(talib, name))
-        ]
-        if excluded_patterns:
-            unknown_patterns = sorted(excluded_patterns - set(pattern_functions))
-            if unknown_patterns:
-                self.logger.warning(
-                    f"Ignoring unknown excluded candlestick patterns: {unknown_patterns}"
-                )
-            pattern_functions = [
-                name for name in pattern_functions
-                if name not in excluded_patterns
-            ]
+        open_ = ordered["open"].astype(float)
+        high = ordered["high"].astype(float)
+        low = ordered["low"].astype(float)
+        close = ordered["close"].astype(float)
+        generated: Dict[str, pd.Series] = {}
+        grouped = ordered.groupby("tic", sort=False)
 
-        self.logger.info(
-            f"Using {len(pattern_functions)} candlestick patterns"
-            + (f" after excluding {len(excluded_patterns)}" if excluded_patterns else "")
+        def _source_or_generated(column_name: str, computed: pd.Series) -> pd.Series:
+            if column_name in ordered.columns:
+                return pd.to_numeric(ordered[column_name], errors="coerce")
+            generated[column_name] = pd.Series(computed, index=ordered.index)
+            return computed
+
+        body_size = _source_or_generated("body_size", (close - open_).abs())
+        upper_shadow = _source_or_generated(
+            "upper_shadow",
+            (high - np.maximum(open_, close)).clip(lower=0.0),
+        )
+        lower_shadow = _source_or_generated(
+            "lower_shadow",
+            (np.minimum(open_, close) - low).clip(lower=0.0),
+        )
+        high_low_range = _source_or_generated(
+            "high_low_range",
+            (high - low).clip(lower=0.0),
+        )
+        safe_range = high_low_range.where(high_low_range > eps, np.nan)
+        safe_close = close.where(close.abs() > eps, np.nan)
+
+        candle_direction = _source_or_generated(
+            "candle_direction",
+            np.sign(close - open_).astype(np.int8),
+        )
+        body_ratio = _source_or_generated("body_ratio", body_size / safe_range)
+        upper_shadow_ratio = _source_or_generated("upper_shadow_ratio", upper_shadow / safe_range)
+        lower_shadow_ratio = _source_or_generated("lower_shadow_ratio", lower_shadow / safe_range)
+        close_position = _source_or_generated("close_position", (close - low) / safe_range)
+        open_position = _source_or_generated("open_position", (open_ - low) / safe_range)
+
+        prev_close = grouped["close"].shift(1)
+        prev_high = grouped["high"].shift(1)
+        prev_low = grouped["low"].shift(1)
+        prev_open = grouped["open"].shift(1)
+        prev2_open = grouped["open"].shift(2)
+        prev2_close = grouped["close"].shift(2)
+
+        _source_or_generated("gap_up", (open_ > prev_high).astype(np.int8))
+        _source_or_generated("gap_down", (open_ < prev_low).astype(np.int8))
+        _source_or_generated("gap_size", open_ - prev_close)
+        _source_or_generated(
+            "overnight_return",
+            (open_ - prev_close) / prev_close.where(prev_close.abs() > eps, np.nan),
         )
 
-        # Calculate patterns for each ticker
-        for ticker in result['tic'].unique():
-            mask = result['tic'] == ticker
-            stock_df = result[mask].copy()
+        grouped_body_size = body_size.groupby(ordered["tic"], sort=False)
+        grouped_upper_shadow = upper_shadow.groupby(ordered["tic"], sort=False)
+        grouped_lower_shadow = lower_shadow.groupby(ordered["tic"], sort=False)
+        _source_or_generated("body_size_change", grouped_body_size.diff())
+        _source_or_generated(
+            "body_size_ema_5",
+            grouped_body_size.transform(lambda s: s.ewm(span=5, adjust=False, min_periods=1).mean()),
+        )
+        _source_or_generated(
+            "body_size_ema_20",
+            grouped_body_size.transform(lambda s: s.ewm(span=20, adjust=False, min_periods=1).mean()),
+        )
+        _source_or_generated("upper_shadow_change", grouped_upper_shadow.diff())
+        _source_or_generated("lower_shadow_change", grouped_lower_shadow.diff())
 
-            for pattern_name in pattern_functions:
-                try:
-                    pattern_func = getattr(talib, pattern_name)
-                    pattern_result = pattern_func(
-                        stock_df['open'].values,
-                        stock_df['high'].values,
-                        stock_df['low'].values,
-                        stock_df['close'].values
-                    )
+        true_range = pd.concat(
+            [
+                high_low_range,
+                (high - prev_close).abs(),
+                (low - prev_close).abs(),
+            ],
+            axis=1,
+        ).max(axis=1)
+        atr_14 = true_range.groupby(ordered["tic"], sort=False).transform(
+            lambda s: s.rolling(window=14, min_periods=1).mean()
+        )
+        atr_20 = true_range.groupby(ordered["tic"], sort=False).transform(
+            lambda s: s.rolling(window=20, min_periods=1).mean()
+        )
+        atr = _source_or_generated("atr", atr_14)
+        _source_or_generated("atr_14", atr_14)
+        _source_or_generated("atr_20", atr_20)
+        _source_or_generated(
+            "rolling_high_low_range_5",
+            grouped["high"].transform(lambda s: s.rolling(window=5, min_periods=1).max())
+            - grouped["low"].transform(lambda s: s.rolling(window=5, min_periods=1).min()),
+        )
+        _source_or_generated(
+            "rolling_high_low_range_20",
+            grouped["high"].transform(lambda s: s.rolling(window=20, min_periods=1).max())
+            - grouped["low"].transform(lambda s: s.rolling(window=20, min_periods=1).min()),
+        )
 
-                    # Normalize to -1, 0, 1
-                    # TA-Lib returns: -100 (bearish), 0 (no pattern), 100 (bullish)
-                    normalized = np.where(pattern_result > 0, 1, np.where(pattern_result < 0, -1, 0))
-                    stock_df[pattern_name] = normalized
+        _source_or_generated("body_size_pct", body_size / safe_close)
+        _source_or_generated("upper_shadow_pct", upper_shadow / safe_close)
+        _source_or_generated("lower_shadow_pct", lower_shadow / safe_close)
+        _source_or_generated("range_pct", high_low_range / safe_close)
 
-                except Exception as e:
-                    self.logger.warning(f"Failed to calculate {pattern_name} for {ticker}: {e}")
-                    stock_df[pattern_name] = 0
+        returns_1d = grouped["close"].pct_change(1)
+        returns_5d = grouped["close"].pct_change(5)
+        returns_20d = grouped["close"].pct_change(20)
+        _source_or_generated("return_1d", returns_1d)
+        _source_or_generated("return_5d", returns_5d)
+        _source_or_generated("return_20d", returns_20d)
 
-            # Update result
-            result.loc[mask, stock_df.columns] = stock_df
+        _source_or_generated(
+            "rolling_volatility",
+            returns_1d.groupby(ordered["tic"], sort=False).transform(
+                lambda s: s.rolling(window=20, min_periods=1).std(ddof=0)
+            ),
+        )
 
-        self.logger.info(f"Added {len(pattern_functions)} candlestick patterns")
-        return result
+        support_level = grouped["low"].transform(lambda s: s.rolling(window=20, min_periods=1).min())
+        resistance_level = grouped["high"].transform(lambda s: s.rolling(window=20, min_periods=1).max())
+        _source_or_generated("support_distance", (close - support_level) / safe_close)
+        _source_or_generated("resistance_distance", (resistance_level - close) / safe_close)
+
+        prev_support = support_level.groupby(ordered["tic"], sort=False).shift(1)
+        prev_resistance = resistance_level.groupby(ordered["tic"], sort=False).shift(1)
+        breakout_signal = np.where(close > prev_resistance, 1, np.where(close < prev_support, -1, 0))
+        _source_or_generated("breakout_signal", pd.Series(breakout_signal, index=ordered.index, dtype=np.int8))
+
+        volume = ordered["volume"].astype(float)
+        volume_mean_20 = volume.groupby(ordered["tic"], sort=False).transform(
+            lambda s: s.rolling(window=20, min_periods=1).mean()
+        )
+        volume_std_20 = volume.groupby(ordered["tic"], sort=False).transform(
+            lambda s: s.rolling(window=20, min_periods=1).std(ddof=0)
+        )
+        _source_or_generated("volume_momentum", volume / volume_mean_20.where(volume_mean_20.abs() > eps, np.nan) - 1.0)
+        volume_spike = (volume > (volume_mean_20 + 2.0 * volume_std_20.fillna(0.0))).astype(np.int8)
+        _source_or_generated("volume_spike", volume_spike)
+
+        for lag in _SEQUENCE_LAG_WINDOWS:
+            _source_or_generated(f"lag_{lag}", grouped["close"].shift(lag))
+
+        for window in _SEQUENCE_ROLLING_WINDOWS:
+            _source_or_generated(
+                f"rolling_mean_{window}",
+                grouped["close"].transform(lambda s, w=window: s.rolling(window=w, min_periods=1).mean()),
+            )
+            _source_or_generated(
+                f"rolling_std_{window}",
+                grouped["close"].transform(lambda s, w=window: s.rolling(window=w, min_periods=1).std(ddof=0)),
+            )
+            _source_or_generated(
+                f"rolling_min_{window}",
+                grouped["close"].transform(lambda s, w=window: s.rolling(window=w, min_periods=1).min()),
+            )
+            _source_or_generated(
+                f"rolling_max_{window}",
+                grouped["close"].transform(lambda s, w=window: s.rolling(window=w, min_periods=1).max()),
+            )
+
+        for base_name, base_series in [
+            ("body_size", body_size),
+            ("upper_shadow", upper_shadow),
+            ("lower_shadow", lower_shadow),
+        ]:
+            base_grouped = base_series.groupby(ordered["tic"], sort=False)
+            for window in _CANDLESTICK_ROLLING_WINDOWS:
+                _source_or_generated(
+                    f"{base_name}_rolling_mean_{window}",
+                    base_grouped.transform(lambda s, w=window: s.rolling(window=w, min_periods=1).mean()),
+                )
+                _source_or_generated(
+                    f"{base_name}_rolling_std_{window}",
+                    base_grouped.transform(lambda s, w=window: s.rolling(window=w, min_periods=1).std(ddof=0)),
+                )
+                _source_or_generated(
+                    f"{base_name}_rolling_zscore_{window}",
+                    base_grouped.transform(lambda s, w=window: self._rolling_zscore(s, window=w, min_periods=1)),
+                )
+
+        prev_body_ratio = body_ratio.groupby(ordered["tic"], sort=False).shift(1)
+        prev2_body_ratio = body_ratio.groupby(ordered["tic"], sort=False).shift(2)
+
+        small_body = body_ratio <= 0.1
+        bullish = close > open_
+        bearish = close < open_
+        body_near_high = close_position >= 0.6
+        body_near_low = close_position <= 0.4
+        long_lower_shadow = lower_shadow >= (2.0 * body_size)
+        long_upper_shadow = upper_shadow >= (2.0 * body_size)
+        short_upper_shadow = upper_shadow <= body_size
+        short_lower_shadow = lower_shadow <= body_size
+
+        _source_or_generated("doji", small_body.astype(np.int8))
+        _source_or_generated(
+            "hammer",
+            (long_lower_shadow & short_upper_shadow & body_near_high).astype(np.int8),
+        )
+        _source_or_generated(
+            "inverted_hammer",
+            (long_upper_shadow & short_lower_shadow & body_near_low & (candle_direction >= 0)).astype(np.int8),
+        )
+        _source_or_generated(
+            "shooting_star",
+            (long_upper_shadow & short_lower_shadow & body_near_low & (candle_direction <= 0)).astype(np.int8),
+        )
+        _source_or_generated(
+            "bullish_engulfing",
+            ((prev_close < prev_open) & bullish & (open_ <= prev_close) & (close >= prev_open)).astype(np.int8),
+        )
+        _source_or_generated(
+            "bearish_engulfing",
+            ((prev_close > prev_open) & bearish & (open_ >= prev_close) & (close <= prev_open)).astype(np.int8),
+        )
+        middle_of_first = (prev2_open + prev2_close) / 2.0
+        _source_or_generated(
+            "morning_star",
+            (
+                (prev2_close < prev2_open)
+                & (prev2_body_ratio > 0.5)
+                & (prev_body_ratio <= 0.3)
+                & bullish
+                & (close >= middle_of_first)
+            ).astype(np.int8),
+        )
+        _source_or_generated(
+            "evening_star",
+            (
+                (prev2_close > prev2_open)
+                & (prev2_body_ratio > 0.5)
+                & (prev_body_ratio <= 0.3)
+                & bearish
+                & (close <= middle_of_first)
+            ).astype(np.int8),
+        )
+
+        generated_cols = [col for col in generated if col not in result.columns]
+        if generated_cols:
+            generated_df = pd.DataFrame({col: generated[col] for col in generated_cols}, index=ordered.index)
+            generated_df = (
+                generated_df
+                .replace([np.inf, -np.inf], np.nan)
+                .fillna(0.0)
+            )
+            for col in ["candle_direction", "gap_up", "gap_down", "breakout_signal", "volume_spike", *_CANDLESTICK_PATTERN_COLUMNS]:
+                if col in generated_cols:
+                    generated_df[col] = generated_df[col].astype(np.int8)
+            ordered = pd.concat([ordered, generated_df], axis=1)
+
+        ordered = ordered.sort_index()
+        self.logger.info(f"Added {len(generated_cols)} missing candlestick and sequence features")
+        return ordered
 
     def add_time_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -1203,6 +1443,9 @@ class FeatureEngineer:
         # 2.1 Add geometric and volatility features (Inspired by QuantAgent)
         result = self.add_geometric_features(result)
 
+        # 2.2 Add market structure features
+        result = self.add_market_structure_features(result)
+
         # 2.5. Add Fibonacci retracement features
         result = self.add_fibonacci_features(result)
 
@@ -1281,7 +1524,26 @@ class FeatureEngineer:
                 if any(x in c.lower() for x in ['dist_to_swing_', 'days_since_swing_', 'opt_slope_', 'opt_channel_'])
             ]
         )
-        pattern_features = [c for c in feature_cols if c.startswith('CDL')]
+        market_structure_features = [
+            c for c in feature_cols
+            if any(
+                x in c.lower()
+                for x in [
+                    'distance_to_',
+                    'breakout_',
+                    'breakdown_',
+                    'higher_high',
+                    'lower_high',
+                    'higher_low',
+                    'lower_low',
+                    'near_52w_',
+                    'trend_strength_score',
+                    'trend_persistence_',
+                    'rolling_volatility_',
+                ]
+            )
+        ]
+        pattern_features = [c for c in feature_cols if c in _CANDLESTICK_PATTERN_COLUMNS]
         external_features = [c for c in feature_cols if c in ['vix', 'bondyield'] or c in self.config.data.sources.COMMODITIES.values()]
         time_features = ['day', 'month', 'dayofweek']
         financial_metrics_features = ['pe_ratio', 'peg_ratio', 'eps', 'dividend_flag', 'roe', 'roi',
@@ -1316,6 +1578,7 @@ class FeatureEngineer:
             'rsi_features': len(rsi_features),
             'macd_features': len(macd_features),
             'geometric_features': len(geometric_features),
+            'market_structure_features': len(market_structure_features),
             'candlestick_patterns': len(pattern_features),
             'external_features': len(external_features),
             'time_features': len([f for f in time_features if f in feature_cols]),

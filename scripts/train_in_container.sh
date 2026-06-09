@@ -1,4 +1,10 @@
 #!/bin/bash
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "This script must be run with bash:" >&2
+    echo "bash $0 $*" >&2
+    exit 2
+fi
+
 # Train model from inside the runtime container
 # Usage: ./scripts/train_in_container.sh [options]
 #
@@ -30,7 +36,7 @@ ORIGINAL_ARGS=("$@")
 source "$(dirname "${BASH_SOURCE[0]}")/common_model_routing.sh"
 
 MODEL_TYPE="chronos_rich"
-EPOCHS=100
+EPOCHS=10000
 BATCH_SIZE=512
 LEARNING_RATE=0.00001
 BACKEND="lightning"
@@ -48,6 +54,7 @@ TENSORBOARD_PORT=6006
 MLFLOW_PORT=5000
 
 export PATH="$HOME/.local/bin:$PATH"
+export MLFLOW_ALLOW_FILE_STORE="${MLFLOW_ALLOW_FILE_STORE:-true}"
 
 if [ ! -f "/.dockerenv" ]; then
     if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then

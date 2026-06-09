@@ -26,6 +26,50 @@ model_config = load_config('model')
 hparam_config = load_config('hyperparameter')
 ```
 
+## Model Runtime Controls (`config/model.json`)
+
+`config/model.json` controls:
+
+- model architecture
+- training hyperparameters
+- training backend
+- experiment tracking
+- PostgreSQL run-summary logging
+
+### PostgreSQL Run Logging
+
+PostgreSQL logging for `train`, `test`, `validate`, and `backtest` is
+controlled from `config/model.json`:
+
+```json
+{
+  "model": {
+    "postgres_logging": {
+      "ENABLED": true
+    }
+  }
+}
+```
+
+Behavior:
+
+- `ENABLED = true`
+  - allow run-summary inserts into PostgreSQL
+- `ENABLED = false`
+  - disable PostgreSQL run-summary inserts
+
+When enabled, the scripts write best-effort summary rows into:
+
+- `training_runs`
+- `test_runs`
+- `validation_runs`
+- `backtest_runs`
+
+The logging is best-effort:
+
+- if PostgreSQL is unavailable, the main run still continues
+- model files and large prediction arrays are not stored in PostgreSQL
+
 ## Data Configuration (`config/main.json`)
 
 ### Data Sources
@@ -36,8 +80,6 @@ hparam_config = load_config('hyperparameter')
     "sources": {
       "START_DATE": "2015-01-01",
       "END_DATE": null,
-      "SP500_TICKER_SOURCE": "wikipedia",
-      "USE_YFINANCE_LIVE": true,
       "COMMODITIES": {
         "GC=F": "Gold",
         "HG=F": "Copper",
@@ -124,6 +166,72 @@ to read market-cap values for `sorted` mode.
 }
 ```
 
+### Candlestick Features
+
+Candlestick features are controlled by:
+
+```json
+{
+  "data": {
+    "features": {
+      "FEATURE_FLAGS": {
+        "candlestick_patterns": true
+      }
+    },
+    "candlestick": {
+      "USE_CANDLESTICK_PATTERNS": true
+    }
+  }
+}
+```
+
+When enabled, the pipeline adds custom quantitative candlestick and
+sequence-ready features such as:
+
+- candle-shape features:
+  - `body_size`
+  - `upper_shadow`
+  - `lower_shadow`
+  - `body_ratio`
+  - `close_position`
+  - `open_position`
+- volatility and structure features:
+  - `atr`
+  - `atr_14`
+  - `atr_20`
+  - `rolling_volatility`
+  - `support_distance`
+  - `resistance_distance`
+  - `breakout_signal`
+- return and volume features:
+  - `return_1d`
+  - `return_5d`
+  - `return_20d`
+  - `volume_momentum`
+  - `volume_spike`
+- lag and rolling sequence features:
+  - `lag_1`
+  - `lag_3`
+  - `lag_5`
+  - `lag_10`
+  - `lag_20`
+  - `rolling_mean_5`
+  - `rolling_std_5`
+  - `rolling_min_5`
+  - `rolling_max_5`
+- binary candlestick patterns:
+  - `doji`
+  - `hammer`
+  - `inverted_hammer`
+  - `shooting_star`
+  - `bullish_engulfing`
+  - `bearish_engulfing`
+  - `morning_star`
+  - `evening_star`
+
+If one of these columns already exists in the dataset, the pipeline keeps the
+existing values and only creates the missing features.
+
 ### Fibonacci Retracement Features
 
 ```json
@@ -187,6 +295,41 @@ trendline solver described in `docs/deep-dive-technical.md`.
 `ENABLE_ATR_FEATURE`, `ENABLE_ROC_FEATURE`, and `ENABLE_BB_WIDTH_FEATURE`
 control whether the existing ATR, ROC, and Bollinger-width geometric columns
 are generated.
+
+### Market Structure Feature Settings
+
+The market-structure feature family uses the `data.geometric` block:
+
+```json
+{
+  "data": {
+    "geometric": {
+      "ENABLE_MARKET_STRUCTURE_FEATURES": true,
+      "MARKET_STRUCTURE_WINDOWS": [20, 60, 120, 252],
+      "BREAKOUT_WINDOWS": [20, 60, 120],
+      "MARKET_STRUCTURE_COUNT_WINDOW": 20,
+      "NEAR_52W_THRESHOLD": 0.05,
+      "VOLUME_CONFIRMATION_WINDOW": 20,
+      "ATR_WINDOWS": [14, 20],
+      "TREND_WINDOWS": [20, 60],
+      "MARKET_STRUCTURE_LAGS": [1, 3, 5, 10, 20]
+    }
+  }
+}
+```
+
+These fields control:
+
+- which support/resistance windows are used
+- which breakout windows are generated
+- how far from a 52-week high/low counts as `near`
+- the rolling window for breakout volume confirmation
+- which ATR and volatility windows are generated
+- which signal lags are added for sequence models
+
+If a support/resistance or other market-structure feature already exists in
+the dataset, the pipeline keeps the existing column and only generates the
+missing features.
 
 `ENABLE_SLOPE_FEATURES` controls whether support/resistance slope columns are
 generated when the master `data.features.FEATURE_FLAGS.geometric_features` flag
@@ -541,7 +684,6 @@ backup path:
   "model": {
     "training_backend": {
       "DEFAULT": "lightning",
-      "FALLBACK": "custom",
       "ALLOW_CUSTOM_FALLBACK": true
     }
   }

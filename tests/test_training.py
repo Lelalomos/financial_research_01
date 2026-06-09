@@ -109,6 +109,23 @@ class TestTraining(unittest.TestCase):
         self.assertIn('mse', metrics)
         self.assertIn('mae', metrics)
 
+    def test_move_batch_to_device_moves_target_for_loss(self):
+        """Batch tensors used by loss computation should be on the trainer device."""
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        trainer = Trainer.__new__(Trainer)
+        trainer.device = device
+        batch = {
+            'features': torch.randn(2, 3, 4),
+            'target': torch.randn(2),
+            'ticker': ['AAPL', 'MSFT'],
+        }
+
+        moved = trainer._move_batch_to_device(batch)
+
+        self.assertEqual(moved['features'].device.type, device)
+        self.assertEqual(moved['target'].device.type, device)
+        self.assertEqual(moved['ticker'], ['AAPL', 'MSFT'])
+
     def test_early_stopping(self):
         """Test early stopping."""
         early_stop = EarlyStopping(patience=2, mode='min')

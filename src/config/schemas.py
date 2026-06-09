@@ -79,6 +79,15 @@ class GeometricConfig(StrictBaseModel):
     TRENDLINE_WINDOW: int = Field(default=30, ge=2)
     TRENDLINE_TOLERANCE: float = Field(default=1e-4, gt=0.0)
     TRENDLINE_MAX_ITERATIONS: int = Field(default=100, ge=1)
+    ENABLE_MARKET_STRUCTURE_FEATURES: bool = True
+    MARKET_STRUCTURE_WINDOWS: List[int] = Field(default_factory=lambda: [20, 60, 120, 252])
+    BREAKOUT_WINDOWS: List[int] = Field(default_factory=lambda: [20, 60, 120])
+    MARKET_STRUCTURE_COUNT_WINDOW: int = Field(default=20, ge=2)
+    NEAR_52W_THRESHOLD: float = Field(default=0.05, ge=0.0, le=1.0)
+    VOLUME_CONFIRMATION_WINDOW: int = Field(default=20, ge=2)
+    ATR_WINDOWS: List[int] = Field(default_factory=lambda: [14, 20])
+    TREND_WINDOWS: List[int] = Field(default_factory=lambda: [20, 60])
+    MARKET_STRUCTURE_LAGS: List[int] = Field(default_factory=lambda: [1, 3, 5, 10, 20])
     ENABLE_ATR_FEATURE: bool = True
     ENABLE_ROC_FEATURE: bool = True
     ENABLE_BB_WIDTH_FEATURE: bool = True
@@ -89,6 +98,22 @@ class GeometricConfig(StrictBaseModel):
     ENABLE_SWING_TIME_DISTANCE: bool = False
     ENABLE_OPTIMIZED_TRENDLINES: bool = False
     ENABLE_OPTIMIZED_CHANNEL_WIDTH: bool = False
+
+    @model_validator(mode='after')
+    def validate_market_structure_lists(self):
+        list_fields = {
+            "MARKET_STRUCTURE_WINDOWS": self.MARKET_STRUCTURE_WINDOWS,
+            "BREAKOUT_WINDOWS": self.BREAKOUT_WINDOWS,
+            "ATR_WINDOWS": self.ATR_WINDOWS,
+            "TREND_WINDOWS": self.TREND_WINDOWS,
+            "MARKET_STRUCTURE_LAGS": self.MARKET_STRUCTURE_LAGS,
+        }
+        for name, values in list_fields.items():
+            if not values:
+                raise ValueError(f"{name} cannot be empty")
+            if any(value <= 0 for value in values):
+                raise ValueError(f"{name} values must be positive")
+        return self
 
 
 class RegimeConfig(StrictBaseModel):
@@ -112,8 +137,6 @@ class RegimeConfig(StrictBaseModel):
 class SourceConfig(StrictBaseModel):
     START_DATE: str
     END_DATE: Optional[str]
-    SP500_TICKER_SOURCE: str
-    USE_YFINANCE_LIVE: bool
     INDEX_FILE: str
     RAW_DATA_INDEX_PATH: str
     VIX_SYMBOL: str
@@ -165,7 +188,6 @@ class TrainingConfig(StrictBaseModel):
 
 class TrainingBackendConfig(StrictBaseModel):
     DEFAULT: Literal['lightning', 'custom'] = 'lightning'
-    FALLBACK: Literal['custom'] = 'custom'
     ALLOW_CUSTOM_FALLBACK: bool = True
 
 
@@ -219,7 +241,6 @@ class EnsembleConfig(StrictBaseModel):
 class LoggingConfig(StrictBaseModel):
     LOG_FREQUENCY: int = Field(gt=0)
     TENSORBOARD_DIR: Optional[str]
-    WANDB_PROJECT: Optional[str] = None
 
 
 class ExperimentTrackingConfig(StrictBaseModel):
@@ -243,6 +264,10 @@ class ExperimentTrackingConfig(StrictBaseModel):
         return self
 
 
+class PostgresLoggingConfig(StrictBaseModel):
+    ENABLED: bool = True
+
+
 class ModelConfigSection(StrictBaseModel):
     embeddings: EmbeddingConfig
     training: TrainingConfig
@@ -254,6 +279,7 @@ class ModelConfigSection(StrictBaseModel):
     ensemble: EnsembleConfig = Field(default_factory=EnsembleConfig)
     logging: LoggingConfig
     experiment_tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)
+    postgres_logging: PostgresLoggingConfig = Field(default_factory=PostgresLoggingConfig)
     models: Dict[str, Dict[str, Any]]
 
 

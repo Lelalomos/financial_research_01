@@ -82,6 +82,74 @@ Sub-feature toggles live under `data.geometric`.
   lines at the end of the trendline window, enabled by
   `data.geometric.ENABLE_OPTIMIZED_CHANNEL_WIDTH`
 
+### Market Structure Features
+
+Market structure features are part of the geometric feature family and are
+controlled by `data.geometric.ENABLE_MARKET_STRUCTURE_FEATURES`.
+
+Current generated features include:
+
+- normalized support/resistance distance features
+  - `distance_to_20d_high`
+  - `distance_to_60d_high`
+  - `distance_to_120d_high`
+  - `distance_to_252d_high`
+  - `distance_to_20d_low`
+  - `distance_to_60d_low`
+  - `distance_to_120d_low`
+  - `distance_to_252d_low`
+- breakout and breakdown features
+  - `breakout_20d`
+  - `breakout_60d`
+  - `breakout_120d`
+  - `breakdown_20d`
+  - `breakdown_60d`
+  - `breakdown_120d`
+- structure state and rolling counts
+  - `higher_high`
+  - `lower_high`
+  - `higher_low`
+  - `lower_low`
+  - `higher_high_count_20`
+  - `higher_low_count_20`
+  - `lower_high_count_20`
+  - `lower_low_count_20`
+- 52-week features
+  - `distance_to_52w_high`
+  - `distance_to_52w_low`
+  - `near_52w_high`
+  - `near_52w_low`
+- volume confirmation
+  - `breakout_volume_ratio`
+  - `breakdown_volume_ratio`
+  - `volume_spike_ratio`
+  - `volume_momentum`
+- volatility and trend
+  - `atr_14`
+  - `atr_20`
+  - `atr_ratio`
+  - `rolling_volatility_20`
+  - `rolling_volatility_60`
+  - `trend_strength_score`
+  - `trend_persistence_20`
+  - `trend_persistence_60`
+- lagged structure signals
+  - `higher_high_lag_1`
+  - `higher_low_lag_1`
+  - `breakout_20d_lag_1`
+  - `breakdown_20d_lag_1`
+  - `trend_strength_score_lag_1`
+  - plus the same signal family for lags `3`, `5`, `10`, and `20`
+
+Behavior:
+
+- all calculations are past-only rolling calculations
+- output columns are filled so the feature block does not emit NaN values
+- if a market-structure column already exists in the input dataset, the
+  pipeline keeps the existing values and only creates the missing features
+- metadata about generated and preserved features is available from
+  `src/data/market_structure_features.py`
+
 ### Fibonacci Retracement Features
 
 Fibonacci features are implemented but disabled by default in `config/main.json`.
@@ -100,19 +168,84 @@ Set `data.features.FEATURE_FLAGS.fibonacci_features` to `true` to include them.
 
 ### Candlestick Patterns
 
-All 100+ TA-Lib patterns are included:
-- Engulfing patterns
-- Doji patterns
-- Hammer/Hanging Man
-- Morning/Evening Star
-- And many more...
+The candlestick feature block now generates custom vectorized candlestick
+features instead of TA-Lib `CDL*` columns.
 
-You can also exclude specific candlestick patterns through
-`data.candlestick.EXCLUDE_PATTERNS` in `config/main.json` while keeping the
-rest of the candlestick feature set enabled.
+Current generated features include:
 
-The current default config excludes 29 ultra-sparse `CDL*` patterns so the
-generated feature set avoids the noisiest rare-event candlestick columns.
+- basic shape features
+  - `body_size`
+  - `candle_direction`
+  - `upper_shadow`
+  - `lower_shadow`
+  - `high_low_range`
+  - `body_ratio`
+  - `upper_shadow_ratio`
+  - `lower_shadow_ratio`
+  - `close_position`
+  - `open_position`
+- gap features
+  - `gap_up`
+  - `gap_down`
+  - `gap_size`
+  - `overnight_return`
+- momentum candlestick features
+  - `body_size_change`
+  - `body_size_ema_5`
+  - `body_size_ema_20`
+  - `upper_shadow_change`
+  - `lower_shadow_change`
+- volatility features
+  - `atr`
+  - `atr_14`
+  - `atr_20`
+  - `rolling_volatility`
+  - `support_distance`
+  - `resistance_distance`
+  - `breakout_signal`
+  - `rolling_high_low_range_5`
+  - `rolling_high_low_range_20`
+- return and volume features
+  - `return_1d`
+  - `return_5d`
+  - `return_20d`
+  - `volume_momentum`
+  - `volume_spike`
+- sequence-ready lag and rolling close features
+  - `lag_1`
+  - `lag_3`
+  - `lag_5`
+  - `lag_10`
+  - `lag_20`
+  - `rolling_mean_5`
+  - `rolling_std_5`
+  - `rolling_min_5`
+  - `rolling_max_5`
+- normalized candlestick features
+  - `body_size_pct`
+  - `upper_shadow_pct`
+  - `lower_shadow_pct`
+  - `range_pct`
+- binary pattern flags
+  - `doji`
+  - `hammer`
+  - `inverted_hammer`
+  - `shooting_star`
+  - `bullish_engulfing`
+  - `bearish_engulfing`
+  - `morning_star`
+  - `evening_star`
+- rolling statistics for `body_size`, `upper_shadow`, and `lower_shadow`
+  - rolling mean
+  - rolling std
+  - rolling z-score
+  - windows: `5`, `10`, `20`, `60`
+
+The generated candlestick columns are filled so the candlestick feature block
+does not emit NaN values.
+
+If any of these columns already exist in the input dataset, the pipeline keeps
+the existing values and only creates the missing features.
 
 ### Time Features
 

@@ -39,6 +39,7 @@ from src.training.losses import create_loss_module
 from src.utils.data_preview import load_ticker_mapping, log_sequence_preview
 from src.utils.logger import get_logger, get_training_logger
 from src.utils.device import get_device, print_gpu_info, get_device_info
+from src.utils.postgres_logging import make_run_logger, make_run_uuid
 
 
 class LimitedLoader:
@@ -379,6 +380,22 @@ def _load_model_weights(model, checkpoint_path: str, device) -> None:
     model.load_state_dict(state_dict)
 
 
+def apply_limited_batch_loader_overrides(config, args, logger=None) -> None:
+    """Avoid worker-fork memory spikes for limited-batch smoke runs."""
+    if args.max_train_batches is None and args.max_val_batches is None:
+        return
+
+    if int(getattr(config.model.device, "NUM_WORKERS", 0)) <= 0:
+        return
+
+    if logger is not None:
+        logger.info(
+            "Limited batch run detected. Setting DataLoader NUM_WORKERS=0 "
+            "to avoid duplicating large precomputed datasets."
+        )
+    config.model.device.NUM_WORKERS = 0
+
+
 def _save_kronos_checkpoint(
     checkpoint_path: Path,
     tokenizer,
@@ -626,348 +643,426 @@ def main():
     args = parse_args()
 
     logger = get_logger("train", log_dir="logs")
+    config = load_config('model')
+    run_logger = make_run_logger(
+        logger,
+        enabled=bool(getattr(getattr(config.model, "postgres_logging", None), "ENABLED", True)),
+    )
+    run_uuid = make_run_uuid()
+    base_payload = {
+        "run_uuid": run_uuid,
+        "cli_args_json": vars(args),
+        "data_dir": args.data_dir,
+        "checkpoint_dir": args.checkpoint_dir,
+        "resume_checkpoint_path": args.resume,
+        "fine_tune_checkpoint_path": args.fine_tune,
+        "stocks_filter": args.stocks,
+        "max_train_batches": args.max_train_batches,
+        "max_val_batches": args.max_val_batches,
+        "num_epochs_requested": args.epochs,
+        "batch_size_requested": args.batch_size,
+        "learning_rate_requested": args.lr,
+    }
+
+    def log_db(status, extra=None, error_message=None):
+        payload = dict(base_payload)
+        payload["status"] = status
+        if error_message is not None:
+            payload["error_message"] = error_message
+        if extra:
+            payload.update(extra)
+        run_logger.log_run("training_runs", payload)
 
     logger.info("=" * 60)
     logger.info("TRAINING SCRIPT")
     logger.info("=" * 60)
+    try:
+        if args.device:
+            device = torch.device(args.device)
+            logger.info(f"Using manually specified device: {device}")
+        else:
+            device = get_device(force_cpu=args.force_cpu, verbose=True)
+            device_info = get_device_info(verbose=False)
+            logger.info(f"Auto-detected device: {device}")
+            logger.info(f"CUDA available: {device_info['cuda_available']}")
+            if device_info.get('cuda_working'):
+                logger.info(f"GPU: {device_info.get('gpu_name', 'Unknown')}")
+                logger.info(f"GPU Memory: {device_info.get('gpu_memory_gb', 0):.2f} GB")
 
-    # Determine device
-    if args.device:
-        device = torch.device(args.device)
-        logger.info(f"Using manually specified device: {device}")
-    else:
-        device = get_device(force_cpu=args.force_cpu, verbose=True)
-        device_info = get_device_info(verbose=False)
-        logger.info(f"Auto-detected device: {device}")
-        logger.info(f"CUDA available: {device_info['cuda_available']}")
-        if device_info.get('cuda_working'):
-            logger.info(f"GPU: {device_info.get('gpu_name', 'Unknown')}")
-            logger.info(f"GPU Memory: {device_info.get('gpu_memory_gb', 0):.2f} GB")
+        data_config = load_config('main')
+        model_type = args.model_type or config.get_default_model_type()
+        available_model_types = config.get_available_model_types()
+        if model_type not in available_model_types:
+            raise ValueError(
+                f"Unknown model type: {model_type}. "
+                f"Available models: {available_model_types}"
+            )
 
-    # Load config
-    config = load_config('model')
-    data_config = load_config('main')
-    model_type = args.model_type or config.get_default_model_type()
-    available_model_types = config.get_available_model_types()
-    if model_type not in available_model_types:
-        raise ValueError(
-            f"Unknown model type: {model_type}. "
-            f"Available models: {available_model_types}"
+        if args.epochs:
+            config.model.training.NUM_EPOCHS = args.epochs
+        if args.batch_size:
+            config.model.training.BATCH_SIZE = args.batch_size
+        if args.lr:
+            config.model.training.LEARNING_RATE = args.lr
+
+        config.model.checkpointing.CHECKPOINT_DIR = args.checkpoint_dir
+        backend = args.backend or config.model.training_backend.DEFAULT
+        apply_limited_batch_loader_overrides(config, args, logger=logger)
+
+        logger.info(
+            "Effective training config: "
+            f"model_type={model_type}, "
+            f"epochs={config.model.training.NUM_EPOCHS}, "
+            f"batch_size={config.model.training.BATCH_SIZE}, "
+            f"lr={config.model.training.LEARNING_RATE}, "
+            f"backend={backend}, "
+            f"data_mode={getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')}"
         )
 
-    # Override config from arguments
-    if args.epochs:
-        config.model.training.NUM_EPOCHS = args.epochs
-    if args.batch_size:
-        config.model.training.BATCH_SIZE = args.batch_size
-    if args.lr:
-        config.model.training.LEARNING_RATE = args.lr
+        if args.config:
+            with open(args.config, 'r') as f:
+                override = json.load(f)
+                for key, value in override.items():
+                    if hasattr(config, key):
+                        setattr(config, key, value)
 
-    config.model.checkpointing.CHECKPOINT_DIR = args.checkpoint_dir
-    backend = args.backend or config.model.training_backend.DEFAULT
+        is_finetuning = args.stocks is not None or args.fine_tune is not None
+        data_dir = Path(args.data_dir)
 
-    logger.info(
-        "Effective training config: "
-        f"model_type={model_type}, "
-        f"epochs={config.model.training.NUM_EPOCHS}, "
-        f"batch_size={config.model.training.BATCH_SIZE}, "
-        f"lr={config.model.training.LEARNING_RATE}, "
-        f"backend={backend}, "
-        f"data_mode={getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')}"
-    )
-
-    # Load config override if provided
-    if args.config:
-        with open(args.config, 'r') as f:
-            override = json.load(f)
-            for key, value in override.items():
-                if hasattr(config, key):
-                    setattr(config, key, value)
-
-    # Check if fine-tuning mode
-    is_finetuning = args.stocks is not None or args.fine_tune is not None
-
-    # Load data
-    data_dir = Path(args.data_dir)
-
-    logger.info(f"Loading data from {data_dir}...")
-
-    preprocessing_info = {}
-    info_path = data_dir / 'info.json'
-    if info_path.exists():
-        with open(info_path, 'r') as f:
-            preprocessing_info = json.load(f)
-        logger.info(f"Loaded preprocessing info from {info_path}")
-
-    # Load stock encoders if needed for stock filtering
-    stock_encoder = None
-    group_encoder = None
-
-    if args.stocks is not None:
-        # Need to load the pre-normalized data to get stock names
-        # or we need to load from info
-        try:
-            # Try to load from preprocessing checkpoint
-            pre_norm_path = data_dir.parent / 'pre_normalized.parquet'
-            if pre_norm_path.exists():
-                import pandas as pd
-                df = pd.read_parquet(pre_norm_path)
-                unique_stocks = df['tic'].unique()
-                stock_encoder = LabelEncoder()
-                stock_encoder.fit(unique_stocks)
-                logger.info(f"Loaded stock encoder with {len(stock_encoder.classes_)} stocks")
-        except Exception as e:
-            logger.warning(f"Could not load stock encoder: {e}")
-
-    data_mode = getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')
-    if data_mode == 'precomputed_sequences':
-        train_sequences = load_sequences(
-            data_dir,
-            'train',
-            stock_names=args.stocks,
-            stock_encoder=stock_encoder,
+        base_payload.update(
+            {
+                "model_type": model_type,
+                "training_backend": backend,
+                "device": str(device),
+                "main_config_json": data_config.to_dict(),
+                "model_config_json": config.to_dict(),
+                "notes": f"data_mode={getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')}",
+            }
         )
-        val_sequences = load_sequences(
-            data_dir,
-            'val',
-            stock_names=args.stocks,
-            stock_encoder=stock_encoder,
-        )
-        if train_sequences is None:
+
+        logger.info(f"Loading data from {data_dir}...")
+
+        preprocessing_info = {}
+        info_path = data_dir / 'info.json'
+        if info_path.exists():
+            with open(info_path, 'r') as f:
+                preprocessing_info = json.load(f)
+            logger.info(f"Loaded preprocessing info from {info_path}")
+
+        stock_encoder = None
+        group_encoder = None
+
+        if args.stocks is not None:
+            try:
+                pre_norm_path = data_dir.parent / 'pre_normalized.parquet'
+                if pre_norm_path.exists():
+                    import pandas as pd
+                    df = pd.read_parquet(pre_norm_path)
+                    unique_stocks = df['tic'].unique()
+                    stock_encoder = LabelEncoder()
+                    stock_encoder.fit(unique_stocks)
+                    logger.info(f"Loaded stock encoder with {len(stock_encoder.classes_)} stocks")
+            except Exception as e:
+                logger.warning(f"Could not load stock encoder: {e}")
+
+        data_mode = getattr(getattr(data_config.data, 'dataset', None), 'MODE', 'precomputed_sequences')
+        if data_mode == 'precomputed_sequences':
+            train_sequences = load_sequences(
+                data_dir,
+                'train',
+                stock_names=args.stocks,
+                stock_encoder=stock_encoder,
+            )
+            val_sequences = load_sequences(
+                data_dir,
+                'val',
+                stock_names=args.stocks,
+                stock_encoder=stock_encoder,
+            )
+            if train_sequences is None:
+                feature_cols = preprocessing_info.get('feature_cols')
+                if not feature_cols:
+                    message = "Missing feature_cols in preprocessing info; cannot build sequences before training."
+                    logger.error(message)
+                    log_db("failed", error_message=message)
+                    return 1
+                logger.info("Saved precomputed sequence arrays not found; building from normalized split cache...")
+                train_sequences, val_sequences = build_sequences_from_normalized_splits(
+                    data_dir=data_dir,
+                    feature_cols=feature_cols,
+                    data_config=data_config,
+                    logger=logger,
+                    stock_names=args.stocks,
+                )
+            train_split_df = None
+            val_split_df = None
+        elif data_mode == 'on_the_fly_sequences':
             feature_cols = preprocessing_info.get('feature_cols')
             if not feature_cols:
-                logger.error("Missing feature_cols in preprocessing info; cannot build sequences before training.")
+                message = "Missing feature_cols in preprocessing info; cannot stream sequences lazily."
+                logger.error(message)
+                log_db("failed", error_message=message)
                 return 1
-            logger.info("Saved precomputed sequence arrays not found; building from normalized split cache...")
-            train_sequences, val_sequences = build_sequences_from_normalized_splits(
+            train_split_df, val_split_df = load_normalized_splits_for_training(
                 data_dir=data_dir,
-                feature_cols=feature_cols,
-                data_config=data_config,
                 logger=logger,
                 stock_names=args.stocks,
             )
-        train_split_df = None
-        val_split_df = None
-    elif data_mode == 'on_the_fly_sequences':
-        feature_cols = preprocessing_info.get('feature_cols')
-        if not feature_cols:
-            logger.error("Missing feature_cols in preprocessing info; cannot stream sequences lazily.")
-            return 1
-        train_split_df, val_split_df = load_normalized_splits_for_training(
-            data_dir=data_dir,
-            logger=logger,
-            stock_names=args.stocks,
-        )
-        train_sequences = None
-        val_sequences = None
-    else:
-        train_sequences = load_sequences(data_dir, 'train', stock_names=args.stocks, stock_encoder=stock_encoder)
-        val_sequences = load_sequences(data_dir, 'val', stock_names=args.stocks, stock_encoder=stock_encoder)
-        train_split_df = None
-        val_split_df = None
-
-    if data_mode == 'on_the_fly_sequences':
-        if train_split_df is None:
-            logger.error(f"No normalized split cache found in {data_dir}/.cache/normalized_splits/")
-            logger.error("Run preprocess_data.py with normalized split output first")
-            return 1
-    elif train_sequences is None:
-        logger.error(f"No training data found in {data_dir}/train/")
-        logger.error("Run preprocess_data.py first")
-        return 1
-
-    # Log if filtering by stocks
-    if args.stocks is not None:
-        logger.info(f"Filtered training to stocks: {args.stocks}")
-        if data_mode == 'on_the_fly_sequences':
-            logger.info(f"Loaded {len(train_split_df):,} normalized training rows (filtered)")
-            if val_split_df is not None:
-                logger.info(f"Loaded {len(val_split_df):,} normalized validation rows (filtered)")
+            train_sequences = None
+            val_sequences = None
         else:
-            logger.info(f"Loaded {len(train_sequences['target'])} training samples (filtered)")
-            if val_sequences:
-                logger.info(f"Loaded {len(val_sequences['target'])} validation samples (filtered)")
-    else:
+            train_sequences = load_sequences(data_dir, 'train', stock_names=args.stocks, stock_encoder=stock_encoder)
+            val_sequences = load_sequences(data_dir, 'val', stock_names=args.stocks, stock_encoder=stock_encoder)
+            train_split_df = None
+            val_split_df = None
+
         if data_mode == 'on_the_fly_sequences':
-            logger.info(f"Loaded {len(train_split_df):,} normalized training rows")
-            if val_split_df is not None:
-                logger.info(f"Loaded {len(val_split_df):,} normalized validation rows")
+            if train_split_df is None:
+                message = f"No normalized split cache found in {data_dir}/.cache/normalized_splits/"
+                logger.error(message)
+                logger.error("Run preprocess_data.py with normalized split output first")
+                log_db("failed", error_message=message)
+                return 1
+        elif train_sequences is None:
+            message = f"No training data found in {data_dir}/train/"
+            logger.error(message)
+            logger.error("Run preprocess_data.py first")
+            log_db("failed", error_message=message)
+            return 1
+
+        if args.stocks is not None:
+            logger.info(f"Filtered training to stocks: {args.stocks}")
+            if data_mode == 'on_the_fly_sequences':
+                logger.info(f"Loaded {len(train_split_df):,} normalized training rows (filtered)")
+                if val_split_df is not None:
+                    logger.info(f"Loaded {len(val_split_df):,} normalized validation rows (filtered)")
+            else:
+                logger.info(f"Loaded {len(train_sequences['target'])} training samples (filtered)")
+                if val_sequences:
+                    logger.info(f"Loaded {len(val_sequences['target'])} validation samples (filtered)")
         else:
-            logger.info(f"Loaded {len(train_sequences['target'])} training samples")
-            if val_sequences:
-                logger.info(f"Loaded {len(val_sequences['target'])} validation samples")
+            if data_mode == 'on_the_fly_sequences':
+                logger.info(f"Loaded {len(train_split_df):,} normalized training rows")
+                if val_split_df is not None:
+                    logger.info(f"Loaded {len(val_split_df):,} normalized validation rows")
+            else:
+                logger.info(f"Loaded {len(train_sequences['target'])} training samples")
+                if val_sequences:
+                    logger.info(f"Loaded {len(val_sequences['target'])} validation samples")
 
-    ticker_map = load_ticker_mapping(data_dir)
-    if train_sequences is not None:
-        log_sequence_preview(
-            logger=logger,
-            sequences=train_sequences,
-            feature_cols=preprocessing_info.get('feature_cols'),
-            ticker_map=ticker_map,
-            split_name='train',
-            max_rows=10,
-        )
-
-    # Create data loaders
-    logger.info("Creating data loaders...")
-
-    if data_mode == 'on_the_fly_sequences':
-        loaders = create_lazy_data_loaders(
-            train_df=train_split_df,
-            val_df=val_split_df,
-            feature_cols=preprocessing_info.get('feature_cols'),
-            data_config=data_config,
-            model_config=config,
-        )
-    else:
-        loaders = create_data_loaders(
-            train_sequences=train_sequences,
-            val_sequences=val_sequences,
-            config=config
-        )
-
-    if loaders.get('val') is None and backend == 'lightning':
-        if config.model.training.SCHEDULER == 'reduce_on_plateau':
-            logger.warning(
-                "No validation loader is available. Disabling reduce_on_plateau "
-                "scheduler for this run because it requires val/loss."
+        ticker_map = load_ticker_mapping(data_dir)
+        if train_sequences is not None:
+            log_sequence_preview(
+                logger=logger,
+                sequences=train_sequences,
+                feature_cols=preprocessing_info.get('feature_cols'),
+                ticker_map=ticker_map,
+                split_name='train',
+                max_rows=10,
             )
-            config.model.training.SCHEDULER = None
 
-    max_train_batches = getattr(args, 'max_train_batches', None)
-    max_val_batches = getattr(args, 'max_val_batches', None)
-    if max_train_batches is not None:
-        loaders['train'] = LimitedLoader(loaders['train'], max_train_batches)
-    if loaders.get('val') is not None and max_val_batches is not None:
-        loaders['val'] = LimitedLoader(loaders['val'], max_val_batches)
+        logger.info("Creating data loaders...")
 
-    # Get embedding sizes
-    train_dataset = loaders['train'].dataset
-    embedding_sizes = train_dataset.get_embedding_sizes()
+        if data_mode == 'on_the_fly_sequences':
+            loaders = create_lazy_data_loaders(
+                train_df=train_split_df,
+                val_df=val_split_df,
+                feature_cols=preprocessing_info.get('feature_cols'),
+                data_config=data_config,
+                model_config=config,
+            )
+        else:
+            loaders = create_data_loaders(
+                train_sequences=train_sequences,
+                val_sequences=val_sequences,
+                config=config
+            )
 
-    num_features = train_dataset.num_features
+        if loaders.get('val') is None and backend == 'lightning':
+            if config.model.training.SCHEDULER == 'reduce_on_plateau':
+                logger.warning(
+                    "No validation loader is available. Disabling reduce_on_plateau "
+                    "scheduler for this run because it requires val/loss."
+                )
+                config.model.training.SCHEDULER = None
 
-    logger.info(f"Creating {model_type} model...")
-    logger.info(f"  Num features: {num_features}")
-    logger.info(f"  Num stocks: {embedding_sizes['num_stocks']}")
-    logger.info(f"  Num groups: {embedding_sizes['num_groups']}")
+        max_train_batches = getattr(args, 'max_train_batches', None)
+        max_val_batches = getattr(args, 'max_val_batches', None)
+        if max_train_batches is not None:
+            loaders['train'] = LimitedLoader(loaders['train'], max_train_batches)
+        if loaders.get('val') is not None and max_val_batches is not None:
+            loaders['val'] = LimitedLoader(loaders['val'], max_val_batches)
 
-    checkpoint_metadata = {
-        'feature_cols': preprocessing_info.get('feature_cols'),
-        'num_features': preprocessing_info.get('num_features'),
-        'num_stocks': embedding_sizes['num_stocks'],
-        'num_groups': embedding_sizes['num_groups'],
-        'target_normalization': {
-            'NORMALIZE_TARGET': preprocessing_info.get(
+        train_dataset = loaders['train'].dataset
+        embedding_sizes = train_dataset.get_embedding_sizes()
+        num_features = train_dataset.num_features
+
+        logger.info(f"Creating {model_type} model...")
+        logger.info(f"  Num features: {num_features}")
+        logger.info(f"  Num stocks: {embedding_sizes['num_stocks']}")
+        logger.info(f"  Num groups: {embedding_sizes['num_groups']}")
+
+        checkpoint_metadata = {
+            'feature_cols': preprocessing_info.get('feature_cols'),
+            'num_features': preprocessing_info.get('num_features'),
+            'num_stocks': embedding_sizes['num_stocks'],
+            'num_groups': embedding_sizes['num_groups'],
+            'target_normalization': {
+                'NORMALIZE_TARGET': preprocessing_info.get(
+                    'normalize_target',
+                    data_config.data.sequences.NORMALIZE_TARGET
+                ),
+                'TARGET_THRESHOLD': preprocessing_info.get(
+                    'target_threshold',
+                    data_config.data.sequences.TARGET_THRESHOLD
+                ),
+            },
+            'regime_params': preprocessing_info.get('regime_params'),
+        }
+        checkpoint_metadata = {
+            key: value for key, value in checkpoint_metadata.items()
+            if value is not None
+        }
+
+        db_extra = {
+            "dataset_info_json": preprocessing_info,
+            "feature_cols_json": preprocessing_info.get('feature_cols') or [],
+            "num_features": num_features,
+            "num_stocks": embedding_sizes['num_stocks'],
+            "num_groups": embedding_sizes['num_groups'],
+            "sequence_length": preprocessing_info.get('sequence_length'),
+            "prediction_horizon": preprocessing_info.get('prediction_horizon'),
+            "normalize_target": preprocessing_info.get(
                 'normalize_target',
                 data_config.data.sequences.NORMALIZE_TARGET
             ),
-            'TARGET_THRESHOLD': preprocessing_info.get(
+            "target_threshold": preprocessing_info.get(
                 'target_threshold',
                 data_config.data.sequences.TARGET_THRESHOLD
             ),
-        },
-        'regime_params': preprocessing_info.get('regime_params'),
-    }
-    checkpoint_metadata = {
-        key: value for key, value in checkpoint_metadata.items()
-        if value is not None
-    }
+            "regime_params_json": preprocessing_info.get('regime_params'),
+            "train_samples": len(loaders['train'].dataset),
+            "val_samples": len(loaders['val'].dataset) if loaders.get('val') is not None else None,
+        }
 
-    if is_kronos_family(model_type):
-        if backend == 'lightning':
-            logger.warning("Kronos training is not integrated with Lightning yet. Falling back to custom backend.")
-            backend = 'custom'
+        if is_kronos_family(model_type):
+            if backend == 'lightning':
+                logger.warning("Kronos training is not integrated with Lightning yet. Falling back to custom backend.")
+                backend = 'custom'
+                base_payload["training_backend"] = backend
 
-        kronos_result = train_kronos(
-            loaders=loaders,
-            config=config,
-            device=device,
-            model_type=model_type,
-            checkpoint_metadata=checkpoint_metadata,
-            logger=logger,
-            num_features=num_features,
-            embedding_sizes=embedding_sizes,
-            args=args,
-        )
-        logger.info(f"{model_type} training complete!")
-        logger.info(f"Best validation loss: {kronos_result['best_score']:.6f}")
-        logger.info(f"Saved best {model_type} checkpoint to {kronos_result['best_model_path']}")
-        logger.info(f"Saved final {model_type} checkpoint to {kronos_result['final_model_path']}")
-        return 0
-
-    # Create model
-    model = create_model(
-        model_type=model_type,
-        num_features=num_features,
-        num_stocks=embedding_sizes['num_stocks'],
-        num_groups=embedding_sizes['num_groups'],
-        config=config,
-        feature_cols=preprocessing_info.get('feature_cols'),
-    )
-
-    # Load checkpoint for fine-tuning if specified
-    if args.fine_tune:
-        logger.info(f"Loading checkpoint for fine-tuning: {args.fine_tune}")
-        if backend == 'custom':
-            trainer = Trainer(
-                model,
-                config,
-                device=str(device),
-                model_type=model_type,
-                checkpoint_metadata=checkpoint_metadata
-            )
-            trainer.load_checkpoint(args.fine_tune)
-        else:
-            _load_model_weights(model, args.fine_tune, device)
-        logger.info("Checkpoint loaded successfully")
-
-        # Freeze embeddings if requested
-        if args.freeze_embeddings:
-            logger.info("Freezing stock and group embeddings...")
-            for name, param in model.named_parameters():
-                if 'stock_embedding' in name or 'group_embedding' in name:
-                    param.requires_grad = False
-            logger.info("Embeddings frozen")
-
-    # Resume from checkpoint if specified (different from fine-tune)
-    elif args.resume:
-        logger.info(f"Resuming from checkpoint: {args.resume}")
-        if backend == 'custom':
-            trainer = Trainer(
-                model,
-                config,
-                device=str(device),
-                model_type=model_type,
-                checkpoint_metadata=checkpoint_metadata
-            )
-            trainer.load_checkpoint(args.resume)
-        else:
-            logger.warning("Lightning backend loads model weights from custom checkpoints; optimizer resume is not available in Task 5.1")
-            _load_model_weights(model, args.resume, device)
-
-    # Train
-    if is_finetuning:
-        logger.info(f"Starting fine-tuning on stocks: {args.stocks if args.stocks else 'all'}...")
-        logger.info("Note: Model will adapt to the specified stocks while retaining knowledge from previous training.")
-    else:
-        logger.info("Starting training...")
-
-    logger.info(f"Training backend: {backend}")
-    trainer = None
-    lightning_result = None
-    try:
-        if backend == 'lightning':
-            lightning_result = train_with_lightning(
-                model=model,
+            kronos_result = train_kronos(
+                loaders=loaders,
                 config=config,
-                train_loader=loaders['train'],
-                val_loader=loaders.get('val'),
-                device=str(device),
+                device=device,
                 model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata,
+                logger=logger,
+                num_features=num_features,
+                embedding_sizes=embedding_sizes,
+                args=args,
             )
+            logger.info(f"{model_type} training complete!")
+            logger.info(f"Best validation loss: {kronos_result['best_score']:.6f}")
+            logger.info(f"Saved best {model_type} checkpoint to {kronos_result['best_model_path']}")
+            logger.info(f"Saved final {model_type} checkpoint to {kronos_result['final_model_path']}")
+            db_extra.update(
+                {
+                    "best_checkpoint_path": kronos_result.get('best_model_path'),
+                    "final_checkpoint_path": kronos_result.get('final_model_path'),
+                    "best_val_loss": kronos_result.get('best_score'),
+                }
+            )
+            log_db("completed", extra=db_extra)
+            return 0
+
+        model = create_model(
+            model_type=model_type,
+            num_features=num_features,
+            num_stocks=embedding_sizes['num_stocks'],
+            num_groups=embedding_sizes['num_groups'],
+            config=config,
+            feature_cols=preprocessing_info.get('feature_cols'),
+        )
+
+        if args.fine_tune:
+            logger.info(f"Loading checkpoint for fine-tuning: {args.fine_tune}")
+            if backend == 'custom':
+                trainer = Trainer(
+                    model,
+                    config,
+                    device=str(device),
+                    model_type=model_type,
+                    checkpoint_metadata=checkpoint_metadata
+                )
+                trainer.load_checkpoint(args.fine_tune)
+            else:
+                _load_model_weights(model, args.fine_tune, device)
+            logger.info("Checkpoint loaded successfully")
+
+            if args.freeze_embeddings:
+                logger.info("Freezing stock and group embeddings...")
+                for name, param in model.named_parameters():
+                    if 'stock_embedding' in name or 'group_embedding' in name:
+                        param.requires_grad = False
+                logger.info("Embeddings frozen")
+
+        elif args.resume:
+            logger.info(f"Resuming from checkpoint: {args.resume}")
+            if backend == 'custom':
+                trainer = Trainer(
+                    model,
+                    config,
+                    device=str(device),
+                    model_type=model_type,
+                    checkpoint_metadata=checkpoint_metadata
+                )
+                trainer.load_checkpoint(args.resume)
+            else:
+                logger.warning("Lightning backend loads model weights from custom checkpoints; optimizer resume is not available in Task 5.1")
+                _load_model_weights(model, args.resume, device)
+
+        if is_finetuning:
+            logger.info(f"Starting fine-tuning on stocks: {args.stocks if args.stocks else 'all'}...")
+            logger.info("Note: Model will adapt to the specified stocks while retaining knowledge from previous training.")
         else:
+            logger.info("Starting training...")
+
+        logger.info(f"Training backend: {backend}")
+        trainer = None
+        lightning_result = None
+        training_history = None
+        try:
+            if backend == 'lightning':
+                lightning_result = train_with_lightning(
+                    model=model,
+                    config=config,
+                    train_loader=loaders['train'],
+                    val_loader=loaders.get('val'),
+                    device=str(device),
+                    model_type=model_type,
+                    checkpoint_metadata=checkpoint_metadata,
+                )
+            else:
+                trainer = Trainer(
+                    model,
+                    config,
+                    device=str(device),
+                    model_type=model_type,
+                    checkpoint_metadata=checkpoint_metadata
+                )
+                training_history = trainer.train(
+                    train_loader=loaders['train'],
+                    val_loader=loaders.get('val'),
+                    num_epochs=config.model.training.NUM_EPOCHS
+                )
+        except LightningDependencyError as exc:
+            if backend != 'lightning' or not config.model.training_backend.ALLOW_CUSTOM_FALLBACK:
+                raise
+            logger.warning(f"{exc}")
+            logger.warning("Falling back to custom Trainer because ALLOW_CUSTOM_FALLBACK=true")
+            backend = 'custom'
+            base_payload["training_backend"] = backend
             trainer = Trainer(
                 model,
                 config,
@@ -975,75 +1070,94 @@ def main():
                 model_type=model_type,
                 checkpoint_metadata=checkpoint_metadata
             )
-            trainer.train(
+            training_history = trainer.train(
                 train_loader=loaders['train'],
                 val_loader=loaders.get('val'),
                 num_epochs=config.model.training.NUM_EPOCHS
             )
-    except LightningDependencyError as exc:
-        if backend != 'lightning' or not config.model.training_backend.ALLOW_CUSTOM_FALLBACK:
-            raise
-        logger.warning(f"{exc}")
-        logger.warning("Falling back to custom Trainer because ALLOW_CUSTOM_FALLBACK=true")
-        backend = 'custom'
-        trainer = Trainer(
-            model,
-            config,
-            device=str(device),
-            model_type=model_type,
-            checkpoint_metadata=checkpoint_metadata
-        )
-        trainer.train(
-            train_loader=loaders['train'],
-            val_loader=loaders.get('val'),
-            num_epochs=config.model.training.NUM_EPOCHS
-        )
 
-    logger.info("Training complete!")
-    final_checkpoint_path = None
-    if backend == 'lightning' and lightning_result is not None:
-        best_score = lightning_result.get('best_score')
-        if best_score is not None:
-            logger.info(f"Best validation loss: {best_score:.6f}")
-        if lightning_result.get('best_model_path'):
-            logger.info(f"Saved Lightning custom-compatible checkpoint to {lightning_result['best_model_path']}")
-        final_checkpoint_path = save_final_lightning_checkpoint(
-            trainer=lightning_result['trainer'],
-            lightning_module=lightning_result['module'],
-            checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
-            model_type=model_type,
-            checkpoint_metadata=checkpoint_metadata,
-        )
-        logger.info(f"Saved final trained Lightning checkpoint to {final_checkpoint_path}")
-    elif trainer is not None:
-        if trainer.checkpoint.best_score is not None:
-            logger.info(f"Best validation loss: {trainer.checkpoint.best_score:.6f}")
-        else:
-            logger.info("No validation-based best checkpoint was produced.")
-        final_checkpoint_path = str(
-            Path(config.model.checkpointing.CHECKPOINT_DIR) / f"{model_type}_final.pth"
-        )
-        trainer.save_model(final_checkpoint_path)
-        logger.info(f"Saved final trained checkpoint to {final_checkpoint_path}")
-
-    # Save final model with suffix if fine-tuning
-    if args.stocks:
-        stock_suffix = "_".join(args.stocks[:3])  # Use first 3 stock names for filename
-        if len(args.stocks) > 3:
-            stock_suffix += f"_etc{len(args.stocks)}"
-        final_path = Path(config.model.checkpointing.CHECKPOINT_DIR) / f"best_model_{stock_suffix}.pth"
-        if trainer is None:
-            trainer = Trainer(
-                model,
-                config,
-                device=str(device),
+        logger.info("Training complete!")
+        final_checkpoint_path = None
+        best_checkpoint_path = None
+        best_val_loss = None
+        final_train_loss = None
+        final_val_loss = None
+        if backend == 'lightning' and lightning_result is not None:
+            best_val_loss = lightning_result.get('best_score')
+            if best_val_loss is not None:
+                logger.info(f"Best validation loss: {best_val_loss:.6f}")
+            if lightning_result.get('best_model_path'):
+                best_checkpoint_path = lightning_result['best_model_path']
+                logger.info(f"Saved Lightning custom-compatible checkpoint to {best_checkpoint_path}")
+            final_checkpoint_path = save_final_lightning_checkpoint(
+                trainer=lightning_result['trainer'],
+                lightning_module=lightning_result['module'],
+                checkpoint_dir=config.model.checkpointing.CHECKPOINT_DIR,
                 model_type=model_type,
-                checkpoint_metadata=checkpoint_metadata
+                checkpoint_metadata=checkpoint_metadata,
             )
-        trainer.save_model(str(final_path))
-        logger.info(f"Saved fine-tuned model to {final_path}")
+            logger.info(f"Saved final trained Lightning checkpoint to {final_checkpoint_path}")
+            callback_metrics = getattr(lightning_result['trainer'], "callback_metrics", {}) or {}
+            for key in ("train/loss", "train/loss_epoch"):
+                value = callback_metrics.get(key)
+                if value is not None:
+                    final_train_loss = float(value.detach().cpu().item() if torch.is_tensor(value) else value)
+                    break
+            for key in ("val/loss", "val/loss_epoch"):
+                value = callback_metrics.get(key)
+                if value is not None:
+                    final_val_loss = float(value.detach().cpu().item() if torch.is_tensor(value) else value)
+                    break
+        elif trainer is not None:
+            best_val_loss = trainer.checkpoint.best_score
+            if best_val_loss is not None:
+                logger.info(f"Best validation loss: {best_val_loss:.6f}")
+                best_checkpoint_path = str(
+                    Path(config.model.checkpointing.CHECKPOINT_DIR) / f"{model_type}_best.pth"
+                )
+            else:
+                logger.info("No validation-based best checkpoint was produced.")
+            final_checkpoint_path = str(
+                Path(config.model.checkpointing.CHECKPOINT_DIR) / f"{model_type}_final.pth"
+            )
+            trainer.save_model(final_checkpoint_path)
+            logger.info(f"Saved final trained checkpoint to {final_checkpoint_path}")
+            if training_history:
+                if training_history.get('train_loss'):
+                    final_train_loss = training_history['train_loss'][-1]
+                if training_history.get('val_loss'):
+                    final_val_loss = training_history['val_loss'][-1]
 
-    return 0
+        if args.stocks:
+            stock_suffix = "_".join(args.stocks[:3])
+            if len(args.stocks) > 3:
+                stock_suffix += f"_etc{len(args.stocks)}"
+            final_path = Path(config.model.checkpointing.CHECKPOINT_DIR) / f"best_model_{stock_suffix}.pth"
+            if trainer is None:
+                trainer = Trainer(
+                    model,
+                    config,
+                    device=str(device),
+                    model_type=model_type,
+                    checkpoint_metadata=checkpoint_metadata
+                )
+            trainer.save_model(str(final_path))
+            logger.info(f"Saved fine-tuned model to {final_path}")
+
+        db_extra.update(
+            {
+                "best_checkpoint_path": best_checkpoint_path,
+                "final_checkpoint_path": final_checkpoint_path,
+                "best_val_loss": best_val_loss,
+                "final_train_loss": final_train_loss,
+                "final_val_loss": final_val_loss,
+            }
+        )
+        log_db("completed", extra=db_extra)
+        return 0
+    except Exception as exc:
+        log_db("failed", error_message=str(exc))
+        raise
 
 
 if __name__ == '__main__':

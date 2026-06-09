@@ -98,6 +98,43 @@ def test_main_config_includes_sampling_settings():
     assert sampling["MARKET_CAP_METADATA_DIR"] == "raw_data/ticket_data/us"
 
 
+def test_removed_unused_config_fields_are_absent():
+    main_data = _load_raw_config("main")["data"]
+    model_data = _load_raw_config("model")["model"]
+
+    assert "SP500_TICKER_SOURCE" not in main_data["sources"]
+    assert "USE_YFINANCE_LIVE" not in main_data["sources"]
+    assert "SECTOR_MAPPING_SOURCE" not in main_data["sector"]
+    assert "DEFAULT_SECTOR_MAPPING" not in main_data["sector"]
+    assert "FALLBACK" not in model_data["training_backend"]
+    assert "WANDB_PROJECT" not in model_data["logging"]
+    assert "reproducibility" not in model_data
+
+
+def test_main_config_includes_market_structure_settings():
+    data = _load_raw_config("main")
+    geometric = data["data"]["geometric"]
+
+    assert geometric["ENABLE_MARKET_STRUCTURE_FEATURES"] is True
+    assert geometric["MARKET_STRUCTURE_WINDOWS"] == [20, 60, 120, 252]
+    assert geometric["BREAKOUT_WINDOWS"] == [20, 60, 120]
+    assert geometric["MARKET_STRUCTURE_COUNT_WINDOW"] == 20
+    assert geometric["NEAR_52W_THRESHOLD"] == 0.05
+    assert geometric["VOLUME_CONFIRMATION_WINDOW"] == 20
+    assert geometric["ATR_WINDOWS"] == [14, 20]
+    assert geometric["TREND_WINDOWS"] == [20, 60]
+    assert geometric["MARKET_STRUCTURE_LAGS"] == [1, 3, 5, 10, 20]
+
+
+def test_main_config_rejects_empty_market_structure_windows():
+    data = _load_raw_config("main")
+    invalid = copy.deepcopy(data)
+    invalid["data"]["geometric"]["MARKET_STRUCTURE_WINDOWS"] = []
+
+    with pytest.raises(ValidationError, match="cannot be empty"):
+        validate_config_data("main", invalid)
+
+
 def test_main_config_rejects_invalid_regime_quantiles():
     data = _load_raw_config("main")
     invalid = copy.deepcopy(data)
@@ -118,6 +155,16 @@ def test_main_config_rejects_invalid_regime_quantiles():
 def test_model_config_schema_accepts_current_config():
     data = _load_raw_config("model")
     validate_config_data("model", data)
+
+
+def test_model_config_accepts_disabled_postgres_logging():
+    data = _load_raw_config("model")
+    valid = copy.deepcopy(data)
+    valid["model"]["postgres_logging"] = {
+        "ENABLED": False,
+    }
+
+    validate_config_data("model", valid)
 
 
 def test_model_config_accepts_directional_huber_loss():
@@ -250,9 +297,17 @@ def test_model_config_includes_separate_kronos_rich_block():
     assert kronos_rich["network"]["D_MODEL"] == kronos["network"]["D_MODEL"]
     assert kronos_rich["predictor"]["MAX_CONTEXT"] == kronos["predictor"]["MAX_CONTEXT"]
     assert kronos["tokenizer"]["ACTIVATION"] == "silu"
+    assert kronos["tokenizer"]["NORM_TYPE"] == "rmsnorm"
+    assert kronos["tokenizer"]["USE_BIAS"] is True
     assert kronos["network"]["ACTIVATION"] == "silu"
+    assert kronos["network"]["NORM_TYPE"] == "rmsnorm"
+    assert kronos["network"]["USE_BIAS"] is True
     assert kronos_rich["tokenizer"]["ACTIVATION"] == "silu"
+    assert kronos_rich["tokenizer"]["NORM_TYPE"] == "rmsnorm"
+    assert kronos_rich["tokenizer"]["USE_BIAS"] is True
     assert kronos_rich["network"]["ACTIVATION"] == "silu"
+    assert kronos_rich["network"]["NORM_TYPE"] == "rmsnorm"
+    assert kronos_rich["network"]["USE_BIAS"] is True
     assert kronos_rich["network"]["USE_STOCK_EMBEDDING"] is True
     assert kronos_rich["network"]["USE_GROUP_EMBEDDING"] is True
     assert kronos_rich["RECON_LOSS_TYPE"] == "mse"
@@ -264,8 +319,10 @@ def test_model_config_includes_chronos_rich_component_loss_settings():
     data = _load_raw_config("model")
     chronos_rich = data["model"]["models"]["chronos_rich"]
 
-    assert chronos_rich["ACTIVATION"] == "relu"
-    assert chronos_rich["SCALAR_LOSS_TYPE"] == "quantile_loss"
-    assert chronos_rich["OHLCV_LOSS_TYPE"] == "quantile_loss"
-    assert chronos_rich["RETURN_PATH_LOSS_TYPE"] == "quantile_loss"
+    assert chronos_rich["ACTIVATION"] == "geglu"
+    assert chronos_rich["NORM_TYPE"] == "rmsnorm"
+    assert chronos_rich["USE_BIAS"] is True
+    assert chronos_rich["SCALAR_LOSS_TYPE"] == "directional_huber"
+    assert chronos_rich["OHLCV_LOSS_TYPE"] == "directional_huber"
+    assert chronos_rich["RETURN_PATH_LOSS_TYPE"] == "directional_huber"
     assert chronos_rich["REGIME_LOSS_TYPE"] == "cross_entropy"

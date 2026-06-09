@@ -14,6 +14,7 @@ from src.data.dataset import FinancialDataset
 from src.evaluation import evaluate_model, evaluate_model_with_report
 from src.evaluation.backtester import Backtester
 from src.models import create_model
+from src.models.kronos_module import RMSNorm
 from src.training import Trainer
 
 
@@ -235,6 +236,47 @@ def test_chronos_rich_uses_configured_swiglu_activation():
     assert isinstance(model.encoder[0].feed_forward.ff.activation, nn.SiLU)
 
 
+def test_chronos_rich_uses_configured_rmsnorm():
+    config = _small_model_config()
+    config.model.models.chronos_rich.NORM_TYPE = "rmsnorm"
+
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+
+    assert isinstance(model.encoder[0].time_attention.norm, RMSNorm)
+    assert isinstance(model.encoder[0].group_attention.norm, RMSNorm)
+    assert isinstance(model.encoder[0].feed_forward.norm, RMSNorm)
+    assert isinstance(model.encoder_norm, RMSNorm)
+
+
+def test_chronos_rich_uses_configured_bias_flag():
+    config = _small_model_config()
+    config.model.models.chronos_rich.USE_BIAS = False
+
+    model = create_model(
+        model_type="chronos_rich",
+        num_features=8,
+        num_stocks=4,
+        num_groups=3,
+        config=config,
+        feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+    )
+
+    assert model.patch_projection.bias is None
+    assert model.encoder[0].feed_forward.ff.input_projection.bias is None
+    assert model.encoder[0].feed_forward.ff.output_projection.bias is None
+    assert model.forecast_head.input_projection.bias is None
+    assert model.future_ohlcv_head.bias is None
+    assert model.future_regime_head.bias is None
+    assert model.encoder[0].time_attention.attn.in_proj_bias is None
+
+
 def test_chronos_rich_rejects_unknown_activation():
     config = _small_model_config()
     config.model.models.chronos_rich.ACTIVATION = "unknown_activation"
@@ -249,6 +291,21 @@ def test_chronos_rich_rejects_unknown_activation():
                 config=config,
                 feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
             )
+
+
+def test_chronos_rich_rejects_unknown_norm_type():
+    config = _small_model_config()
+    config.model.models.chronos_rich.NORM_TYPE = "bad_norm"
+
+    with pytest.raises(ValueError, match="Unsupported ChronosRich norm type"):
+        create_model(
+            model_type="chronos_rich",
+            num_features=8,
+            num_stocks=4,
+            num_groups=3,
+            config=config,
+            feature_cols=["close", "high", "low", "open", "volume", "feat1", "feat2", "feat3"],
+        )
 
 
 def test_chronos_rich_report_includes_rich_outputs(tmp_path: Path):

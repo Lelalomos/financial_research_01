@@ -150,6 +150,13 @@ class Trainer:
         """Create learning rate scheduler based on config."""
         return create_scheduler(self.optimizer, self.config)
 
+    def _move_batch_to_device(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Move tensor batch values to the trainer device."""
+        return {
+            key: value.to(self.device) if isinstance(value, torch.Tensor) else value
+            for key, value in batch.items()
+        }
+
     def train_epoch(self, train_loader: DataLoader) -> Dict[str, float]:
         """
         Train for one epoch.
@@ -171,13 +178,14 @@ class Trainer:
 
         for batch_idx, batch in enumerate(progress_bar):
             # Move to device
-            features = batch['features'].to(self.device)
-            stock_id = batch['stock_id'].to(self.device)
-            group_id = batch['group_id'].to(self.device)
-            day = batch['day'].to(self.device)
-            month = batch['month'].to(self.device)
-            dividend_flag = batch['dividend_flag'].to(self.device)
-            target = batch['target'].to(self.device)
+            batch = self._move_batch_to_device(batch)
+            features = batch['features']
+            stock_id = batch['stock_id']
+            group_id = batch['group_id']
+            day = batch['day']
+            month = batch['month']
+            dividend_flag = batch['dividend_flag']
+            target = batch['target']
 
             # Validate inputs for NaN/Inf (if enabled in config)
             if hasattr(self.config.model, 'nan_handling') and self.config.model.nan_handling.CHECK_INPUTS:
@@ -200,6 +208,7 @@ class Trainer:
                         torch.tensor(replace_val, device=self.device),
                         target
                     )
+                    batch['target'] = target
 
             # Forward pass — zero_grad only at accumulation boundaries
             if batch_idx % self.accumulation_steps == 0:
@@ -334,13 +343,14 @@ class Trainer:
         with torch.no_grad():
             for batch in val_loader:
                 # Move to device
-                features = batch['features'].to(self.device)
-                stock_id = batch['stock_id'].to(self.device)
-                group_id = batch['group_id'].to(self.device)
-                day = batch['day'].to(self.device)
-                month = batch['month'].to(self.device)
-                dividend_flag = batch['dividend_flag'].to(self.device)
-                target = batch['target'].to(self.device)
+                batch = self._move_batch_to_device(batch)
+                features = batch['features']
+                stock_id = batch['stock_id']
+                group_id = batch['group_id']
+                day = batch['day']
+                month = batch['month']
+                dividend_flag = batch['dividend_flag']
+                target = batch['target']
 
                 # Forward pass
                 output = self.model(features, stock_id, group_id, day, month, dividend_flag)

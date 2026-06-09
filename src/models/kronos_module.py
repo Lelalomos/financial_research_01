@@ -24,6 +24,15 @@ def build_kronos_activation(activation_name: str) -> nn.Module:
     return activation_cls()
 
 
+def build_kronos_norm(norm_type: str, dim: int) -> nn.Module:
+    normalized = norm_type.strip().lower()
+    if normalized == "layernorm":
+        return nn.LayerNorm(dim)
+    if normalized == "rmsnorm":
+        return RMSNorm(dim)
+    raise ValueError(f"Unsupported Kronos norm type '{norm_type}'. Allowed: layernorm, rmsnorm")
+
+
 class DifferentiableEntropyFunction(Function):
     @staticmethod
     def forward(ctx, zq, basis, K, eps):
@@ -276,13 +285,13 @@ class RMSNorm(torch.nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, d_model, ff_dim, ffn_dropout_p=0.0, activation_name="silu"):
+    def __init__(self, d_model, ff_dim, ffn_dropout_p=0.0, activation_name="silu", use_bias=False):
         super().__init__()
 
         self.activation_name = activation_name.strip().lower()
-        self.w1 = nn.Linear(d_model, ff_dim, bias=False)
-        self.w3 = nn.Linear(d_model, ff_dim, bias=False)
-        self.w2 = nn.Linear(ff_dim, d_model, bias=False)
+        self.w1 = nn.Linear(d_model, ff_dim, bias=use_bias)
+        self.w3 = nn.Linear(d_model, ff_dim, bias=use_bias)
+        self.w2 = nn.Linear(ff_dim, d_model, bias=use_bias)
         self.ffn_dropout = nn.Dropout(ffn_dropout_p)
         self.activation = build_kronos_activation(activation_name)
         self.is_gated = self.activation_name in {"relu", "gelu", "silu", "leaky_relu", "geglu", "swiglu"}
@@ -327,16 +336,16 @@ class RotaryPositionalEmbedding(nn.Module):
 
 
 class MultiHeadAttentionWithRoPE(nn.Module):
-    def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout_p=0.0):
+    def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout_p=0.0, use_bias=True):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
 
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
+        self.q_proj = nn.Linear(d_model, d_model, bias=use_bias)
+        self.k_proj = nn.Linear(d_model, d_model, bias=use_bias)
+        self.v_proj = nn.Linear(d_model, d_model, bias=use_bias)
+        self.out_proj = nn.Linear(d_model, d_model, bias=use_bias)
         self.rotary = RotaryPositionalEmbedding(self.head_dim)
         self.attn_dropout_p = attn_dropout_p
         self.resid_dropout = nn.Dropout(resid_dropout_p)
@@ -370,16 +379,16 @@ class MultiHeadAttentionWithRoPE(nn.Module):
 
 
 class MultiHeadCrossAttentionWithRoPE(nn.Module):
-    def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout=0.0):
+    def __init__(self, d_model, n_heads, attn_dropout_p=0.0, resid_dropout=0.0, use_bias=True):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
 
-        self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
-        self.out_proj = nn.Linear(d_model, d_model)
+        self.q_proj = nn.Linear(d_model, d_model, bias=use_bias)
+        self.k_proj = nn.Linear(d_model, d_model, bias=use_bias)
+        self.v_proj = nn.Linear(d_model, d_model, bias=use_bias)
+        self.out_proj = nn.Linear(d_model, d_model, bias=use_bias)
         self.rotary = RotaryPositionalEmbedding(self.head_dim)
         self.attn_dropout_p = attn_dropout_p
         self.resid_dropout = nn.Dropout(resid_dropout)
@@ -416,7 +425,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
 
 
 class HierarchicalEmbedding(nn.Module):
-    def __init__(self, s1_bits, s2_bits, d_model=256):
+    def __init__(self, s1_bits, s2_bits, d_model=256, use_bias=True):
         super().__init__()
         self.s1_bits = s1_bits
         self.s2_bits = s2_bits
@@ -427,7 +436,7 @@ class HierarchicalEmbedding(nn.Module):
         self.emb_s1 = nn.Embedding(vocab_s1, d_model)
         self.emb_s2 = nn.Embedding(vocab_s2, d_model)
         self.d_model = d_model
-        self.fusion_proj = nn.Linear(d_model * 2, d_model)
+        self.fusion_proj = nn.Linear(d_model * 2, d_model, bias=use_bias)
 
         nn.init.normal_(self.emb_s1.weight, mean=0, std=d_model ** -0.5)
         nn.init.normal_(self.emb_s2.weight, mean=0, std=d_model ** -0.5)
@@ -452,10 +461,10 @@ class HierarchicalEmbedding(nn.Module):
 
 
 class DependencyAwareLayer(nn.Module):
-    def __init__(self, d_model, n_heads=4, attn_dropout_p=0.0, resid_dropout=0.0):
+    def __init__(self, d_model, n_heads=4, attn_dropout_p=0.0, resid_dropout=0.0, norm_type="rmsnorm", use_bias=True):
         super().__init__()
-        self.cross_attn = MultiHeadCrossAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout)
-        self.norm = RMSNorm(d_model)
+        self.cross_attn = MultiHeadCrossAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout, use_bias=use_bias)
+        self.norm = build_kronos_norm(norm_type, d_model)
 
     def forward(self, hidden_states, sibling_embed, key_padding_mask=None):
         attn_out = self.cross_attn(
@@ -477,12 +486,14 @@ class TransformerBlock(nn.Module):
         attn_dropout_p=0.0,
         resid_dropout_p=0.0,
         activation_name="silu",
+        norm_type="rmsnorm",
+        use_bias=True,
     ):
         super().__init__()
-        self.norm1 = RMSNorm(d_model)
-        self.self_attn = MultiHeadAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout_p)
-        self.norm2 = RMSNorm(d_model)
-        self.ffn = FeedForward(d_model, ff_dim, ffn_dropout_p, activation_name=activation_name)
+        self.norm1 = build_kronos_norm(norm_type, d_model)
+        self.self_attn = MultiHeadAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout_p, use_bias=use_bias)
+        self.norm2 = build_kronos_norm(norm_type, d_model)
+        self.ffn = FeedForward(d_model, ff_dim, ffn_dropout_p, activation_name=activation_name, use_bias=use_bias)
 
     def forward(self, x, key_padding_mask=None):
         residual = x
@@ -498,12 +509,12 @@ class TransformerBlock(nn.Module):
 
 
 class DualHead(nn.Module):
-    def __init__(self, s1_bits, s2_bits, d_model):
+    def __init__(self, s1_bits, s2_bits, d_model, use_bias=True):
         super().__init__()
         self.vocab_s1 = 2 ** s1_bits
         self.vocab_s2 = 2 ** s2_bits
-        self.proj_s1 = nn.Linear(d_model, self.vocab_s1)
-        self.proj_s2 = nn.Linear(d_model, self.vocab_s2)
+        self.proj_s1 = nn.Linear(d_model, self.vocab_s1, bias=use_bias)
+        self.proj_s2 = nn.Linear(d_model, self.vocab_s2, bias=use_bias)
 
     def compute_loss(self, s1_logits, s2_logits, s1_targets, s2_targets, padding_mask=None, loss_fn=None):
         if loss_fn is None:

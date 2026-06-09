@@ -37,7 +37,6 @@
     },
     "training_backend": {
       "DEFAULT": "lightning",
-      "FALLBACK": "custom",
       "ALLOW_CUSTOM_FALLBACK": true
     },
     "selection": {
@@ -71,8 +70,7 @@
     },
     "logging": {
       "LOG_FREQUENCY": 10,
-      "TENSORBOARD_DIR": "logs/tensorboard",
-      "WANDB_PROJECT": null
+      "TENSORBOARD_DIR": "logs/tensorboard"
     },
     "experiment_tracking": {
       "ENABLED": true,
@@ -82,6 +80,9 @@
       "LOG_PARAMS": true,
       "LOG_METRICS": true,
       "LOG_ARTIFACTS": true
+    },
+    "postgres_logging": {
+      "ENABLED": true
     },
     "validation": {
       "VAL_FREQUENCY": 1,
@@ -95,10 +96,6 @@
       "LOG_NAN_DETAILS": true,
       "MAX_GRAD_VALUE": 100.0,
       "REPLACE_VALUE": 0.0
-    },
-    "reproducibility": {
-      "RANDOM_SEED": 42,
-      "DETERMINISTIC": false
     },
     "models": {
       "crnn": {
@@ -203,8 +200,8 @@
         "FUSION_HIDDEN_SIZES": [256, 128],
         "FUSION_DROPOUT": 0.3,
         "FUSION_USE_BATCH_NORM": false,
-        "TECHNICAL_EXACT_FEATURES": ["open", "high", "low", "close", "volume"],
-        "TECHNICAL_PREFIX_FEATURES": ["ema_", "rsi", "stochrsi", "macd", "CDL"],
+        "TECHNICAL_EXACT_FEATURES": ["open", "high", "low", "close", "volume", "candle_direction", "high_low_range", "close_position", "open_position", "overnight_return", "doji", "hammer", "inverted_hammer", "shooting_star", "bullish_engulfing", "bearish_engulfing", "morning_star", "evening_star"],
+        "TECHNICAL_PREFIX_FEATURES": ["ema_", "rsi", "stochrsi", "macd", "body_", "upper_shadow", "lower_shadow", "body_ratio", "gap_", "atr_", "rolling_high_low_range_"],
         "GEOMETRIC_EXACT_FEATURES": ["regime_id"],
         "GEOMETRIC_PREFIX_FEATURES": ["atr_", "roc_", "bb_width", "slope_", "channel_", "dist_to_swing_", "days_since_swing_", "swing_", "fib_", "dist_fib_", "break_fib_61"],
         "MACRO_FINANCIAL_EXACT_FEATURES": ["vix", "bondyield", "Gold", "Copper", "Corn", "Soybeans", "Cocoa", "Silver", "pe_ratio", "peg_ratio", "eps", "roe", "roi", "debt_to_equity", "debt_to_asset", "current_ratio"],
@@ -238,8 +235,8 @@
         "D_MODEL": 128,
         "D_KV": 32,
         "D_FF": 256,
-        "NUM_LAYERS": 5,
-        "NUM_HEADS": 8,
+        "NUM_LAYERS": 3,
+        "NUM_HEADS": 4,
         "DROPOUT_RATE": 0.1,
         "ATTN_IMPLEMENTATION": "eager",
         "INPUT_PATCH_SIZE": 5,
@@ -254,9 +251,11 @@
         "MONTH_EMB_DIM": 16,
         "DIVIDEND_FLAG_EMB_DIM": 8,
         "DROPOUT_EMBEDDING": 0.1,
-        "ACTIVATION": "relu",
+        "ACTIVATION": "geglu",
+        "NORM_TYPE": "rmsnorm",
+        "USE_BIAS": true,
         "QUANTILES": [0.1, 0.5, 0.9],
-        "HEAD_HIDDEN_SIZES": [512, 256, 128],
+        "HEAD_HIDDEN_SIZES": [256, 128],
         "HEAD_DROPOUT": 0.2,
         "SCALAR_LOSS_TYPE": "quantile_loss",
         "SCALAR_HUBER_DELTA": 0.5,
@@ -289,6 +288,8 @@
         "ATTN_DROPOUT_P": 0.1,
         "RESID_DROPOUT_P": 0.1,
         "ACTIVATION": "silu",
+        "NORM_TYPE": "rmsnorm",
+        "USE_BIAS": true,
         "S1_BITS": 8,
           "S2_BITS": 8,
           "BETA": 0.25,
@@ -308,6 +309,8 @@
         "ATTN_DROPOUT_P": 0.1,
         "RESID_DROPOUT_P": 0.1,
         "ACTIVATION": "silu",
+        "NORM_TYPE": "rmsnorm",
+        "USE_BIAS": true,
         "TOKEN_DROPOUT_P": 0.1,
           "LEARN_TE": true,
           "USE_STOCK_EMBEDDING": false,
@@ -332,6 +335,8 @@
         "ATTN_DROPOUT_P": 0.1,
         "RESID_DROPOUT_P": 0.1,
         "ACTIVATION": "silu",
+        "NORM_TYPE": "rmsnorm",
+        "USE_BIAS": true,
         "S1_BITS": 8,
           "S2_BITS": 8,
           "BETA": 0.25,
@@ -351,6 +356,8 @@
         "ATTN_DROPOUT_P": 0.1,
         "RESID_DROPOUT_P": 0.1,
         "ACTIVATION": "silu",
+        "NORM_TYPE": "rmsnorm",
+        "USE_BIAS": true,
         "TOKEN_DROPOUT_P": 0.1,
           "LEARN_TE": true,
           "USE_STOCK_EMBEDDING": true,
